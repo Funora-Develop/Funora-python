@@ -41,7 +41,7 @@ from typing import Final
 
 from selectolax.parser import HTMLParser, Node
 
-__all__ = ["skeletonize", "text_signature", "SkeletonError", "SKELETON_FORMAT"]
+__all__ = ["skeletonize", "text_signature", "mask_path", "SkeletonError", "SKELETON_FORMAT"]
 
 #: Имя формата, записываемое в описание происхождения фикстуры.
 #:
@@ -161,7 +161,7 @@ def text_signature(text: str) -> str:
     return f"T{len(normalized)}:{classes}"
 
 
-def _mask_path(value: str) -> str:
+def mask_path(value: str) -> str:
     """Обезличивает значение атрибута, содержащего путь.
 
     Сохраняет форму пути, потому что по ней узнаётся назначение ссылки. Сегменты
@@ -210,7 +210,7 @@ def _mask_attr(name: str, value: str) -> str:
     if name in _VERBATIM_ATTRS:
         return value
     if name in _URL_ATTRS:
-        return _mask_path(value)
+        return mask_path(value)
     if not value:
         return value
     sig = text_signature(value)

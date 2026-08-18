@@ -31,12 +31,14 @@ import json
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
+from hashlib import blake2s
 from pathlib import Path
+from time import monotonic
 
 from ._classify import DEFAULT_IDENTITY_CSS, classify
 from ._secret import EnvSecretProvider, FileSecretProvider, SecretNotFoundError, SecretProvider
 from ._signals import collect, compare, format_report
-from ._skeleton import SKELETON_FORMAT, SkeletonError, skeletonize
+from ._skeleton import SKELETON_FORMAT, SkeletonError, mask_path, skeletonize
 from ._transport import Fetcher, Observation, TransportSettings
 
 __all__ = ["main", "observe", "observe_compare", "build_provenance"]
@@ -72,8 +74,8 @@ def build_provenance(
         Персональных данных и содержимого страницы не содержит.
     """
     return {
-        "path": path,
-        "final_url": observation.final_url,
+        "path": mask_path(path),
+        "final_url": mask_path(observation.final_url),
         "captured_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "locale": locale,
         "http_status": observation.status,
@@ -89,6 +91,39 @@ def build_provenance(
             "идентификаторами обезличены. Сырой HTML не сохраняется."
         ),
     }
+
+
+def _stem_for(path: str) -> str:
+    """Строит основу имени файла по запрошенному пути.
+
+    Идентификаторы в имя файла не попадают. Строка запроса заменяется коротким
+    необратимым отпечатком, а числовые сегменты пути - буквой n. Причин две.
+    Windows не допускает вопросительный знак в имени файла, поэтому путь вида
+    ``/chat/?node=123`` иначе просто не сохранился бы. И, что важнее, имена
+    файлов видны в списке репозитория, в истории и в результатах поиска, где
+    идентификатору переписки делать нечего.
+
+    Отпечаток нужен, чтобы снимки разных переписок не затирали друг друга: без
+    него оба легли бы в файл chat.ru.skeleton.txt.
+
+    Args:
+        path (str): Запрошенный путь, возможно со строкой запроса.
+
+    Returns:
+        str: Основа имени файла из букв, цифр, дефиса и подчёркивания.
+    """
+    body, _, query = path.partition("?")
+    segments = [seg for seg in body.strip("/").split("/") if seg]
+    cleaned: list[str] = []
+    for seg in segments:
+        if any(ch.isdigit() for ch in seg) or not seg.isascii():
+            cleaned.append("n")
+            continue
+        cleaned.append("".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in seg))
+    stem = "_".join(x for x in cleaned if x) or "root"
+    if query:
+        stem += "-" + blake2s(query.encode("utf-8"), digest_size=8).hexdigest()[:6]
+    return stem
 
 
 def observe(
@@ -148,8 +183,7 @@ def observe(
         return 1
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    stem = path.strip("/").replace("/", "_") or "root"
-    stem = f"{stem}.{locale}"
+    stem = f"{_stem_for(path)}.{locale}"
 
     (out_dir / f"{stem}.skeleton.txt").write_text(skeleton, encoding="utf-8", newline="\n")
     provenance = build_provenance(
@@ -197,6 +231,10 @@ def observe_compare(
     Значения живут только в памяти процесса и на диск не попадают. Наружу
     выходит характер изменения и величина шага, но не сами значения. Файлов
     режим не создаёт вовсе.
+
+    Длительность паузы печатается вместе с отчётом. Без неё величина шага не
+    переводится в скорость выдачи идентификаторов, а именно эта скорость нужна,
+    чтобы подобрать частоту опроса, не полагаясь на догадку.
 
     Args:
         path (str): Путь страницы относительно базового адреса.
@@ -255,6 +293,7 @@ def observe_compare(
             if before is None:
                 return 2
 
+            started = monotonic()
             print()
             print("Сделайте на площадке изменение, которое хотите проверить, и нажмите Enter.")
             print("Например: получите сообщение в переписке или прочитайте непрочитанное.")
@@ -263,6 +302,7 @@ def observe_compare(
             except EOFError:
                 print("ввод недоступен, сравнение отменено", file=sys.stderr)
                 return 1
+            paused = monotonic() - started
 
             after = read(fetcher, "второе")
             if after is None:
@@ -272,6 +312,7 @@ def observe_compare(
         return 1
 
     print()
+    print(f"  пауза между чтениями: {paused:.0f} с")
     print(format_report(compare(before, after)))
     return 0
 
