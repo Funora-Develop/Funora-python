@@ -31,6 +31,7 @@ from ._secret import (
 )
 from ._skeleton import SkeletonError, skeletonize
 from ._transport import Fetcher, Observation, TransportSettings
+from .errors import ERROR_BY_ABI_CODE, ERROR_BY_STABLE_ID, FunoraError
 
 __version__ = "0.0.1.dev0"
 
@@ -56,4 +57,8 @@ __all__ = [
     "Fetcher",
     "Observation",
     "TransportSettings",
+    # ошибки
+    "FunoraError",
+    "ERROR_BY_STABLE_ID",
+    "ERROR_BY_ABI_CODE",
 ]
