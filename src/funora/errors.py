@@ -31,6 +31,7 @@ __all__ = [
     "HandlerError",
     "PluginError",
     "BudgetError",
+    "UsageError",
     "InvalidCredentialsError",
     "SessionExpiredError",
     "AccessBlockedError",
@@ -54,6 +55,8 @@ __all__ = [
     "HandlerTimeoutError",
     "HandlerCancelledError",
     "BudgetExhaustedError",
+    "UnobservedFieldError",
+    "IncompleteResultError",
     "ERROR_BY_STABLE_ID",
     "ERROR_BY_ABI_CODE",
 ]
@@ -322,6 +325,29 @@ class BudgetError(FunoraError):
 
     stable_id: ClassVar[str] = "funora.budget"
     abi_code: ClassVar[int] = 1900
+    retryable: ClassVar[bool] = False
+    side_effects_possible: ClassVar[bool] = False
+    user_actionable: ClassVar[bool] = True
+    since_spec: ClassVar[str] = "0.1.0"
+
+
+class UsageError(FunoraError):
+    """SDK использован неверно. Повтор не поможет, данные ни при чём, исправлять надо
+    вызывающий код.
+
+    Повтор не поможет, исправляется тем, кто вызвал.
+
+    Attributes:
+        stable_id (str): Устойчивый идентификатор "funora.usage".
+        abi_code (int): Числовой код 1950, общий для всех SDK.
+        retryable (bool): Допустим ли повтор: False.
+        side_effects_possible (bool): Могло ли действие произойти: False.
+        user_actionable (bool): Исправляется ли вызывающим: True.
+        since_spec (str): Версия спецификации "0.1.0".
+    """
+
+    stable_id: ClassVar[str] = "funora.usage"
+    abi_code: ClassVar[int] = 1950
     retryable: ClassVar[bool] = False
     side_effects_possible: ClassVar[bool] = False
     user_actionable: ClassVar[bool] = True
@@ -855,6 +881,55 @@ class BudgetExhaustedError(BudgetError):
     since_spec: ClassVar[str] = "0.1.0"
 
 
+class UnobservedFieldError(UsageError):
+    """Прочитано значение поля, которого не было на странице. Отличается от пустого
+    значения: пустое наблюдалось, этого не наблюдалось вовсе, и подставить вместо
+    него что-либо может только вызывающий, потому что только он знает, чем это
+    грозит его задаче.
+
+    Повтор не поможет, исправляется тем, кто вызвал.
+
+    Attributes:
+        stable_id (str): Устойчивый идентификатор "funora.usage.unobserved_field".
+        abi_code (int): Числовой код 1951, общий для всех SDK.
+        retryable (bool): Допустим ли повтор: False.
+        side_effects_possible (bool): Могло ли действие произойти: False.
+        user_actionable (bool): Исправляется ли вызывающим: True.
+        since_spec (str): Версия спецификации "0.1.0".
+    """
+
+    stable_id: ClassVar[str] = "funora.usage.unobserved_field"
+    abi_code: ClassVar[int] = 1951
+    retryable: ClassVar[bool] = False
+    side_effects_possible: ClassVar[bool] = False
+    user_actionable: ClassVar[bool] = True
+    since_spec: ClassVar[str] = "0.1.0"
+
+
+class IncompleteResultError(UsageError):
+    """Запрошены записи заведомо неполного результата без признания неполноты. Неполный
+    результат выдаётся только тому, кто сказал, что готов его принять: молча
+    отданный, он неотличим от полного, и именно так теряются оплаченные заказы.
+
+    Повтор не поможет, исправляется тем, кто вызвал.
+
+    Attributes:
+        stable_id (str): Устойчивый идентификатор "funora.usage.incomplete_result".
+        abi_code (int): Числовой код 1952, общий для всех SDK.
+        retryable (bool): Допустим ли повтор: False.
+        side_effects_possible (bool): Могло ли действие произойти: False.
+        user_actionable (bool): Исправляется ли вызывающим: True.
+        since_spec (str): Версия спецификации "0.1.0".
+    """
+
+    stable_id: ClassVar[str] = "funora.usage.incomplete_result"
+    abi_code: ClassVar[int] = 1952
+    retryable: ClassVar[bool] = False
+    side_effects_possible: ClassVar[bool] = False
+    user_actionable: ClassVar[bool] = True
+    since_spec: ClassVar[str] = "0.1.0"
+
+
 #: Поиск класса по устойчивому идентификатору.
 #:
 #: Нужен там, где ошибка приходит извне процесса: из журнала, из очереди,
@@ -873,6 +948,7 @@ ERROR_BY_STABLE_ID: Final[dict[str, type[Exception]]] = {
     "funora.handler": HandlerError,
     "funora.plugin": PluginError,
     "funora.budget": BudgetError,
+    "funora.usage": UsageError,
     "funora.auth.invalid_credentials": InvalidCredentialsError,
     "funora.auth.session_expired": SessionExpiredError,
     "funora.auth.access_blocked": AccessBlockedError,
@@ -896,6 +972,8 @@ ERROR_BY_STABLE_ID: Final[dict[str, type[Exception]]] = {
     "funora.handler.timeout": HandlerTimeoutError,
     "funora.handler.cancelled": HandlerCancelledError,
     "funora.budget.exhausted": BudgetExhaustedError,
+    "funora.usage.unobserved_field": UnobservedFieldError,
+    "funora.usage.incomplete_result": IncompleteResultError,
 }
 
 #: Поиск класса по числовому коду.
@@ -915,6 +993,7 @@ ERROR_BY_ABI_CODE: Final[dict[int, type[Exception]]] = {
     1850: HandlerError,
     1860: PluginError,
     1900: BudgetError,
+    1950: UsageError,
     1201: InvalidCredentialsError,
     1202: SessionExpiredError,
     1203: AccessBlockedError,
@@ -938,4 +1017,6 @@ ERROR_BY_ABI_CODE: Final[dict[int, type[Exception]]] = {
     1851: HandlerTimeoutError,
     1852: HandlerCancelledError,
     1901: BudgetExhaustedError,
+    1951: UnobservedFieldError,
+    1952: IncompleteResultError,
 }
