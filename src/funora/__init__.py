@@ -20,7 +20,7 @@
 
 from __future__ import annotations
 
-from ._classify import ResponseClass, Signature, Verdict, classify
+from ._classify import DEFAULT_IDENTITY_CSS, ResponseClass, Signature, Verdict, classify
 from ._secret import (
     CallableSecretProvider,
     EnvSecretProvider,
@@ -48,6 +48,7 @@ __all__ = [
     "ResponseClass",
     "Verdict",
     "Signature",
+    "DEFAULT_IDENTITY_CSS",
     # скелет
     "skeletonize",
     "SkeletonError",

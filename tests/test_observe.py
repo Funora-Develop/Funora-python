@@ -23,6 +23,7 @@ CANARY_ID = "98765"
 
 PAGE = f"""
 <html><body>
+  <button class="navbar-toggle navbar-toggle-logged"></button>
   <a class="user-link" href="/users/{CANARY_ID}/">{CANARY_TEXT}</a>
   <div class="order" data-id="{CANARY_ID}">Заказ {CANARY_ID}</div>
 </body></html>
@@ -144,7 +145,7 @@ def test_provenance_fields(tmp_path: Path) -> None:
     observe_mod.observe(path="/orders/trade", out_dir=tmp_path, provider=_provider(), locale="en")
     data = json.loads((tmp_path / "orders_trade.en.provenance.json").read_text(encoding="utf-8"))
     for key in (
-        "path", "captured_at", "locale", "http_status", "classification",
+        "path", "final_url", "captured_at", "locale", "http_status", "classification",
         "classification_reason", "classification_provisional", "format",
     ):
         assert key in data, f"в описании нет поля {key}"
