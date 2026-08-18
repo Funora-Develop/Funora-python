@@ -244,6 +244,28 @@ def render_capabilities(spec: Path) -> str:
     states: dict[str, Any] = doc["states"]
     caps: dict[str, Any] = doc["capabilities"]
 
+    # Множества строятся из predicates, а не из признаков внутри states, и это
+    # исправление настоящей ошибки. У состояния experimental признак usable
+    # равен true - возможность действительно работает, - но решение «звать или
+    # отказать» принимается по предикату, и там его нет. Первая версия
+    # генератора собирала множество из признаков, и проверка вида
+    # «if not state.usable: raise» пропускала экспериментальную возможность без
+    # включения, отменяя ту единственную ветку, ради которой состояние заведено.
+    predicates: dict[str, Any] = doc["predicates"]
+    if not predicates.get("normative"):
+        raise ValueError(
+            "spec/capabilities.yaml: predicates обязаны быть помечены normative, "
+            "иначе решение о вызове выводится из описательных признаков"
+        )
+    usable = list(predicates["is_usable"]["true_for"])
+    opt_in = list(predicates["requires_opt_in"]["true_for"])
+    unknown_states = [s for s in usable + opt_in if s not in states]
+    if unknown_states:
+        raise ValueError(
+            f"spec/capabilities.yaml: предикаты ссылаются на состояния, "
+            f"которых нет: {', '.join(unknown_states)}"
+        )
+
     extra = (
         "Состояний пять, и разница между ними не косметическая. Вызов блокируется\n"
         "только при unsupported, то есть при позитивном свидетельстве отсутствия.\n"
@@ -284,9 +306,12 @@ def render_capabilities(spec: Path) -> str:
 
     out.append("\n    @property\n")
     out.append("    def usable(self) -> bool:\n")
-    out.append('        """Сообщает, можно ли выполнять вызов в этом состоянии.\n\n')
+    out.append('        """Сообщает, можно ли звать возможность без дополнительных условий.\n\n')
+    out.append("        Отвечает на вопрос «можно ли звать прямо сейчас», а не «работает ли\n")
+    out.append("        возможность вообще». У состояния experimental возможность работает,\n")
+    out.append("        но звать её без явного включения нельзя, поэтому здесь False.\n\n")
     out.append("        Returns:\n")
-    out.append("            bool: True, если вызов не блокируется состоянием.\n")
+    out.append("            bool: True, если вызов разрешён без включения.\n")
     out.append('        """\n')
     out.append("        return self in _USABLE\n")
 
@@ -298,9 +323,20 @@ def render_capabilities(spec: Path) -> str:
     out.append('        """\n')
     out.append("        return self in _OPT_IN\n")
 
-    usable = [k for k, v in states.items() if v.get("usable")]
-    opt_in = [k for k, v in states.items() if v.get("opt_in_required")]
-    out.append("\n\n#: Состояния, в которых вызов не блокируется.\n")
+    out.append("\n    def allows_call(self, *, opted_in: bool) -> bool:\n")
+    out.append('        """Решает, разрешён ли вызов в этом состоянии.\n\n')
+    out.append("        Правило взято из predicates в spec/capabilities.yaml, где оно\n")
+    out.append("        объявлено нормативным. Выводить его заново в каждой реализации\n")
+    out.append("        нельзя: шесть SDK выведут шесть разных решений, оставаясь\n")
+    out.append("        согласными в названиях состояний.\n\n")
+    out.append("        Args:\n")
+    out.append("            opted_in (bool): Включил ли вызывающий возможность явно.\n\n")
+    out.append("        Returns:\n")
+    out.append("            bool: True, если вызов разрешён.\n")
+    out.append('        """\n')
+    out.append("        return self in _USABLE or (opted_in and self in _OPT_IN)\n")
+
+    out.append("\n\n#: Состояния, в которых вызов разрешён без дополнительных условий.\n")
     out.append("_USABLE: Final[frozenset[CapabilityState]] = frozenset(\n    {\n")
     for key in usable:
         out.append(f"        CapabilityState.{key.upper()},\n")

@@ -191,20 +191,75 @@ def test_unknown_capability_does_not_block_the_call() -> None:
 
 
 def test_experimental_requires_opt_in() -> None:
-    """Проверяет, что experimental требует явного включения.
+    """Проверяет, что experimental недоступна без явного включения.
 
-    Возможность реализована, но контракт может измениться. Без явного согласия
-    вызывающего она недоступна: иначе смена контракта сломает того, кто про
-    экспериментальность не знал.
+    Проверка переписана после того, как поймала собственную ошибку наоборот.
+    Первая версия закрепляла usable=True у этого состояния, потому что такой
+    признак стоит в спецификации внутри states. Но решение о вызове принимается
+    по разделу predicates, и там experimental отсутствует. Признак означает
+    «возможность работает», а не «звать разрешено», и генератор, выведший
+    решение из него, пропускал экспериментальную возможность без включения,
+    отменяя ту единственную ветку, ради которой состояние заведено.
 
     Returns:
         None
     """
-    assert caps.CapabilityState.EXPERIMENTAL.opt_in_required
-    assert caps.CapabilityState.EXPERIMENTAL.usable
+    state = caps.CapabilityState.EXPERIMENTAL
+    assert state.opt_in_required
+    assert not state.usable, "usable отвечает на вопрос «звать без условий», а не «работает ли»"
+    assert not state.allows_call(opted_in=False)
+    assert state.allows_call(opted_in=True)
+
+    for other in caps.CapabilityState:
+        if other is not state:
+            assert not other.opt_in_required
+
+
+def test_unsupported_is_never_callable() -> None:
+    """Проверяет, что явное включение не открывает отсутствующую возможность.
+
+    Включение снимает предупреждение о нестабильности контракта, а не отменяет
+    свидетельство того, что возможности нет.
+
+    Returns:
+        None
+    """
+    state = caps.CapabilityState.UNSUPPORTED
+    assert not state.allows_call(opted_in=False)
+    assert not state.allows_call(opted_in=True)
+
+
+def test_call_decision_matches_spec_predicates() -> None:
+    """Сверяет решение о вызове с предикатами спецификации напрямую.
+
+    Проверка читает spec/capabilities.yaml и сравнивает с порождённым кодом. Она
+    существует потому, что оба множества уже однажды разошлись: генератор строил
+    их из описательных признаков вместо нормативных предикатов, и расхождение
+    было незаметно, пока кто-то не попробовал применить спецификацию.
+
+    Returns:
+        None
+    """
+    spec = _spec_dir()
+    if spec is None:
+        pytest.skip("переменная FUNORA_SPEC_DIR не указывает на рабочую копию Funora-spec")
+
+    import yaml
+
+    doc = yaml.safe_load((spec / "spec" / "capabilities.yaml").read_text(encoding="utf-8"))
+    predicates = doc["predicates"]
+    assert predicates.get("normative"), "предикаты обязаны быть помечены нормативными"
+
+    usable = set(predicates["is_usable"]["true_for"])
+    opt_in = set(predicates["requires_opt_in"]["true_for"])
+
     for state in caps.CapabilityState:
-        if state is not caps.CapabilityState.EXPERIMENTAL:
-            assert not state.opt_in_required
+        assert state.usable == (state.value in usable), (
+            f"{state.value}: usable расходится с предикатом is_usable"
+        )
+        assert state.opt_in_required == (state.value in opt_in), (
+            f"{state.value}: opt_in_required расходится с предикатом requires_opt_in"
+        )
 
 
 def test_degraded_is_usable() -> None:

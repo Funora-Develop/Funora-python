@@ -56,10 +56,14 @@ class CapabilityState(StrEnum):
 
     @property
     def usable(self) -> bool:
-        """Сообщает, можно ли выполнять вызов в этом состоянии.
+        """Сообщает, можно ли звать возможность без дополнительных условий.
+
+        Отвечает на вопрос «можно ли звать прямо сейчас», а не «работает ли
+        возможность вообще». У состояния experimental возможность работает,
+        но звать её без явного включения нельзя, поэтому здесь False.
 
         Returns:
-            bool: True, если вызов не блокируется состоянием.
+            bool: True, если вызов разрешён без включения.
         """
         return self in _USABLE
 
@@ -72,12 +76,27 @@ class CapabilityState(StrEnum):
         """
         return self in _OPT_IN
 
+    def allows_call(self, *, opted_in: bool) -> bool:
+        """Решает, разрешён ли вызов в этом состоянии.
 
-#: Состояния, в которых вызов не блокируется.
+        Правило взято из predicates в spec/capabilities.yaml, где оно
+        объявлено нормативным. Выводить его заново в каждой реализации
+        нельзя: шесть SDK выведут шесть разных решений, оставаясь
+        согласными в названиях состояний.
+
+        Args:
+            opted_in (bool): Включил ли вызывающий возможность явно.
+
+        Returns:
+            bool: True, если вызов разрешён.
+        """
+        return self in _USABLE or (opted_in and self in _OPT_IN)
+
+
+#: Состояния, в которых вызов разрешён без дополнительных условий.
 _USABLE: Final[frozenset[CapabilityState]] = frozenset(
     {
         CapabilityState.SUPPORTED,
-        CapabilityState.EXPERIMENTAL,
         CapabilityState.DEGRADED,
         CapabilityState.UNKNOWN,
     }
