@@ -1,0 +1,170 @@
+# ---------------------------------------------------------------------------
+# Funora
+#
+# Credentials come first on purpose. A FunPay session key is not a scoped token:
+# it is the whole account. Anything that could carry one must never be committed,
+# because git history cannot be cleaned out of forks and caches after the fact.
+# ---------------------------------------------------------------------------
+
+# --- Credentials and session material -------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.*
+credentials.*
+golden_key*
+*golden*key*
+cookies.txt
+cookies.json
+*.cookies
+session.json
+session_*.json
+.session/
+auth.json
+*.netrc
+.npmrc
+.pypirc
+
+# --- Captured protocol material -------------------------------------------
+# Raw pages from a signed-in account contain buyer names and message text.
+# Only redacted, structurally skeletonized fixtures belong in the repository.
+captures/
+raw-captures/
+*.raw.html
+*.raw.json
+snapshots/raw/
+debug-dump/
+diagnostics-*.json
+
+# --- Local working notes ---------------------------------------------------
+# Assistant and maintainer scratch space. Never committed.
+.notes/
+
+# --- AI assistants and coding agents ---------------------------------------
+.claude/
+.claude.json
+CLAUDE.md
+.anthropic/
+.cursor/
+.cursorrules
+.cursorignore
+.cursorindexingignore
+.aider*
+.continue/
+.windsurf/
+.windsurfrules
+.codeium/
+.codeiumignore
+.tabnine/
+.cody/
+.sourcegraph/
+.gemini/
+GEMINI.md
+.agent/
+.agents/
+AGENTS.md
+AGENT.md
+.copilot/
+copilot-instructions.md
+.cline*
+.clinerules
+.roo/
+.roomodes
+.roorules
+.specstory/
+.junie/
+.devin/
+.opencode/
+.crush/
+.qodo/
+.pearai/
+.trae/
+.kiro/
+.amazonq/
+.augment/
+.augmentignore
+.mcp.json
+.mcp/
+.llm/
+.ai/
+llm-notes/
+prompts.local.*
+
+# --- Editors and IDEs ------------------------------------------------------
+.idea/
+.vscode/
+!.vscode/extensions.json
+.vs/
+.fleet/
+.zed/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-workspace
+*.sublime-project
+
+# --- Operating system ------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+desktop.ini
+$RECYCLE.BIN/
+
+# --- Logs and temporary files ----------------------------------------------
+*.log
+logs/
+tmp/
+temp/
+.tmp/
+*.tmp
+*.bak
+*.orig
+*.rej
+
+# --- Python ----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.venv/
+venv/
+env/
+ENV/
+.python-version
+.pytest_cache/
+.mypy_cache/
+.dmypy.json
+.pyre/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
