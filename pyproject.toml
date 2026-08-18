@@ -32,7 +32,9 @@ Repository = "https://github.com/Funora-Develop/Funora-python"
 funora-observe = "funora.observe:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.24", "mypy>=1.11", "ruff>=0.6"]
+# PyYAML нужен генератору из tools/codegen.py, а не самому пакету: читать
+# спецификацию приходится при сборке, но не во время работы SDK.
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "mypy>=1.11", "ruff>=0.6", "PyYAML>=6"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/funora"]
