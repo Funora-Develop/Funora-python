@@ -72,6 +72,32 @@ def test_opaque_tags_are_emptied() -> None:
     assert "var secret" not in sk
 
 
+def test_opaque_tags_keep_attributes() -> None:
+    """Проверяет, что у script сохраняются атрибуты, а пропадает содержимое.
+
+    Путь скрипта обезличивается тем же правилом, что и любая другая ссылка, и
+    ничего личного не несёт. Зато по составу скриптов видно, чем страница
+    обновляет себя, а это ровно то, что нужно для канала обновлений.
+    """
+    sk = skeletonize('<html><body><script src="/js/runner-12.js">var x=1;</script></body></html>')
+    assert "<script " in sk
+    assert 'src="/js/{n}"' in sk
+    assert "var x" not in sk
+
+
+def test_path_segment_is_masked_whole() -> None:
+    """Проверяет, что сегмент с цифрами обезличивается целиком, а не по цифрам.
+
+    Соблазн заменять только цифры велик: путь остался бы читаемым. Но сегмент
+    вида ``ivan123`` превратился бы тогда в ``ivan{n}`` и выдал имя. Цифра в
+    сегменте - признак того, что сегмент опознаёт кого-то, и опознающая часть
+    может оказаться не только цифрами.
+    """
+    sk = skeletonize('<html><body><a href="/u/ivan123">t</a></body></html>')
+    assert "ivan" not in sk
+    assert "/u/{n}" in sk
+
+
 def test_class_attribute_is_verbatim() -> None:
     """Проверяет, что class сохраняется дословно: без него селекторы не написать."""
     sk = skeletonize('<div class="a b c">x</div>')
