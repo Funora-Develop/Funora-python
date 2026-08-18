@@ -19,7 +19,7 @@
 
 > **Неофициальный проект.** Funora не аффилирована с FunPay, не одобрена ею и никак с ней не связана.
 > Работает с приватным веб-интерфейсом, который может измениться в любой момент без предупреждения.
-> Использование может привести к блокировке аккаунта и заморозке средств — этот риск несёте вы.
+> Использование может привести к блокировке аккаунта и заморозке средств - этот риск несёте вы.
 > Прочитайте [DISCLAIMER.md](DISCLAIMER.md) прежде, чем строить на этом то, что приносит вам деньги.
 
 ## Статус: `design`
@@ -32,7 +32,7 @@
 
 ## Проект целиком
 
-Funora — это один контракт, реализованный нативно на нескольких языках. Меняется язык,
+Funora - это один контракт, реализованный нативно на нескольких языках. Меняется язык,
 но не ментальная модель: `Client`, сервисы, события, роутер, фильтры, middleware и
 таксономия ошибок означают одно и то же везде.
 
@@ -47,7 +47,7 @@ Funora — это один контракт, реализованный нати
 | [Funora-java](https://github.com/Funora-Develop/Funora-java) | Java SDK. | `planned` |
 | [Funora-dotnet](https://github.com/Funora-Develop/Funora-dotnet) | .NET SDK. | `planned` |
 | [Funora-cpp](https://github.com/Funora-Develop/Funora-cpp) | C++ SDK. | `planned` |
-| [Funora-c](https://github.com/Funora-Develop/Funora-c) | C SDK — самый узкий контракт в проекте. | `planned` |
+| [Funora-c](https://github.com/Funora-Develop/Funora-c) | C SDK - самый узкий контракт в проекте. | `planned` |
 | [Funora-docs](https://github.com/Funora-Develop/Funora-docs) | Документация всех SDK из одного источника. | `design` |
 | [Funora-examples](https://github.com/Funora-Develop/Funora-examples) | Сквозные примеры, которые реально прогоняет CI. | `planned` |
 
@@ -60,9 +60,9 @@ Funora — это один контракт, реализованный нати
 ## Безопасность
 
 Никогда не вставляйте сессионный ключ, сырой HTML со страницы под авторизацией или содержимое
-личной переписки в публичный issue. Сессионный ключ FunPay — это доступ ко всему аккаунту.
+личной переписки в публичный issue. Сессионный ключ FunPay - это доступ ко всему аккаунту.
 Сообщайте приватно через [Security Advisories](https://github.com/Funora-Develop/Funora/security/advisories/new),
-подробности — в [SECURITY.md](https://github.com/Funora-Develop/.github/blob/main/SECURITY.md).
+подробности - в [SECURITY.md](https://github.com/Funora-Develop/.github/blob/main/SECURITY.md).
 
 ## Лицензия
 
