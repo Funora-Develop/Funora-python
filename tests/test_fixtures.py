@@ -28,6 +28,7 @@ PAGES = Path(__file__).parent / "fixtures" / "pages"
 EXPECTED = {
     "orders-trade.logged.ru": ResponseClass.OK,
     "chat.logged.ru": ResponseClass.OK,
+    "chat-thread.logged.ru": ResponseClass.OK,
     "orders-trade.guest.ru": ResponseClass.LOGIN_REQUIRED,
 }
 
@@ -123,3 +124,78 @@ def test_logged_and_guest_markers_do_not_overlap() -> None:
     for sel in only_guest:
         assert guest.css_first(sel) is not None, f"{sel} пропал у гостя"
         assert logged.css_first(sel) is None, f"{sel} нашёлся у вошедшего"
+
+
+def test_system_message_is_recognized_structurally() -> None:
+    """Проверяет, что системное сообщение отличается от пользовательского разметкой.
+
+    Это самая дорогая проверка во всём наборе. Если системное сообщение об оплате
+    отличается от обычного только текстом, покупатель отправляет сообщение с
+    таким же текстом, и бот, доверяющий тексту, выдаёт товар. Признак обязан быть
+    структурным, и подделать его отправитель не должен уметь.
+
+    Признаков три, и на снимке они согласованы полностью: обёртка alert в теле,
+    отсутствие ссылки на автора и ярлык label-primary.
+    """
+    tree = HTMLParser(_read("chat-thread.logged.ru"))
+    messages = tree.css(".chat-msg-item")
+    assert len(messages) == 10, "снимок содержит десять сообщений"
+
+    system, human = [], []
+    for node in messages:
+        (system if node.css_first("a.chat-msg-author-link") is None else human).append(node)
+
+    assert len(system) == 6
+    assert len(human) == 4
+
+    for node in system:
+        assert node.css_first(".chat-msg-body .alert") is not None, (
+            "у системного сообщения обязана быть обёртка alert"
+        )
+        label = node.css_first(".chat-msg-author-label")
+        assert label is not None
+        assert "label-primary" in (label.attributes.get("class") or "")
+
+    for node in human:
+        assert node.css_first(".chat-msg-body .alert") is None, (
+            "у сообщения пользователя обёртки alert быть не должно"
+        )
+
+
+def test_author_link_and_alert_never_coincide() -> None:
+    """Проверяет, что два признака системного сообщения не пересекаются.
+
+    Правило в спецификации фиксирует закрытый отказ: системным сообщение
+    считается, только если обёртка есть и ссылки на автора нет. Проверка нужна
+    затем, что при пересечении признаков такое правило не даст ни одного
+    срабатывания, и отказ будет тихим.
+    """
+    for node in HTMLParser(_read("chat-thread.logged.ru")).css(".chat-msg-item"):
+        has_alert = node.css_first(".chat-msg-body .alert") is not None
+        has_author = node.css_first("a.chat-msg-author-link") is not None
+        assert has_alert != has_author, "признаки обязаны быть взаимно исключающими"
+
+
+def test_message_carries_own_dom_id() -> None:
+    """Проверяет, что у каждого сообщения есть собственный идентификатор в разметке.
+
+    Без него позиция переигрывания не адресует ничего конкретного: знать, что
+    после нашей отметки что-то появилось, и уметь показать, что именно, - разные
+    возможности.
+    """
+    for node in HTMLParser(_read("chat-thread.logged.ru")).css(".chat-msg-item"):
+        assert node.attributes.get("id"), "у сообщения нет идентификатора"
+
+
+def test_message_text_may_contain_foreign_links() -> None:
+    """Проверяет наличие внешних ссылок в тексте сообщения.
+
+    Проверка закрепляет факт, а не желаемое: текст сообщения содержит ссылки,
+    которые ввёл собеседник. Ни один SDK не имеет права по ним ходить, и правило
+    в спецификации опирается на это наблюдение.
+    """
+    links = HTMLParser(_read("chat-thread.logged.ru")).css(".chat-msg-text a[href]")
+    external = [
+        a for a in links if not (a.attributes.get("href") or "").startswith("https://funpay.com")
+    ]
+    assert external, "в снимке есть сообщение со ссылкой на сторонний сайт"
