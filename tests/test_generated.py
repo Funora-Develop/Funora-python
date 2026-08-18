@@ -22,6 +22,7 @@ from pathlib import Path
 
 import pytest
 
+from funora import capabilities as caps
 from funora import errors as mod
 
 #: Корень репозитория, от которого ищется генератор.
@@ -168,3 +169,95 @@ def test_no_error_is_both_unretryable_and_silent() -> None:
                 f"{cls.__name__} требует внятного пояснения: повтор запрещён, "
                 "а действие могло произойти"
             )
+
+
+def test_unknown_capability_does_not_block_the_call() -> None:
+    """Проверяет главное решение раздела возможностей.
+
+    Вызов блокируется только при unsupported, то есть при позитивном
+    свидетельстве отсутствия. Состояние unknown означает «ещё не выяснено»:
+    неудачная проверка не доказывает, что возможности нет, и блокировать по ней
+    значило бы запрещать работу из-за собственной неуверенности.
+
+    Проверка стоит здесь, а не в спецификации, потому что ошибиться тут можно
+    ровно один раз в каждой из шести реализаций, и внешне это будет выглядеть
+    как «SDK ничего не умеет».
+
+    Returns:
+        None
+    """
+    assert caps.CapabilityState.UNKNOWN.usable
+    assert not caps.CapabilityState.UNSUPPORTED.usable
+
+
+def test_experimental_requires_opt_in() -> None:
+    """Проверяет, что experimental требует явного включения.
+
+    Возможность реализована, но контракт может измениться. Без явного согласия
+    вызывающего она недоступна: иначе смена контракта сломает того, кто про
+    экспериментальность не знал.
+
+    Returns:
+        None
+    """
+    assert caps.CapabilityState.EXPERIMENTAL.opt_in_required
+    assert caps.CapabilityState.EXPERIMENTAL.usable
+    for state in caps.CapabilityState:
+        if state is not caps.CapabilityState.EXPERIMENTAL:
+            assert not state.opt_in_required
+
+
+def test_degraded_is_usable() -> None:
+    """Проверяет, что частичная деградация не запрещает вызов.
+
+    Деградация означает, что часть данных со страницы извлечь не удалось.
+    Запрещать вызов целиком означало бы терять и ту часть, которая читается.
+
+    Returns:
+        None
+    """
+    assert caps.CapabilityState.DEGRADED.usable
+
+
+def test_every_capability_has_source_and_initial_state() -> None:
+    """Проверяет полноту таблиц возможностей.
+
+    Пропуск в таблице даёт отказ вида KeyError в момент вызова, то есть в
+    работе, а не на сборке.
+
+    Returns:
+        None
+    """
+    for capability in caps.Capability:
+        assert capability in caps.CAPABILITY_SOURCE
+        assert capability in caps.CAPABILITY_INITIAL
+
+
+def test_probe_capabilities_start_unknown() -> None:
+    """Проверяет согласие источника состояния с начальным значением.
+
+    Возможность, состояние которой выясняется проверкой, не может начинать со
+    значения supported: это означало бы, что проверка уже выполнена, хотя её не
+    было. Такое расхождение делает всю переговорную схему декоративной.
+
+    Returns:
+        None
+    """
+    for capability, source in caps.CAPABILITY_SOURCE.items():
+        if source == "probe":
+            assert caps.CAPABILITY_INITIAL[capability] is caps.CapabilityState.UNKNOWN, (
+                f"{capability.value} выясняется проверкой, но начинает не с unknown"
+            )
+
+
+def test_capability_values_match_spec_names() -> None:
+    """Проверяет, что значение члена совпадает с именем из спецификации.
+
+    Значение уходит в журнал и в сообщения об ошибках, поэтому оно обязано
+    совпадать с тем, что написано в спецификации, а не с именем члена.
+
+    Returns:
+        None
+    """
+    for capability in caps.Capability:
+        assert capability.name == capability.value.replace(".", "_").upper()

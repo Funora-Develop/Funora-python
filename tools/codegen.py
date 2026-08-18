@@ -219,8 +219,138 @@ def render_errors(spec: Path) -> str:
     return "".join(out)
 
 
+def _const(name: str) -> str:
+    """Превращает имя возможности в имя члена перечисления.
+
+    Args:
+        name (str): Имя из спецификации, например ``chats.send_text``.
+
+    Returns:
+        str: Имя члена, например ``CHATS_SEND_TEXT``.
+    """
+    return name.replace(".", "_").replace("-", "_").upper()
+
+
+def render_capabilities(spec: Path) -> str:
+    """Порождает модуль возможностей и их состояний.
+
+    Args:
+        spec (Path): Корень рабочей копии Funora-spec.
+
+    Returns:
+        str: Содержимое модуля.
+    """
+    doc = _load(spec, "spec/capabilities.yaml")
+    states: dict[str, Any] = doc["states"]
+    caps: dict[str, Any] = doc["capabilities"]
+
+    extra = (
+        "Состояний пять, и разница между ними не косметическая. Вызов блокируется\n"
+        "только при unsupported, то есть при позитивном свидетельстве отсутствия.\n"
+        "При unknown вызов выполняется оптимистично: неудачная проверка не\n"
+        "доказывает, что возможности нет, и блокировать по ней значило бы\n"
+        "запрещать работу из-за собственной неуверенности.\n"
+        "\n"
+        "Признаки usable и opt_in_required вынесены в код намеренно. Именно из них\n"
+        "выводится решение «звать или отказать», и если каждая из шести реализаций\n"
+        "выведет его сама, они разойдутся в поведении, оставаясь согласными в\n"
+        "названиях.\n"
+    )
+
+    out = [
+        HEADER.format(
+            title="Возможности адаптера и их состояния.",
+            source="spec/capabilities.yaml",
+            extra=extra,
+        ).replace(
+            "from typing import ClassVar, Final",
+            "from enum import StrEnum\nfrom typing import Final",
+        )
+    ]
+
+    out.append('__all__ = ["CapabilityState", "Capability", "CAPABILITY_SOURCE", ')
+    out.append('"CAPABILITY_INITIAL"]\n')
+
+    out.append("\n\nclass CapabilityState(StrEnum):\n")
+    out.append('    """Состояние возможности в текущем сеансе.\n\n')
+    for key, value in states.items():
+        summary = textwrap.fill(
+            " ".join(str(value["summary"]).split()), width=80, subsequent_indent="        "
+        )
+        out.append(f"    {key}:\n        {summary}\n")
+    out.append('    """\n\n')
+    for key in states:
+        out.append(f'    {key.upper()} = "{key}"\n')
+
+    out.append("\n    @property\n")
+    out.append("    def usable(self) -> bool:\n")
+    out.append('        """Сообщает, можно ли выполнять вызов в этом состоянии.\n\n')
+    out.append("        Returns:\n")
+    out.append("            bool: True, если вызов не блокируется состоянием.\n")
+    out.append('        """\n')
+    out.append("        return self in _USABLE\n")
+
+    out.append("\n    @property\n")
+    out.append("    def opt_in_required(self) -> bool:\n")
+    out.append('        """Сообщает, требуется ли явное согласие вызывающего.\n\n')
+    out.append("        Returns:\n")
+    out.append("            bool: True, если без включения вызов отклоняется.\n")
+    out.append('        """\n')
+    out.append("        return self in _OPT_IN\n")
+
+    usable = [k for k, v in states.items() if v.get("usable")]
+    opt_in = [k for k, v in states.items() if v.get("opt_in_required")]
+    out.append("\n\n#: Состояния, в которых вызов не блокируется.\n")
+    out.append("_USABLE: Final[frozenset[CapabilityState]] = frozenset(\n    {\n")
+    for key in usable:
+        out.append(f"        CapabilityState.{key.upper()},\n")
+    out.append("    }\n)\n")
+    out.append("\n#: Состояния, требующие явного включения вызывающим.\n")
+    out.append("_OPT_IN: Final[frozenset[CapabilityState]] = frozenset(\n    {\n")
+    for key in opt_in:
+        out.append(f"        CapabilityState.{key.upper()},\n")
+    out.append("    }\n)\n")
+
+    out.append("\n\nclass Capability(StrEnum):\n")
+    out.append('    """Возможность адаптера.\n\n')
+    out.append("    Значение члена совпадает с именем возможности в спецификации, поэтому\n")
+    out.append("    перечисление пригодно и для сравнения, и для записи в журнал.\n")
+    out.append('    """\n\n')
+    for name, entry in caps.items():
+        summary = textwrap.fill(
+            " ".join(str(entry["summary"]).split()), width=88, subsequent_indent="    #: "
+        )
+        out.append(f"    #: {summary}\n")
+        out.append(f'    {_const(name)} = "{name}"\n')
+
+    out.append("\n\n#: Откуда берётся состояние возможности.\n")
+    out.append("#:\n")
+    out.append("#: static - известно из спецификации, probe - выясняется проверкой,\n")
+    out.append("#: derived - выводится из состояния других возможностей.\n")
+    out.append("CAPABILITY_SOURCE: Final[dict[Capability, str]] = {\n")
+    for name, entry in caps.items():
+        out.append(f'    Capability.{_const(name)}: "{entry["source"]}",\n')
+    out.append("}\n")
+
+    out.append("\n#: Состояние возможности до первой проверки.\n")
+    out.append("#:\n")
+    out.append("#: Начальное значение unknown означает «ещё не выяснено», а не «нет».\n")
+    out.append("#: Разница определяет, будет вызов выполнен или отклонён.\n")
+    out.append("CAPABILITY_INITIAL: Final[dict[Capability, CapabilityState]] = {\n")
+    for name, entry in caps.items():
+        out.append(
+            f"    Capability.{_const(name)}: CapabilityState.{str(entry['initial']).upper()},\n"
+        )
+    out.append("}\n")
+
+    return "".join(out)
+
+
 #: Что порождается: имя файла в пакете и функция, которая его строит.
-TARGETS: Final[dict[str, Callable[[Path], str]]] = {"errors.py": render_errors}
+TARGETS: Final[dict[str, Callable[[Path], str]]] = {
+    "errors.py": render_errors,
+    "capabilities.py": render_capabilities,
+}
 
 
 def generate(spec: Path) -> dict[str, str]:
