@@ -21,6 +21,15 @@
 from __future__ import annotations
 
 from ._classify import DEFAULT_IDENTITY_CSS, ResponseClass, Signature, Verdict, classify
+from ._observed import Confidence, Observed, Presence
+from ._orders import (
+    Completeness,
+    Defect,
+    OrderListEntry,
+    OrdersPage,
+    Severity,
+    parse_orders_page,
+)
 from ._secret import (
     CallableSecretProvider,
     EnvSecretProvider,
@@ -58,6 +67,17 @@ __all__ = [
     "Fetcher",
     "Observation",
     "TransportSettings",
+    # наблюдаемость
+    "Observed",
+    "Presence",
+    "Confidence",
+    # список заказов
+    "parse_orders_page",
+    "OrdersPage",
+    "OrderListEntry",
+    "Completeness",
+    "Defect",
+    "Severity",
     # возможности
     "Capability",
     "CapabilityState",
