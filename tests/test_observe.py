@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -192,7 +193,12 @@ def test_cli_parses_arguments(tmp_path: Path) -> None:
     """
     secrets = tmp_path / "secrets"
     secrets.mkdir()
-    (secrets / "golden_key").write_text("value", encoding="utf-8")
+    key = secrets / "golden_key"
+    key.write_text("value", encoding="utf-8")
+    # На POSIX источник отвергает файл, доступный посторонним, и это правильно.
+    # pytest создаёт временные файлы с правами 0644, поэтому права выставляются явно.
+    if os.name == "posix":
+        key.chmod(0o600)
 
     code = observe_mod.main([
         "/orders/trade",
