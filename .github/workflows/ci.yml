@@ -36,6 +36,9 @@ jobs:
       - name: Линтер
         run: ruff check src tests
 
+      - name: Форматирование
+        run: ruff format --check src tests
+
       - name: Проверка типов
         run: mypy
 

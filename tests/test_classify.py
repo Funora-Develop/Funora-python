@@ -30,8 +30,12 @@ def _c(html: str = LOGGED, **kw: object) -> object:
     Returns:
         object: Вердикт классификатора.
     """
-    args = {"status": 200, "final_url": f"https://{HOST}/orders", "html": html,
-            "expected_host": HOST}
+    args = {
+        "status": 200,
+        "final_url": f"https://{HOST}/orders",
+        "html": html,
+        "expected_host": HOST,
+    }
     args.update(kw)
     return classify(**args)  # type: ignore[arg-type]
 
@@ -160,9 +164,7 @@ def test_interstitial_wins_over_missing_identity() -> None:
 def test_custom_signature_registry() -> None:
     """Проверяет, что реестр сигнатур подменяется без правки кода."""
     sig = (
-        Signature(
-            name="custom", verdict=ResponseClass.BLOCKED, css=(".stop",), provisional=False
-        ),
+        Signature(name="custom", verdict=ResponseClass.BLOCKED, css=(".stop",), provisional=False),
     )
     v = _c(html='<html><body><div class="stop"></div></body></html>', signatures=sig)
     assert v.cls is ResponseClass.BLOCKED

@@ -1,0 +1,263 @@
+<html lang="T2:a">
+  <head>
+    <meta charset="T5:adp"/>
+    <title>
+      T14:acps
+    </title>
+    <link href="https://funpay.com/{n}/css/main.css" media="T3:a" rel="T10:a"/>
+    <script></script>
+    <script></script>
+    <meta content="T35:adps" name="T8:a"/>
+    <link href="https://funpay.com/account/login" hreflang="T2:a" rel="T9:a"/>
+    <link href="https://funpay.com/account/login" hreflang="T2:a" rel="T9:a"/>
+    <link href="https://funpay.com/en/account/login" hreflang="T2:a" rel="T9:a"/>
+    <link href="https://funpay.com/en/account/login" hreflang="T9:ap" rel="T9:a"/>
+    <script></script>
+    <link as="T4:a" crossorigin href="/{n}/fonts/{n}" rel="T7:a" type="T10:adp"/>
+    <link as="T4:a" crossorigin href="/{n}/fonts/{n}" rel="T7:a" type="T10:adp"/>
+    <link href="/manifest.json" rel="T8:a"/>
+  </head>
+  <body data-app-data="T78:adp">
+    <script></script>
+    <script></script>
+    <noscript></noscript>
+    <div class="wrapper">
+      <div class="wrapper-content">
+        <header id="T6:a">
+          <div class="container">
+            <div id="T13:ap"></div>
+            <nav class="navbar navbar-default">
+              <div class="hide-navbar"></div>
+              <div class="container-fluid">
+                <div class="navbar-header">
+                  <button aria-expanded="T5:a" class="collapsed navbar-toggle navbar-toggle-guest" data-target="T7:ap" data-toggle="T8:a" type="T6:a">
+                    <span class="sr-only">
+                      T17:as
+                    </span>
+                    <span class="icon-bar"></span>
+                    <span class="icon-bar"></span>
+                    <span class="icon-bar"></span>
+                  </button>
+                  <a class="navbar-brand" href="https://funpay.com/">
+                    <img alt="T6:a" class="logo-color" src="/img/layout/logo-funpay.svg"/>
+                  </a>
+                  <form action="https://funpay.com/games/promoFilter" class="navbar-form navbar-left dropdown promo-games-filter" method="T4:a">
+                    <div class="form-group">
+                      <input autocomplete="T3:a" class="form-control dropdown-toggle" data-toggle="T8:a" name="T5:a" placeholder="T18:cds" role="T9:a" type="T4:a"/>
+                      <div class="dropdown-menu dropdown-autocomplete hidden"></div>
+                    </div>
+                    <button class="btn btn-link" type="T6:a">
+                      <i class="fa fa-search"></i>
+                    </button>
+                  </form>
+                </div>
+                <div class="nav-container">
+                  <div class="collapse navbar-collapse no-transition" id="T6:a">
+                    <ul class="nav navbar-nav">
+                      <li class="dropdown">
+                        <a aria-expanded="T5:a" aria-haspopup="T4:a" class="menu-item-info dropdown-toggle" data-toggle="T8:a" href="https://funpay.com/" role="T6:a">
+                          T6:c
+                          <span class="caret"></span>
+                        </a>
+                        <ul class="dropdown-menu">
+                          <li>
+                            <a class="menu-item-trade_info" href="https://funpay.com/trade/info">
+                              T7:c
+                            </a>
+                          </li>
+                          <li>
+                            <a class="menu-item-support" href="https://support.funpay.com/" target="T6:ap">
+                              T12:cs
+                            </a>
+                          </li>
+                          <li>
+                            <a class="menu-item-request" href="https://support.funpay.com/tickets/new" target="T6:ap">
+                              T16:cs
+                            </a>
+                          </li>
+                        </ul>
+                      </li>
+                      <li>
+                        <a class="menu-item-lootery" href="https://funpay.com/promo/lootery">
+                          T7:c
+                        </a>
+                      </li>
+                    </ul>
+                    <ul class="nav navbar-nav navbar-right">
+                      <li>
+                        <a class="menu-item-login" href="https://funpay.com/account/login">
+                          T5:c
+                        </a>
+                      </li>
+                      <li>
+                        <a class="menu-item-register" href="https://funpay.com/account/register">
+                          T18:c
+                        </a>
+                      </li>
+                      <li class="dropdown">
+                        <a class="dropdown-toggle menu-item-langs" data-toggle="T8:a" href="{n}">
+                          T9:cp
+                          <i class="menu-icon menu-icon-lang-ru"></i>
+                          <span class="caret"></span>
+                        </a>
+                        <ul class="dropdown-menu">
+                          <li>
+                            <a class="menu-item-lang" href="https://funpay.com/account/login?{q}">
+                              T7:a
+                              <i class="menu-icon menu-icon-lang-en"></i>
+                            </a>
+                          </li>
+                        </ul>
+                      </li>
+                      <li class="dropdown">
+                        <a class="dropdown-toggle menu-item-currencies" data-toggle="T8:a" href="{n}">
+                          T7:c
+                          <span class="caret"></span>
+                        </a>
+                        <ul class="dropdown-menu">
+                          <li>
+                            <a class="user-cy-switcher menu-item-currency" data-cy="T3:a" href="{n}">
+                              T5:c
+                            </a>
+                          </li>
+                          <li>
+                            <a class="user-cy-switcher menu-item-currency" data-cy="T3:a" href="{n}">
+                              T4:c
+                            </a>
+                          </li>
+                        </ul>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </nav>
+          </div>
+        </header>
+        <section id="T12:ap">
+          <div class="search-fade"></div>
+          <div class="container">
+            <div class="alert-container default-alert">
+              <div class="alert alert-with-icon alert-warning alert-dismissible main-alert" role="T5:a">
+                <button class="close" data-dismiss="T5:a" type="T6:a">
+                  <span aria-hidden="T4:a">
+                    T1:o
+                  </span>
+                  <span class="sr-only">
+                    T5:a
+                  </span>
+                </button>
+                <i class="fa fa-exclamation-circle alert-icon"></i>
+                T26:cps
+              </div>
+            </div>
+          </div>
+          <div class="content-account content-account-login" id="T7:a">
+            <div class="page-content modal-auth modal-sm center-block">
+              <div class="modal-content bg-light-color bg-light-style">
+                <div class="modal-body">
+                  <ul class="nav nav-tabs">
+                    <li class="active">
+                      <a href="https://funpay.com/account/login">
+                        T5:c
+                      </a>
+                    </li>
+                    <li>
+                      <a href="https://funpay.com/account/register">
+                        T18:c
+                      </a>
+                    </li>
+                  </ul>
+                  <form method="T4:a">
+                    <input name="T10:ap" type="T6:a" value="T16:ad"/>
+                    <div class="form-group">
+                      <div class="text-light mb10">
+                        T14:cps
+                      </div>
+                      <div class="social-login">
+                        <a class="social-login-item social-login-item-google" href="https://funpay.com/account/login?{q}">
+                          <svg>
+                            <use href="/{n}/img/layout/sprites.svg#social-logo-google"></use>
+                          </svg>
+                        </a>
+                        <a class="social-login-item social-login-item-vk" href="https://funpay.com/account/login?{q}">
+                          <svg>
+                            <use href="/{n}/img/layout/sprites.svg#social-logo-vk"></use>
+                          </svg>
+                        </a>
+                      </div>
+                    </div>
+                    <div class="form-group">
+                      <div class="text-light mb10">
+                        T36:cps
+                      </div>
+                      <input autofocus class="form-control" name="T5:a" placeholder="T13:cs" required type="T4:a" value/>
+                      <input class="form-control mt10" name="T8:a" placeholder="T6:c" required type="T8:a" value/>
+                    </div>
+                    <div class="form-group">
+                      <a href="https://funpay.com/account/recover">
+                        T14:cps
+                      </a>
+                    </div>
+                    <div class="form-group">
+                      <div class="cf-turnstile" data-sitekey="T24:ad"></div>
+                    </div>
+                    <button class="btn btn-primary btn-block" type="T6:a">
+                      T5:c
+                    </button>
+                  </form>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+      <div class="wrapper-footer">
+        <div class="container">
+          <footer id="T6:a">
+            <div class="footer-block footer-block-strings">
+              <span>
+                T18:ados
+              </span>
+              <a href="https://funpay.com/pages/privacyPolicy">
+                T27:cs
+              </a>
+              <a href="https://funpay.com/pages/cookiePolicy">
+                T15:acs
+              </a>
+              <a href="https://funpay.com/contacts.html" rel="T8:a" target="T6:ap">
+                T8:c
+              </a>
+            </div>
+            <div class="footer-block footer-block-social">
+              <a class="btn btn-gray btn-round" href="https://telegram.me/{n}" rel="T8:a" target="T6:ap">
+                <svg height="T2:d" width="T2:d">
+                  <use href="/{n}/img/layout/sprites.svg#social-logo-telegram"></use>
+                </svg>
+              </a>
+              <a class="btn btn-gray btn-round" href="https://www.youtube.com/c/funpayofficial" rel="T8:a" target="T6:ap">
+                <i class="fab fa-youtube"></i>
+              </a>
+              <a class="btn btn-gray btn-round" href="https://vk.com/funpay" rel="T8:a" target="T6:ap">
+                <i class="fab fa-vk"></i>
+              </a>
+            </div>
+            <div class="footer-block footer-block-als">
+              <img alt src="/img/layout/als-logo.svg"/>
+              <div>
+                T11:c
+                <br/>
+                T1:c
+                <a href="https://www.artlebedev.ru/funpay/" target="T6:ap">
+                  T14:cs
+                  <br/>
+                  T8:c
+                </a>
+              </div>
+            </div>
+          </footer>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

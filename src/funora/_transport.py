@@ -224,9 +224,7 @@ class Fetcher:
 
         raw = response.content
         if len(raw) > self._settings.max_response_bytes:
-            raise ValueError(
-                f"ответ превысил предел {self._settings.max_response_bytes} байт"
-            )
+            raise ValueError(f"ответ превысил предел {self._settings.max_response_bytes} байт")
 
         return Observation(
             status=response.status_code,
