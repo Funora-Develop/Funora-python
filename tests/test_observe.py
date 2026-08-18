@@ -245,3 +245,57 @@ def test_transport_warns_on_debug_logging(caplog: pytest.LogCaptureFixture) -> N
     finally:
         logging.getLogger("httpx").setLevel(logging.NOTSET)
         _transport._warned = False
+
+
+def test_stem_keeps_no_identifiers() -> None:
+    """Проверяет, что идентификаторы не попадают в имя файла.
+
+    Имена файлов видны в списке репозитория, в истории и в результатах поиска.
+    Идентификатору переписки там делать нечего, а на Windows путь с
+    вопросительным знаком вообще не сохранился бы.
+    """
+    assert observe_mod._stem_for("/orders/trade") == "orders_trade"
+    assert observe_mod._stem_for("/users/98765/") == "users_n"
+
+    chat = observe_mod._stem_for("/chat/?node=123456789")
+    assert "123456789" not in chat
+    assert chat.startswith("chat-")
+
+
+def test_stem_separates_different_queries() -> None:
+    """Проверяет, что снимки разных переписок не затирают друг друга.
+
+    Без этого оба легли бы в файл chat.ru.skeleton.txt, и второй захват молча
+    уничтожил бы первый.
+    """
+    one = observe_mod._stem_for("/chat/?node=111111111")
+    two = observe_mod._stem_for("/chat/?node=222222222")
+    assert one != two
+    assert observe_mod._stem_for("/chat/?node=111111111") == one
+
+
+def test_provenance_masks_path_and_url() -> None:
+    """Проверяет, что описание происхождения не хранит идентификаторов.
+
+    Описание лежит рядом с фикстурой в открытом репозитории, поэтому строка
+    запроса и числовые сегменты пути обязаны быть обезличены и здесь тоже.
+    """
+    data = observe_mod.build_provenance(
+        path="/chat/?node=123456789",
+        observation=Observation(
+            status=200,
+            final_url="https://funpay.com/users/98765/?ref=777",
+            html="<html></html>",
+            elapsed_ms=1,
+            redirects=0,
+            content_length=13,
+        ),
+        verdict_cls="ok",
+        verdict_reason="identity_confirmed",
+        provisional=False,
+        locale="ru",
+    )
+    blob = json.dumps(data, ensure_ascii=False)
+    for secret in ("123456789", "98765", "777"):
+        assert secret not in blob, f"идентификатор {secret} попал в описание"
+    assert data["path"] == "/chat/?{q}"
