@@ -15,7 +15,12 @@ from funora._classify import ResponseClass, Signature, classify
 HOST = "funpay.com"
 
 
-def _c(html: str = "<html><body><div>ok</div></body></html>", **kw: object) -> object:
+#: Страница вошедшего пользователя в том виде, в каком её отдаёт площадка.
+#: Признак взят из наблюдения 18.08.2026, а не придуман.
+LOGGED = '<html><body><button class="navbar-toggle navbar-toggle-logged"></button></body></html>'
+
+
+def _c(html: str = LOGGED, **kw: object) -> object:
     """Вызывает классификатор со значениями по умолчанию.
 
     Args:
@@ -182,3 +187,38 @@ def test_broken_html_does_not_crash() -> None:
     """Проверяет устойчивость к битой разметке."""
     v = _c(html="<html><body><div><<>>unclosed")
     assert v.cls in (ResponseClass.OK, ResponseClass.UNKNOWN)
+
+
+def test_guest_navbar_is_confirmed_signature() -> None:
+    """Проверяет распознавание выхода из сессии по подтверждённому признаку.
+
+    Наблюдение 18.08.2026: у вошедшего в шапке стоит navbar-toggle-logged, у
+    гостя - navbar-toggle-guest. Признак структурный и не зависит от языка, что
+    здесь принципиально: локаль привязана к аккаунту, а не к адресу, и через URL
+    её не переключить.
+    """
+    html = '<html><body><button class="navbar-toggle navbar-toggle-guest"></button></body></html>'
+    v = _c(html=html)
+    assert v.cls is ResponseClass.LOGIN_REQUIRED
+    assert v.matched == "guest_navbar"
+    assert not v.provisional, "признак подтверждён наблюдением и не может быть provisional"
+
+
+def test_login_page_container_is_confirmed() -> None:
+    """Проверяет распознавание страницы входа по её контейнеру."""
+    html = '<html><body><div class="content-account content-account-login"></div></body></html>'
+    v = _c(html=html)
+    assert v.cls is ResponseClass.LOGIN_REQUIRED
+    assert not v.provisional
+
+
+def test_default_identity_marker_is_required() -> None:
+    """Проверяет, что без маркера вошедшего страница не считается пригодной.
+
+    До наблюдения маркер был неизвестен и проверка пропускалась. Теперь она
+    включена по умолчанию: страница без маркера может оказаться чем угодно, и
+    считать её пригодной для разбора - это тот самый тихий отказ.
+    """
+    v = _c(html="<html><body><div>нечто</div></body></html>")
+    assert v.cls is ResponseClass.UNKNOWN
+    assert v.reason == "identity_marker_absent"

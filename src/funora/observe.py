@@ -27,7 +27,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ._classify import classify
+from ._classify import DEFAULT_IDENTITY_CSS, classify
 from ._secret import EnvSecretProvider, FileSecretProvider, SecretNotFoundError, SecretProvider
 from ._skeleton import SkeletonError, skeletonize
 from ._transport import Fetcher, Observation, TransportSettings
@@ -52,7 +52,9 @@ def build_provenance(
 
     Args:
         path (str): Запрошенный путь.
-        observation (Observation): Результат обращения.
+        observation (Observation): Результат обращения. Конечный URL записывается
+            обязательно: без него нельзя понять, куда привёл редирект, и запрос
+            английской версии выглядит успешным, хотя вернул русскую страницу.
         verdict_cls (str): Класс ответа по классификатору.
         verdict_reason (str): Причина решения классификатора.
         provisional (bool): Было ли решение принято непроверенной сигнатурой.
@@ -64,6 +66,7 @@ def build_provenance(
     """
     return {
         "path": path,
+        "final_url": observation.final_url,
         "captured_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "locale": locale,
         "http_status": observation.status,
@@ -87,7 +90,7 @@ def observe(
     out_dir: Path,
     provider: SecretProvider,
     secret_name: str = "golden_key",
-    identity_css: str | None = None,
+    identity_css: str | None = DEFAULT_IDENTITY_CSS,
     locale: str = "ru",
     settings: TransportSettings | None = None,
 ) -> int:
@@ -196,7 +199,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--secret-name", default="golden_key", help="имя секрета")
     parser.add_argument(
-        "--identity-css", default=None, help="селектор маркера вошедшего пользователя"
+        "--identity-css",
+        default=DEFAULT_IDENTITY_CSS,
+        help="селектор маркера вошедшего пользователя",
     )
     parser.add_argument("--locale", default="ru", help="локаль интерфейса наблюдения")
     parser.add_argument(

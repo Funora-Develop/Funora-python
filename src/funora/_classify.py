@@ -18,10 +18,10 @@
 
 Шаги 4 и 5 живут в адаптере и в этом модуле не реализованы.
 
-Сигнатуры детекторов сейчас заполнены общими эвристиками: настоящие признаки
-страниц FunPay ещё не наблюдались, и придумывать их было бы хуже, чем честно
-вернуть unknown. Реестр сделан на данных именно для того, чтобы пополняться по
-результатам наблюдений, а не переписыванием кода.
+Признаки выхода из сессии подтверждены наблюдением 18.08.2026 и помечены
+provisional=False. Признаки проверки, блокировки и технических работ остаются
+умозрительными: таких страниц мы ещё не видели, и придумывать их точный вид
+хуже, чем честно вернуть unknown.
 """
 
 from __future__ import annotations
@@ -36,6 +36,7 @@ from selectolax.parser import HTMLParser
 
 __all__ = [
     "ResponseClass",
+    "DEFAULT_IDENTITY_CSS",
     "Verdict",
     "Signature",
     "classify",
@@ -112,9 +113,33 @@ class Verdict:
         return self.cls is ResponseClass.OK
 
 
-#: Сигнатуры по умолчанию. Все помечены provisional: настоящие страницы FunPay
-#: ещё не наблюдались. Пополняются по результатам работы funora-observe.
+#: Селектор, подтверждающий, что страница отдана вошедшему пользователю.
+#:
+#: Наблюдение 18.08.2026 показало пару признаков, различающих состояния: у
+#: вошедшего в шапке стоит navbar-toggle-logged, у гостя - navbar-toggle-guest.
+#: Признак структурный и не зависит от языка интерфейса, что здесь принципиально:
+#: локаль привязана к аккаунту, а не к адресу, и через URL её не переключить.
+DEFAULT_IDENTITY_CSS: Final[str] = ".navbar-toggle-logged"
+
+#: Сигнатуры по умолчанию.
+#:
+#: Признаки выхода из сессии подтверждены наблюдением и помечены provisional=False.
+#: Признаки проверки, блокировки и технических работ остаются умозрительными:
+#: таких страниц мы ещё не видели, и придумывать их точный вид хуже, чем честно
+#: вернуть unknown.
 DEFAULT_SIGNATURES: Final[tuple[Signature, ...]] = (
+    Signature(
+        name="guest_navbar",
+        verdict=ResponseClass.LOGIN_REQUIRED,
+        css=(".navbar-toggle-guest", ".menu-item-login", ".menu-item-register"),
+        provisional=False,
+    ),
+    Signature(
+        name="login_page",
+        verdict=ResponseClass.LOGIN_REQUIRED,
+        css=(".content-account-login", ".modal-auth"),
+        provisional=False,
+    ),
     Signature(
         name="login_form",
         verdict=ResponseClass.LOGIN_REQUIRED,
@@ -186,7 +211,7 @@ def classify(
     final_url: str,
     html: str,
     expected_host: str,
-    identity_css: str | None = None,
+    identity_css: str | None = DEFAULT_IDENTITY_CSS,
     signatures: tuple[Signature, ...] = DEFAULT_SIGNATURES,
 ) -> Verdict:
     """Классифицирует ответ площадки.
@@ -199,8 +224,9 @@ def classify(
         html (str): Тело ответа.
         expected_host (str): Хост, которому должен принадлежать конечный URL.
         identity_css (str | None): Селектор элемента, который присутствует только
-            на страницах, отданных вошедшему пользователю. Если не задан, шаг
-            проверки личности пропускается и это отражается в причине.
+            на страницах, отданных вошедшему пользователю. По умолчанию берётся
+            подтверждённый наблюдением признак. Передайте None, чтобы пропустить
+            шаг проверки личности; это отразится в причине.
         signatures (tuple[Signature, ...]): Реестр сигнатур детекторов.
 
     Returns:
