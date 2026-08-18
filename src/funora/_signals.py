@@ -34,6 +34,9 @@ __all__ = [
     "collect",
     "compare",
     "format_report",
+    "Relations",
+    "relations",
+    "format_relations",
 ]
 
 #: Атрибуты, значения которых сравниваются между чтениями.
@@ -225,4 +228,127 @@ def format_report(changes: list[Change], *, only_changed: bool = True) -> str:
         lines.append("  изменений нет")
     lines.append("")
     lines.append("  всего значений: " + str(len(changes)) + ", без изменений: " + str(stable))
+    return "\n".join(lines)
+
+
+@dataclass(frozen=True, slots=True)
+class Relations:
+    """Соотношения между значениями внутри одного снимка.
+
+    Наружу выходят только количества. Ни одно значение атрибута в результат не
+    попадает, поэтому режим не ослабляет защиту, ради которой скелет прячет
+    значения.
+
+    Args:
+        contacts (int): Сколько элементов диалога найдено.
+        equal (int): У скольких data-node-msg совпадает с data-user-msg.
+        differing (int): У скольких значения различаются.
+        incomplete (int): У скольких одного из атрибутов нет.
+        unread_badge (str): Состояние счётчика непрочитанного в шапке:
+            ``"скрыт"``, ``"виден"`` либо ``"не найден"``.
+    """
+
+    contacts: int
+    equal: int
+    differing: int
+    incomplete: int
+    unread_badge: str
+
+
+def relations(html: str) -> Relations:
+    """Считает соотношения пары позиций по всем диалогам снимка.
+
+    Режим отвечает на вопрос, который сравнением двух чтений не решается.
+    data-user-msg может означать «последнее прочитанное этим аккаунтом» либо
+    «последнее написанное этим аккаунтом», и своя отправка двигает поле при
+    обеих трактовках. Но по списку целиком версии расходятся: если счётчик
+    непрочитанного пуст, а значения расходятся у многих диалогов, то поле не
+    может быть отметкой прочтения.
+
+    Args:
+        html (str): Тело страницы списка диалогов.
+
+    Returns:
+        Relations: Количества и состояние счётчика непрочитанного.
+    """
+    tree = HTMLParser(html)
+
+    equal = differing = incomplete = 0
+    contacts = tree.css("a.contact-item")
+    for node in contacts:
+        attrs = node.attributes or {}
+        node_msg = attrs.get("data-node-msg")
+        user_msg = attrs.get("data-user-msg")
+        if not node_msg or not user_msg:
+            incomplete += 1
+        elif node_msg == user_msg:
+            equal += 1
+        else:
+            differing += 1
+
+    badge = tree.css_first("span.badge-chat")
+    if badge is None:
+        state = "не найден"
+    else:
+        state = "скрыт" if "hidden" in (badge.attributes.get("class") or "") else "виден"
+
+    return Relations(
+        contacts=len(contacts),
+        equal=equal,
+        differing=differing,
+        incomplete=incomplete,
+        unread_badge=state,
+    )
+
+
+def format_relations(rel: Relations) -> str:
+    """Составляет отчёт о соотношениях и о том, что из них следует.
+
+    Толкование печатается рядом с числами намеренно. Без него отчёт выглядит
+    набором цифр, а решение по нему всё равно придётся принимать, и принято оно
+    будет по памяти.
+
+    Args:
+        rel (Relations): Посчитанные соотношения.
+
+    Returns:
+        str: Готовый к печати отчёт.
+    """
+    lines = [
+        f"  диалогов:                  {rel.contacts}",
+        f"  позиции совпадают:         {rel.equal}",
+        f"  позиции различаются:       {rel.differing}",
+        f"  атрибут отсутствует:       {rel.incomplete}",
+        f"  счётчик непрочитанного:    {rel.unread_badge}",
+        "",
+    ]
+
+    if rel.contacts == 0:
+        lines.append("  диалогов не найдено, толковать нечего")
+        return "\n".join(lines)
+
+    if rel.unread_badge == "скрыт" and rel.differing > 0:
+        lines += [
+            f"  Непрочитанного нет, а позиции расходятся у {rel.differing} диалогов.",
+            "  Значит data-user-msg не отметка прочтения: будь она отметкой,",
+            "  при пустом счётчике расхождений не было бы ни одного.",
+            "  Остаётся трактовка «последнее написанное этим аккаунтом», и",
+            "  признак непрочитанного придётся искать иначе.",
+        ]
+    elif rel.unread_badge == "скрыт" and rel.differing == 0:
+        lines += [
+            "  Непрочитанного нет, и позиции совпадают у всех диалогов.",
+            "  Это отвечает трактовке «последнее прочитанное». Обратная",
+            "  трактовка потребовала бы, чтобы последнее сообщение во всех",
+            f"  {rel.contacts} диалогах было написано вами, что неправдоподобно.",
+        ]
+    elif rel.unread_badge == "виден":
+        lines += [
+            "  Непрочитанное есть. Число расхождений имеет смысл сравнить с",
+            "  числом непрочитанных диалогов в интерфейсе: совпало - отметка",
+            "  прочтения, расхождений заметно больше - последнее написанное.",
+        ]
+    else:
+        lines.append("  счётчик непрочитанного не найден, вывод сделать нельзя")
+
     return "\n".join(lines)
