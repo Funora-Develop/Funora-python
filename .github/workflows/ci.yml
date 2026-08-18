@@ -26,6 +26,15 @@ jobs:
         with:
           persist-credentials: false
 
+      # Спецификация нужна, чтобы сверить обещанные ею селекторы с настоящими
+      # снимками страниц. Проверить это можно только здесь: снимки лежат в этом
+      # репозитории, а перечень селекторов - в том.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Funora-Develop/Funora-spec
+          path: .funora-spec
+          persist-credentials: false
+
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
@@ -44,3 +53,19 @@ jobs:
 
       - name: Тесты
         run: pytest -q
+        env:
+          FUNORA_SPEC_DIR: ${{ github.workspace }}/.funora-spec
+
+      # Отдельным шагом, потому что молчаливый пропуск здесь недопустим. Набор
+      # сверки селекторов пропускает себя, если спецификация недоступна, и без
+      # этой проверки отсутствие сверки выглядело бы как зелёная сборка.
+      - name: Сверка селекторов выполнена, а не пропущена
+        run: |
+          out=$(pytest tests/test_spec_selectors.py -q)
+          echo "$out"
+          if echo "$out" | grep -q skipped; then
+            echo "сверка селекторов пропущена: спецификация недоступна"
+            exit 1
+          fi
+        env:
+          FUNORA_SPEC_DIR: ${{ github.workspace }}/.funora-spec
