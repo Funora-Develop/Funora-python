@@ -63,9 +63,7 @@ def _load_inventory() -> list[dict[str, object]]:
 ENTRIES = _load_inventory()
 
 #: Причина пропуска, общая для всех проверок набора.
-SKIP_REASON = (
-    "переменная FUNORA_SPEC_DIR не задана или не указывает на рабочую копию Funora-spec"
-)
+SKIP_REASON = "переменная FUNORA_SPEC_DIR не задана или не указывает на рабочую копию Funora-spec"
 
 pytestmark = pytest.mark.skipif(not ENTRIES, reason=SKIP_REASON)
 
