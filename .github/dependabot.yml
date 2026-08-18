@@ -1,0 +1,13 @@
+# Actions in release workflows are pinned by commit SHA. Pins do not age well on
+# their own — Dependabot is what keeps them current without giving up the pinning.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "ci"
+    labels:
+      - "type:refactor"
+    open-pull-requests-limit: 3
