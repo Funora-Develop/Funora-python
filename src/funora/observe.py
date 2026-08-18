@@ -18,10 +18,18 @@
 Он не выполняет операций записи, не сохраняет сырой HTML и не ходит по ссылкам
 дальше запрошенной страницы.
 
-Отдельно стоит режим ``--compare``. Он нужен для первого вопроса: скелет прячет
+Отдельно стоят два режима, которых требует устройство скелета.
+
+Режим ``--compare``. Он нужен для первого вопроса: скелет прячет
 значения, а счётчик и хеш состояния различаются не формой, а поведением во
 времени. Режим читает страницу дважды, сравнивает значения в памяти и печатает
 только характер изменения. Файлов он не создаёт вовсе.
+
+Режим ``--relations`` решает то, что сравнением двух чтений не решается вовсе.
+Смысл атрибута data-user-msg не выводится из наблюдения за одним диалогом: своя
+отправка двигает его и при трактовке «последнее прочитанное», и при трактовке
+«последнее написанное». По списку целиком версии расходятся, и режим считает
+соотношения по всем диалогам сразу, не показывая ни одного значения.
 """
 
 from __future__ import annotations
@@ -37,11 +45,11 @@ from time import monotonic
 
 from ._classify import DEFAULT_IDENTITY_CSS, classify
 from ._secret import EnvSecretProvider, FileSecretProvider, SecretNotFoundError, SecretProvider
-from ._signals import collect, compare, format_report
+from ._signals import collect, compare, format_relations, format_report, relations
 from ._skeleton import SKELETON_FORMAT, SkeletonError, mask_path, skeletonize
 from ._transport import Fetcher, Observation, TransportSettings
 
-__all__ = ["main", "observe", "observe_compare", "build_provenance"]
+__all__ = ["main", "observe", "observe_compare", "observe_relations", "build_provenance"]
 
 
 def build_provenance(
@@ -317,6 +325,69 @@ def observe_compare(
     return 0
 
 
+def observe_relations(
+    *,
+    path: str,
+    provider: SecretProvider,
+    secret_name: str = "golden_key",
+    identity_css: str | None = DEFAULT_IDENTITY_CSS,
+    settings: TransportSettings | None = None,
+) -> int:
+    """Читает страницу один раз и сообщает соотношения между позициями.
+
+    Режим отвечает на вопрос, который сравнением двух чтений не решается.
+    Атрибут data-user-msg может означать «последнее прочитанное этим аккаунтом»
+    либо «последнее написанное этим аккаунтом», и своя отправка двигает его при
+    обеих трактовках, поэтому наблюдение за одним диалогом версии не разводит.
+    По списку целиком разводит: если счётчик непрочитанного пуст, а позиции
+    расходятся у многих диалогов, отметкой прочтения поле быть не может.
+
+    Наружу выходят только количества. Ни одно значение атрибута не печатается и
+    на диск не попадает.
+
+    Args:
+        path (str): Путь страницы списка диалогов.
+        provider (SecretProvider): Источник сессионного секрета.
+        secret_name (str): Логическое имя секрета в источнике.
+        identity_css (str | None): Селектор маркера вошедшего пользователя.
+        settings (TransportSettings | None): Настройки транспорта.
+
+    Returns:
+        int: Код возврата процесса: 0 - страница получена и пригодна для разбора,
+        2 - получена, но классифицирована как перехватчик или неизвестная,
+        1 - обращение не удалось.
+    """
+    cfg = settings or TransportSettings()
+    host = cfg.base_url.split("//", 1)[-1].split("/", 1)[0]
+
+    try:
+        secret = provider.get(secret_name)
+    except SecretNotFoundError as exc:
+        print(f"секрет недоступен: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        with Fetcher(secret, settings=cfg) as fetcher:
+            obs = fetcher.fetch(path)
+    except Exception as exc:
+        print(f"обращение не удалось: {type(exc).__name__}", file=sys.stderr)
+        return 1
+
+    verdict = classify(
+        status=obs.status,
+        final_url=obs.final_url,
+        html=obs.html,
+        expected_host=host,
+        identity_css=identity_css,
+    )
+    if not verdict.is_ok:
+        print(f"страница непригодна: {verdict.cls} ({verdict.reason})", file=sys.stderr)
+        return 2
+
+    print(format_relations(relations(obs.html)))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Точка входа командной строки.
 
@@ -359,6 +430,16 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
 
+    parser.add_argument(
+        "--relations",
+        action="store_true",
+        help=(
+            "одно чтение; печатает, у скольких диалогов позиции совпадают, и "
+            "состояние счётчика непрочитанного. Значений не показывает и файлов "
+            "не создаёт"
+        ),
+    )
+
     args = parser.parse_args(argv)
 
     provider: SecretProvider
@@ -368,6 +449,14 @@ def main(argv: list[str] | None = None) -> int:
         provider = EnvSecretProvider()
 
     settings = TransportSettings(base_url=args.base_url)
+    if args.relations:
+        return observe_relations(
+            path=args.path,
+            provider=provider,
+            secret_name=args.secret_name,
+            identity_css=args.identity_css,
+            settings=settings,
+        )
     if args.compare:
         return observe_compare(
             path=args.path,

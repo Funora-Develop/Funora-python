@@ -8,7 +8,17 @@
 
 from __future__ import annotations
 
-from funora._signals import ATTR_ALLOWLIST, ChangeKind, collect, compare, format_report
+from pathlib import Path
+
+from funora._signals import (
+    ATTR_ALLOWLIST,
+    ChangeKind,
+    collect,
+    compare,
+    format_relations,
+    format_report,
+    relations,
+)
 
 
 def _page(node_msg: str, user_msg: str, chat_tag: str, dialog: str = "700000001") -> str:
@@ -129,3 +139,66 @@ def test_identical_reads_report_no_changes() -> None:
     page = _page("1000000001", "1000000001", "aa11bb22")
     report = format_report(compare(collect(page), collect(page)))
     assert "изменений нет" in report
+
+
+def _fixture(name: str) -> str:
+    """Читает снимок страницы.
+
+    Args:
+        name (str): Имя снимка без расширения.
+
+    Returns:
+        str: Содержимое скелета.
+    """
+    path = Path(__file__).parent / "fixtures" / "pages" / f"{name}.skeleton.txt"
+    return path.read_text(encoding="utf-8")
+
+
+def test_relations_counts_all_contacts() -> None:
+    """Проверяет подсчёт соотношений по списку диалогов."""
+    rel = relations(_fixture("chat.logged.ru"))
+    assert rel.contacts == 47
+    assert rel.equal + rel.differing + rel.incomplete == rel.contacts
+
+
+def test_positions_are_equal_while_nothing_is_unread() -> None:
+    """Проверяет наблюдение, отвечающее на смысл data-user-msg.
+
+    У всех диалогов снимка позиции совпадают, а счётчик непрочитанного скрыт.
+    Трактовка «последнее написанное этим аккаунтом» потребовала бы, чтобы
+    последнее сообщение во всех сорока семи диалогах было написано владельцем
+    аккаунта. Трактовка «последнее прочитанное» объясняет то же самое без
+    натяжки.
+    """
+    rel = relations(_fixture("chat.logged.ru"))
+    assert rel.differing == 0
+    assert rel.equal == 47
+    assert rel.unread_badge == "скрыт"
+
+
+def test_relations_report_states_the_conclusion() -> None:
+    """Проверяет, что отчёт печатает вывод, а не только числа.
+
+    Без вывода отчёт остаётся набором цифр, а решение по нему всё равно
+    придётся принимать - и принято оно будет по памяти.
+    """
+    text = format_relations(relations(_fixture("chat.logged.ru")))
+    assert "последнее прочитанное" in text
+
+
+def test_relations_leaks_no_values() -> None:
+    """Проверяет, что в отчёт не попадают значения атрибутов."""
+    html = (
+        '<html><body><a class="contact-item" data-id="999" '
+        'data-node-msg="1234567890" data-user-msg="1234567890"></a></body></html>'
+    )
+    text = format_relations(relations(html))
+    for value in ("999", "1234567890"):
+        assert value not in text
+
+
+def test_relations_handles_page_without_contacts() -> None:
+    """Проверяет поведение на странице без списка диалогов."""
+    rel = relations("<html><body><div>пусто</div></body></html>")
+    assert rel.contacts == 0
+    assert "толковать нечего" in format_relations(rel)
