@@ -312,9 +312,7 @@ class FileSecretProvider:
         if self._check and os.name == "posix":
             mode = path.stat().st_mode & 0o077
             if mode:
-                raise SecretNotFoundError(
-                    f"файл {path} доступен посторонним; ожидаются права 0600"
-                )
+                raise SecretNotFoundError(f"файл {path} доступен посторонним; ожидаются права 0600")
 
         value = path.read_text(encoding="utf-8").strip()
         if not value:

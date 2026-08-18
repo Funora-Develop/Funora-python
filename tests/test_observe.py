@@ -16,6 +16,7 @@ import pytest
 from funora import _transport
 from funora import observe as observe_mod
 from funora._secret import CallableSecretProvider, Secret, SecretNotFoundError
+from funora._skeleton import SKELETON_FORMAT
 from funora._transport import Observation, TransportSettings
 
 CANARY_TEXT = "Иван Петров"
@@ -145,12 +146,19 @@ def test_provenance_fields(tmp_path: Path) -> None:
     observe_mod.observe(path="/orders/trade", out_dir=tmp_path, provider=_provider(), locale="en")
     data = json.loads((tmp_path / "orders_trade.en.provenance.json").read_text(encoding="utf-8"))
     for key in (
-        "path", "final_url", "captured_at", "locale", "http_status", "classification",
-        "classification_reason", "classification_provisional", "format",
+        "path",
+        "final_url",
+        "captured_at",
+        "locale",
+        "http_status",
+        "classification",
+        "classification_reason",
+        "classification_provisional",
+        "format",
     ):
         assert key in data, f"в описании нет поля {key}"
     assert data["locale"] == "en"
-    assert data["format"] == "structural-skeleton-v1"
+    assert data["format"] == SKELETON_FORMAT
 
 
 def test_login_page_returns_code_2(tmp_path: Path) -> None:
@@ -201,12 +209,17 @@ def test_cli_parses_arguments(tmp_path: Path) -> None:
     if os.name == "posix":
         key.chmod(0o600)
 
-    code = observe_mod.main([
-        "/orders/trade",
-        "--out", str(tmp_path / "out"),
-        "--secret-file", str(secrets),
-        "--locale", "ru",
-    ])
+    code = observe_mod.main(
+        [
+            "/orders/trade",
+            "--out",
+            str(tmp_path / "out"),
+            "--secret-file",
+            str(secrets),
+            "--locale",
+            "ru",
+        ]
+    )
     assert code == 0
     assert (tmp_path / "out" / "orders_trade.ru.skeleton.txt").exists()
 

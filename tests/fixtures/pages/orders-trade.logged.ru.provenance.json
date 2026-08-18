@@ -1,0 +1,15 @@
+{
+  "captured_at": "2026-08-18T14:08:55+00:00",
+  "classification": "ok",
+  "classification_provisional": false,
+  "classification_reason": "no_signature_matched_identity_unchecked",
+  "content_length": 20223,
+  "converted_from": "structural-skeleton-v1",
+  "elapsed_ms": 427,
+  "format": "structural-skeleton-v2",
+  "http_status": 200,
+  "locale": "ru",
+  "note": "Структурный скелет: текст заменён подписями, сегменты путей с идентификаторами обезличены. Сырой HTML не сохраняется.",
+  "path": "/orders/trade",
+  "redirects": 0
+}

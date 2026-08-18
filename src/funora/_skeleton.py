@@ -15,6 +15,10 @@
     непечатаемые латиницей - ``{t}``. ``/orders/12345`` превращается в
     ``/orders/{n}``: видно, что это ссылка на заказ, но не видно какой.
   * Содержимое script и style выбрасывается целиком.
+  * Результат остаётся разбираемым HTML: пустые элементы записываются парой
+    тегов, и только настоящие void-теги - одиночным. Это позволяет применять
+    скелет как фикстуру и проверять на нём селекторы тем же парсером, которым
+    разбирается настоящая страница.
 
 Классы символов в подписи: ``d`` цифры, ``a`` латиница, ``c`` кириллица,
 ``s`` пробельные, ``p`` пунктуация ASCII, ``o`` прочее.
@@ -28,7 +32,13 @@ from typing import Final
 
 from selectolax.parser import HTMLParser, Node
 
-__all__ = ["skeletonize", "text_signature", "SkeletonError"]
+__all__ = ["skeletonize", "text_signature", "SkeletonError", "SKELETON_FORMAT"]
+
+#: Имя формата, записываемое в описание происхождения фикстуры.
+#:
+#: Версия 1 записывала пустые элементы как ``<div/>`` и потому не разбиралась
+#: HTML-парсером. Файлы той версии несовместимы с этой и требуют преобразования.
+SKELETON_FORMAT: Final[str] = "structural-skeleton-v2"
 
 #: Атрибуты, значение которых обрабатывается как путь.
 _URL_ATTRS: Final[frozenset[str]] = frozenset({"href", "src", "action", "formaction", "data-url"})
@@ -38,6 +48,39 @@ _VERBATIM_ATTRS: Final[frozenset[str]] = frozenset({"class"})
 
 #: Теги, содержимое которых не сохраняется вообще.
 _OPAQUE_TAGS: Final[frozenset[str]] = frozenset({"script", "style", "noscript", "template"})
+
+#: Теги, которые в HTML не имеют закрывающей пары.
+#:
+#: Список нужен затем, что запись ``<div/>`` в HTML не означает пустой элемент:
+#: разбор откроет div и вложит в него весь остаток документа. Для script это ещё
+#: хуже - его содержимое считается сырым текстом до закрывающего тега, которого
+#: нет, и в дерево не попадает вообще ничего. Скелет обязан читаться тем же
+#: парсером, что и страница, иначе он не годится ни в фикстуры, ни в проверку.
+_VOID_TAGS: Final[frozenset[str]] = frozenset(
+    {
+        "area",
+        "base",
+        "br",
+        "col",
+        "embed",
+        "hr",
+        "img",
+        "input",
+        "link",
+        "meta",
+        "param",
+        "source",
+        "track",
+        "wbr",
+    }
+)
+
+#: Строгая форма подписи текстового узла.
+#:
+#: Проверка по этому выражению, а не по «начинается с T и содержит двоеточие»:
+#: строка вида ``Total: 500`` подходит под нестрогое условие и прошла бы
+#: самопроверку как подпись, унеся с собой настоящий текст страницы.
+_SIGNATURE_RE: Final[re.Pattern[str]] = re.compile(r"^T[1-9][0-9]*:[dacspo]+$")
 
 #: Подпись сегмента пути, содержащего цифры.
 _SEG_NUM: Final[str] = "{n}"
@@ -177,7 +220,7 @@ def _render(node: Node, out: list[str], depth: int) -> None:
         return
 
     if tag in _OPAQUE_TAGS:
-        out.append(f"{pad}<{tag}/>")
+        out.append(f"{pad}<{tag}></{tag}>")
         return
 
     attrs = node.attributes or {}
@@ -194,7 +237,10 @@ def _render(node: Node, out: list[str], depth: int) -> None:
 
     children = list(node.iter(include_text=True))
     if not children:
-        out.append(f"{pad}<{head}/>")
+        if tag in _VOID_TAGS:
+            out.append(f"{pad}<{head}/>")
+        else:
+            out.append(f"{pad}<{head}></{tag}>")
         return
 
     out.append(f"{pad}<{head}>")
@@ -218,7 +264,7 @@ def _self_check(skeleton: str) -> None:
     """
     for line in skeleton.splitlines():
         body = line.strip()
-        if body.startswith("T") and ":" in body:
+        if _SIGNATURE_RE.match(body):
             continue
         if not body.startswith("<"):
             raise SkeletonError(f"строка не является ни подписью, ни тегом: {body[:60]}")
