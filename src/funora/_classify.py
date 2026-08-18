@@ -37,6 +37,7 @@ from selectolax.parser import HTMLParser
 __all__ = [
     "ResponseClass",
     "DEFAULT_IDENTITY_CSS",
+    "DEFAULT_TEXT_EXCLUDE",
     "Verdict",
     "Signature",
     "classify",
@@ -186,11 +187,33 @@ _HARD_STATUS: Final[dict[int, tuple[ResponseClass, str]]] = {
 _TEXT_LIMIT: Final[int] = 200_000
 
 
-def _page_text(html: str) -> str:
+#: Контейнеры, содержимое которых пишет не площадка, а люди.
+#:
+#: Текстовые сигнатуры по ним не ищутся, и это не осторожность, а исправление
+#: уязвимости. Без исключения покупателю достаточно написать в переписку
+#: «мой аккаунт заблокирован» или «там captcha вылезла», чтобы весь конвейер
+#: признал страницу блокировкой или проверкой и остановил бота. Шесть обычных
+#: сообщений из шести давали такой отказ, и ни одно не требовало доступа к
+#: чужому аккаунту.
+#:
+#: Перечень объявляет адаптер страницы: он знает, где на ней чужой ввод.
+DEFAULT_TEXT_EXCLUDE: Final[tuple[str, ...]] = (
+    ".chat-message-list",
+    ".chat-msg-text",
+    ".contact-item-message",
+    ".media-user-name",
+    ".orders-table",
+    ".order-desc",
+)
+
+
+def _page_text(html: str, exclude: tuple[str, ...] = ()) -> str:
     """Извлекает видимый текст страницы в нижнем регистре.
 
     Args:
         html (str): Исходный HTML.
+        exclude (tuple[str, ...]): Селекторы контейнеров, содержимое которых
+            в текст не попадает. Туда отправляется всё, что пишут пользователи.
 
     Returns:
         str: Текст страницы, обрезанный до предела и приведённый к нижнему регистру.
@@ -199,6 +222,12 @@ def _page_text(html: str) -> str:
         tree = HTMLParser(html[:_TEXT_LIMIT])
     except Exception:
         return ""
+    for selector in exclude:
+        try:
+            for node in tree.css(selector):
+                node.decompose()
+        except Exception:
+            continue
     body = tree.body or tree.root
     if body is None:
         return ""
@@ -213,6 +242,7 @@ def classify(
     expected_host: str,
     identity_css: str | None = DEFAULT_IDENTITY_CSS,
     signatures: tuple[Signature, ...] = DEFAULT_SIGNATURES,
+    text_exclude: tuple[str, ...] = DEFAULT_TEXT_EXCLUDE,
 ) -> Verdict:
     """Классифицирует ответ площадки.
 
@@ -228,6 +258,9 @@ def classify(
             подтверждённый наблюдением признак. Передайте None, чтобы пропустить
             шаг проверки личности; это отразится в причине.
         signatures (tuple[Signature, ...]): Реестр сигнатур детекторов.
+        text_exclude (tuple[str, ...]): Селекторы контейнеров с чужим вводом.
+            Их содержимое не участвует в поиске текстовых сигнатур: иначе
+            собеседник останавливает бота одним словом в переписке.
 
     Returns:
         Verdict: Класс ответа с причиной и признаком того, было ли решение принято
@@ -283,7 +316,7 @@ def classify(
                     continue
         if sig.patterns:
             if text is None:
-                text = _page_text(html)
+                text = _page_text(html, text_exclude)
             for pattern in sig.patterns:
                 if re.search(pattern, text):
                     return Verdict(

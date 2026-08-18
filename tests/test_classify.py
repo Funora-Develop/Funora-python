@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from funora._classify import ResponseClass, Signature, classify
+from funora._classify import DEFAULT_TEXT_EXCLUDE, ResponseClass, Signature, classify
 
 HOST = "funpay.com"
 
@@ -224,3 +224,94 @@ def test_default_identity_marker_is_required() -> None:
     v = _c(html="<html><body><div>нечто</div></body></html>")
     assert v.cls is ResponseClass.UNKNOWN
     assert v.reason == "identity_marker_absent"
+
+
+#: Сообщения, которые собеседник может написать в переписку не злонамеренно.
+#: Каждое из них останавливало бота до исправления.
+HOSTILE_TEXTS = [
+    "там captcha вылезла, что делать",
+    "мой аккаунт заблокирован, верните деньги",
+    "выдали бан ни за что",
+    "подтвердите, что вы продавец этого товара",
+    "у вас доступ запрещён к разделу?",
+    "ведутся технические работы у вас?",
+]
+
+
+@pytest.mark.parametrize("text", HOSTILE_TEXTS)
+def test_counterparty_text_cannot_stop_the_client(text: str) -> None:
+    """Проверяет, что сообщение собеседника не останавливает клиента.
+
+    Это исправление уязвимости, а не украшение. Текстовые сигнатуры искались по
+    всей странице, включая переписку, которую пишет покупатель. Шести обычных
+    сообщений из шести хватало, чтобы конвейер признал страницу блокировкой или
+    проверкой: собеседник останавливал чужого бота одним словом, не имея доступа
+    ни к аккаунту, ни к площадке.
+
+    Args:
+        text (str): Сообщение, написанное собеседником.
+
+    Returns:
+        None
+    """
+    html = (
+        f'<html><body>{LOGGED}<div class="chat-message-list">'
+        f'<div class="chat-msg-text">{text}</div></div></body></html>'
+    )
+    v = classify(status=200, final_url=f"https://{HOST}/chat/", html=html, expected_host=HOST)
+    assert v.cls is ResponseClass.OK, f"сообщение собеседника дало вердикт {v.cls}"
+
+
+@pytest.mark.parametrize("text", HOSTILE_TEXTS)
+def test_same_text_outside_user_containers_still_detected(text: str) -> None:
+    """Проверяет, что вне контейнеров чужого ввода сигнатуры работают.
+
+    Исключение обязано сузить область поиска, а не отключить его. Если бы вместе
+    с уязвимостью пропало и распознавание, настоящая страница блокировки прошла
+    бы как обычная, и клиент продолжил бы стучаться, подтверждая подозрение.
+
+    Args:
+        text (str): Тот же текст, но в теле страницы, а не в переписке.
+
+    Returns:
+        None
+    """
+    v = classify(
+        status=200,
+        final_url=f"https://{HOST}/",
+        html=f"<html><body><p>{text}</p></body></html>",
+        expected_host=HOST,
+    )
+    assert v.cls is not ResponseClass.OK
+
+
+def test_order_description_is_not_searched() -> None:
+    """Проверяет, что описание заказа не участвует в поиске сигнатур.
+
+    Описание приходит от контрагента так же, как сообщение в переписке.
+
+    Returns:
+        None
+    """
+    html = (
+        f'<html><body>{LOGGED}<div class="orders-table">'
+        '<div class="order-desc">разблокировка и снятие бан</div>'
+        "</div></body></html>"
+    )
+    v = classify(
+        status=200, final_url=f"https://{HOST}/orders/trade", html=html, expected_host=HOST
+    )
+    assert v.cls is ResponseClass.OK
+
+
+def test_exclusion_list_is_not_empty_by_default() -> None:
+    """Проверяет, что защита включена по умолчанию.
+
+    Пустой перечень по умолчанию вернул бы уязвимость всем, кто не задал его
+    сам, - то есть всем.
+
+    Returns:
+        None
+    """
+    assert DEFAULT_TEXT_EXCLUDE
+    assert ".chat-message-list" in DEFAULT_TEXT_EXCLUDE
