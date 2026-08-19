@@ -26,6 +26,8 @@ __all__ = [
     "COUNTS_RETRIES",
     "COUNTS_REDIRECTS",
     "MAX_REDIRECTS",
+    "Scheduling",
+    "SCHEDULING",
     "PROVISIONAL",
 ]
 
@@ -82,6 +84,39 @@ COUNTS_REDIRECTS: Final[bool] = True
 
 #: Предел числа переходов на один запрос.
 MAX_REDIRECTS: Final[int] = 5
+
+
+@dataclass(frozen=True, slots=True)
+class Scheduling:
+    """Числа расписания опроса.
+
+    Attributes:
+        active_interval_ms (int): Интервал при активном аккаунте.
+        idle_step_multiplier (float): Во сколько раз растёт интервал в покое.
+        max_interval_ms (int): Потолок интервала.
+        activity_window_ms (int): Окно, в котором аккаунт считается активным.
+        min_floor_ms (int): Нижний предел интервала.
+    """
+
+    active_interval_ms: int
+    idle_step_multiplier: float
+    max_interval_ms: int
+    activity_window_ms: int
+    min_floor_ms: int
+
+
+#: Расписание опроса.
+#:
+#: Нижний предел интервала обычной настройкой не понижается. Это
+#: единственное число, которое защищает площадку от слишком уверенного
+#: пользователя, а аккаунт пользователя - от него самого.
+SCHEDULING: Final[Scheduling] = Scheduling(
+    active_interval_ms=3000,
+    idle_step_multiplier=1.5,
+    max_interval_ms=120000,
+    activity_window_ms=300000,
+    min_floor_ms=2000,
+)
 
 #: Признак того, что числа подобраны, а не измерены.
 #:

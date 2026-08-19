@@ -34,6 +34,7 @@ from ._orders import (
     Severity,
     parse_orders_page,
 )
+from ._poll import Deduplicator, Schedule
 from ._retry import Attempt, Safety, plan_attempt, policy_for
 from ._secret import (
     CallableSecretProvider,
@@ -113,6 +114,8 @@ __all__ = [
     "diff_orders",
     "diff_chats",
     "diff_thread",
+    "Schedule",
+    "Deduplicator",
     # возможности
     "Capability",
     "CapabilityState",

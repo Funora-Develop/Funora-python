@@ -598,6 +598,8 @@ def render_budget(spec: Path) -> str:
         "COUNTS_RETRIES",
         "COUNTS_REDIRECTS",
         "MAX_REDIRECTS",
+        "Scheduling",
+        "SCHEDULING",
         "PROVISIONAL",
     ):
         out.append(f'    "{name}",\n')
@@ -641,6 +643,36 @@ def render_budget(spec: Path) -> str:
 
     out.append("\n#: Предел числа переходов на один запрос.\n")
     out.append(f"MAX_REDIRECTS: Final[int] = {limits['max_redirects']}\n")
+
+    schedule = doc["scheduling"]
+    out.append("\n\n@dataclass(frozen=True, slots=True)\n")
+    out.append("class Scheduling:\n")
+    out.append('    """Числа расписания опроса.\n\n')
+    out.append("    Attributes:\n")
+    out.append("        active_interval_ms (int): Интервал при активном аккаунте.\n")
+    out.append("        idle_step_multiplier (float): Во сколько раз растёт интервал в покое.\n")
+    out.append("        max_interval_ms (int): Потолок интервала.\n")
+    out.append("        activity_window_ms (int): Окно, в котором аккаунт считается активным.\n")
+    out.append("        min_floor_ms (int): Нижний предел интервала.\n")
+    out.append('    """\n\n')
+    out.append("    active_interval_ms: int\n")
+    out.append("    idle_step_multiplier: float\n")
+    out.append("    max_interval_ms: int\n")
+    out.append("    activity_window_ms: int\n")
+    out.append("    min_floor_ms: int\n")
+
+    out.append("\n\n#: Расписание опроса.\n")
+    out.append("#:\n")
+    out.append("#: Нижний предел интервала обычной настройкой не понижается. Это\n")
+    out.append("#: единственное число, которое защищает площадку от слишком уверенного\n")
+    out.append("#: пользователя, а аккаунт пользователя - от него самого.\n")
+    out.append("SCHEDULING: Final[Scheduling] = Scheduling(\n")
+    out.append(f"    active_interval_ms={schedule['active_interval_ms']},\n")
+    out.append(f"    idle_step_multiplier={float(schedule['idle_step_multiplier'])},\n")
+    out.append(f"    max_interval_ms={schedule['max_interval_ms']},\n")
+    out.append(f"    activity_window_ms={schedule['activity_window_ms']},\n")
+    out.append(f"    min_floor_ms={schedule['min_floor_ms']},\n")
+    out.append(")\n")
 
     out.append("\n#: Признак того, что числа подобраны, а не измерены.\n")
     out.append("#:\n")
