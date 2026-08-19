@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 from collections.abc import Callable, Generator
@@ -263,8 +264,8 @@ def dispatch(router: Router, events: tuple[Event, ...]) -> StepResult:
             )
 
 
-async def adispatch(router: Router, events: tuple[Event, ...]) -> StepResult:
-    """Раздаёт события асинхронно.
+async def _adispatch_serially(router: Router, events: tuple[Event, ...]) -> StepResult:
+    """Раздаёт события асинхронно и последовательно.
 
     Принимаются и обычные функции, и сопрограммы: возвращённое ожидаемое
     значение дожидается, обычный результат берётся как есть. Решение о том, что
@@ -290,8 +291,133 @@ async def adispatch(router: Router, events: tuple[Event, ...]) -> StepResult:
             outcome = handler(event)
             if inspect.isawaitable(outcome):
                 await outcome
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             reply = exc
+
+
+def _by_ordering_key(events: tuple[Event, ...]) -> tuple[tuple[Event, ...], ...]:
+    """Разбивает партию на группы по ключу упорядочивания.
+
+    Спецификация говорит прямо: порядок сохраняется внутри одного ключа, события
+    с разными ключами порядка между собой не имеют. Отсюда и разбиение - внутри
+    группы события останутся последовательными, между группами могут идти
+    одновременно.
+
+    Порядок групп - по первому вошедшему событию. Он нужен не исполнению, а
+    сборке итога: итог обязан получиться один и тот же независимо от того, кто
+    из групп успел раньше.
+
+    Args:
+        events (tuple[Event, ...]): События партии в порядке порождения.
+
+    Returns:
+        tuple[tuple[Event, ...], ...]: Группы в порядке первого события.
+    """
+    groups: dict[str, list[Event]] = {}
+    for event in events:
+        groups.setdefault(event.ordering_key, []).append(event)
+    return tuple(tuple(group) for group in groups.values())
+
+
+def _merge(events: tuple[Event, ...], results: tuple[StepResult, ...]) -> StepResult:
+    """Собирает итог партии из итогов групп.
+
+    Сборка нарочно не зависит от того, кто из групп завершился раньше. Иначе одна
+    и та же партия давала бы разные итоги от запуска к запуску, а разными в них
+    были бы список непринятых событий и первая ошибка площадки - то есть ровно
+    то, по чему принимается решение о сдвиге курсора.
+
+    Args:
+        events (tuple[Event, ...]): События партии в исходном порядке.
+        results (tuple[StepResult, ...]): Итоги групп в порядке групп.
+
+    Returns:
+        StepResult: Итог партии.
+    """
+    place = {id(event): index for index, event in enumerate(events)}
+
+    def ordered(chosen: list[Event]) -> tuple[Event, ...]:
+        """Возвращает события в исходном порядке партии.
+
+        Args:
+            chosen (list[Event]): События вперемешку.
+
+        Returns:
+            tuple[Event, ...]: Они же в порядке порождения.
+        """
+        return tuple(sorted(chosen, key=lambda event: place[id(event)]))
+
+    delivered: list[Event] = []
+    failed: list[Event] = []
+    errors: list[HandlerError] = []
+    fatal: FunoraError | None = None
+    for result in results:
+        delivered.extend(result.delivered)
+        failed.extend(result.failed)
+        errors.extend(result.errors)
+        if fatal is None:
+            fatal = result.fatal
+
+    return StepResult(
+        delivered=ordered(delivered),
+        failed=ordered(failed),
+        advance=not failed,
+        errors=tuple(errors),
+        fatal=fatal,
+    )
+
+
+async def adispatch(
+    router: Router, events: tuple[Event, ...], *, concurrency: int = 1
+) -> StepResult:
+    """Раздаёт события асинхронно.
+
+    По умолчанию последовательно - и это не осторожность ради осторожности.
+    Обработчики принадлежат вызывающему, и одновременный их запуск меняет
+    условия, в которых они писались: счётчик, дописывание в файл, соединение с
+    базой перестают быть в единоличном пользовании. Просить об этом надо явно.
+
+    С ``concurrency`` больше единицы события раздаются группами по ключу
+    упорядочивания. Внутри группы порядок сохраняется, между группами - нет, и
+    это ровно то, что говорит спецификация: события с разными ключами порядка
+    между собой не имеют.
+
+    Итог собирается детерминированно, независимо от того, кто из групп успел
+    раньше. Иначе одна и та же партия давала бы разные списки непринятых
+    событий - то есть разные решения о сдвиге курсора.
+
+    Args:
+        router (Router): Реестр обработчиков.
+        events (tuple[Event, ...]): События этого шага.
+        concurrency (int): Сколько ключей упорядочивания обрабатывать
+            одновременно. Единица означает последовательную раздачу.
+
+    Returns:
+        StepResult: Что доставлено, что нет, и можно ли сдвигать базу.
+    """
+    if concurrency <= 1 or len(events) < 2:
+        return await _adispatch_serially(router, events)
+
+    groups = _by_ordering_key(events)
+    if len(groups) < 2:
+        return await _adispatch_serially(router, events)
+
+    limit = asyncio.Semaphore(concurrency)
+
+    async def run(group: tuple[Event, ...]) -> StepResult:
+        """Раздаёт одну группу, не превышая заданной одновременности.
+
+        Args:
+            group (tuple[Event, ...]): События одного ключа упорядочивания.
+
+        Returns:
+            StepResult: Итог группы.
+        """
+        async with limit:
+            return await _adispatch_serially(router, group)
+
+    results = await asyncio.gather(*(run(group) for group in groups))
+    return _merge(events, tuple(results))
 
 
 def primed(account_id: str, observed_at: datetime, ordering_key: str) -> Event:

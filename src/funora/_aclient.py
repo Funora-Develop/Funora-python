@@ -210,6 +210,7 @@ class AsyncClient:
         max_iterations: int | None = None,
         schedule: Schedule | None = None,
         state_path: Path | None = None,
+        concurrency: int = 1,
     ) -> None:
         """Ведёт наблюдение: опрашивает площадку и раздаёт события обработчикам.
 
@@ -227,6 +228,13 @@ class AsyncClient:
                 спецификации.
             state_path (Path | None): Файл, в котором состояние гашения повторов
                 переживает перезапуск.
+            concurrency (int): Сколько ключей упорядочивания раздавать
+                одновременно. Единица - последовательно, как в синхронном
+                клиенте. Больше единицы означает, что обработчики могут
+                выполняться одновременно: счётчик, дописывание в файл или
+                соединение с базой перестают быть в единоличном пользовании, и
+                просить об этом надо явно. Порядок внутри одного ключа
+                сохраняется в любом случае.
 
         Returns:
             None
@@ -243,6 +251,7 @@ class AsyncClient:
                 state_path=state_path,
             ),
             router=router,
+            concurrency=concurrency,
         )
 
     async def run(
@@ -250,6 +259,7 @@ class AsyncClient:
         core: Generator[Request, Reply, T],
         *,
         router: Router | None = None,
+        concurrency: int = 1,
     ) -> T:
         """Прокручивает ядро, выполняя то, о чём оно просит.
 
@@ -261,6 +271,8 @@ class AsyncClient:
             core (Generator[Request, Reply, T]): Сопрограмма ядра.
             router (Router | None): Реестр обработчиков. Нужен только тем
                 сопрограммам, которые просят раздать события.
+            concurrency (int): Сколько ключей упорядочивания раздавать
+                одновременно.
 
         Returns:
             T: То, чем ядро завершилось.
@@ -292,7 +304,7 @@ class AsyncClient:
                     raise ConfigurationError(
                         "ядро просит раздать события, но реестр обработчиков не передан"
                     )
-                reply = await adispatch(router, request.events)
+                reply = await adispatch(router, request.events, concurrency=concurrency)
 
     async def _fetch(self, path: str) -> Observation:
         """Выполняет одно обращение к площадке.
