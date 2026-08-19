@@ -62,9 +62,12 @@ from ._verdicts import error_for
 from ._watch import Router, StepResult, primed
 from .capabilities import CAPABILITY_INITIAL, Capability, CapabilityState
 from .errors import (
+    AuthenticationError,
+    BudgetError,
     BudgetExhaustedError,
     FunoraError,
     NetworkError,
+    TransportError,
     ValidationError,
 )
 
@@ -324,8 +327,7 @@ class Engine:
                 # Не списывать вовсе нельзя - спецификация требует считать
                 # отправленные запросы, и цепочка переходов оказалась бы
                 # бесплатной ровно тогда, когда площадка нас куда-то гоняет.
-                for _ in range(max(0, observation.requests_sent - 1)):
-                    self._budget.reserve(monotonic())
+                yield from self.settle(observation.requests_sent - 1)
                 retry_after_ms = observation.retry_after_ms
                 check_integrity(observation)
                 verdict = classify(
@@ -368,7 +370,7 @@ class Engine:
         *,
         account_id: str,
         limit: int,
-    ) -> Generator[Request, Reply, tuple[Event, ...]]:
+    ) -> Generator[Request, Reply, tuple[tuple[Event, ...], dict[str, frozenset[str]], list[str]]]:
         """Дочитывает переписки диалогов, о которых сказал список.
 
         Метод существует потому, что событие о новом сообщении иначе не
@@ -395,11 +397,17 @@ class Engine:
         читается, значило бы запереть очередь навсегда, а следующее изменение
         того же диалога вернёт его обратно.
 
+        Курсоры прочитанного метод НЕ применяет, а возвращает наверх. Разница
+        стоила потерянных сообщений: применённый здесь курсор сдвигался до того,
+        как обработчик увидел событие, и не откатывался вместе с остальными -
+        упавший обработчик терял сообщение навсегда, при зелёном шаге и строке
+        «они придут снова» в журнале.
+
         Args:
             pending (list[str]): Очередь диалогов, ожидающих дочитывания.
-                Изменяется на месте: прочитанные и отброшенные убираются.
+                Изменяется на месте: взятые в работу убираются.
             known (dict[str, frozenset[str]]): Курсоры переписок по диалогам.
-                Пополняется прочитанным.
+                Только читается: применяет их вызывающий, после раздачи.
             account_id (str): Идентификатор аккаунта.
             limit (int): Сколько переписок прочитать за этот шаг.
 
@@ -407,9 +415,15 @@ class Engine:
             Request: Просьбы о вводе-выводе.
 
         Returns:
-            tuple[Event, ...]: События о новых сообщениях.
+            tuple[tuple[Event, ...], dict[str, frozenset[str]], list[str]]:
+            События о новых сообщениях; курсоры полностью прочитанных переписок;
+            диалоги, прочитанные на этом шаге. Последнее нужно, чтобы вернуть их
+            в очередь, если раздача не удалась.
         """
         events: list[Event] = []
+        cursors: dict[str, frozenset[str]] = {}
+        followed: list[str] = []
+
         for _ in range(max(0, limit)):
             if not pending:
                 break
@@ -417,9 +431,31 @@ class Engine:
 
             try:
                 thread = yield from self.read_thread(node_id)
+            except AuthenticationError:
+                # Условие аккаунта, а не этой переписки. Спецификация требует
+                # закрываться: продолжать перебирать очередь значило бы стучать
+                # ещё столько раз, сколько в ней узлов, - и всё это при
+                # заблокированном доступе. Диалог возвращается в очередь: он ни
+                # в чём не виноват.
+                pending.insert(0, node_id)
+                raise
+            except (TransportError, BudgetError) as exc:
+                # Отказ временный, и повторы внутри чтения его уже не вылечили.
+                # Диалог возвращается в очередь и дочитывается следующим шагом:
+                # выбросить его значило бы поставить доставку в зависимость от
+                # того, напишет ли покупатель ещё раз.
+                pending.insert(0, node_id)
+                _log.warning(
+                    "переписка %s отложена до следующего шага: %s",
+                    node_id,
+                    type(exc).__name__,
+                )
+                break
             except FunoraError as exc:
-                # Повторяемые отказы уже отработаны политикой повторов внутри
-                # чтения; сюда доходит то, что повтором не лечится.
+                # Отказ относится к самой переписке: адрес не подставляется,
+                # разметка не разбирается. Такой диалог выбывает - повторять
+                # вечно нечитаемое значило бы жечь слот каждый шаг. Следующее
+                # его изменение вернёт узел обратно.
                 _log.warning(
                     "переписка %s не прочитана и выбывает из очереди: %s",
                     node_id,
@@ -427,6 +463,7 @@ class Engine:
                 )
                 continue
 
+            followed.append(node_id)
             events.extend(
                 diff_thread(
                     known.get(node_id),
@@ -435,14 +472,29 @@ class Engine:
                     chat_id=node_id,
                 )
             )
-            # Курсор переписки снимается только с полного чтения - по той же
-            # причине, что и курсоры списков: снятый с неполного, он потерял бы
-            # выпавшие сообщения, и при следующем чтении они выглядели бы
-            # новыми.
-            if thread.completeness is Completeness.COMPLETE:
-                known[node_id] = thread_cursor(thread)
+            # Курсор переписки снимается с ЛЮБОГО чтения, в отличие от курсоров
+            # списков. Разница не в небрежности, а в том, что означает событие.
+            #
+            # Курсор списка, снятый с неполного чтения, теряет выпавшие строки,
+            # и при следующем чтении они выглядят новыми заказами: бот выдаёт
+            # товар по заказу, который был и раньше. Это утверждение о мире, и
+            # оно оказывается ложным.
+            #
+            # У переписки иначе. Сообщение, выпавшее из неполного чтения и
+            # попавшее в следующее, действительно новое - для нас: события о нём
+            # никто не получал. message.created говорит «вот сообщение, о
+            # котором вам не сообщали», а не «сообщение только что написано».
+            # Повторить такое дешевле, чем промолчать, и доставка объявлена
+            # как минимум однократной.
+            #
+            # Цена прежнего правила была высока: первое чтение переписки,
+            # оказавшееся неполным, оставляло курсор пустым навсегда, а пустой
+            # курсор молчит по правилу первого чтения. Диалог замолкал совсем,
+            # тратя запрос на каждом шаге. Для торгового бота первое чтение
+            # переписки - это первое сообщение нового покупателя.
+            cursors[node_id] = thread_cursor(thread)
 
-        return tuple(events)
+        return tuple(events), cursors, followed
 
     def spend_budget(self) -> Generator[Request, Reply, None]:
         """Занимает бюджет под один отправляемый запрос.
@@ -484,6 +536,48 @@ class Engine:
                 f"бюджет не освободился за {reservation.wait_ms} мс ожидания "
                 f"(ведро {again.bucket}). Запрос не отправлен"
             )
+
+    def settle(self, count: int) -> Generator[Request, Reply, None]:
+        """Доплачивает бюджет за запросы, которые уже ушли.
+
+        Метод нужен переходам. Их число заранее неизвестно, поэтому бюджет за
+        них списывается вслед за ответом - а списать вслед можно только тогда,
+        когда в ведре есть чем.
+
+        Прежде здесь стоял голый reserve, чей отказ никто не смотрел. Договор у
+        него «всё или ничего», поэтому ровно при пустом ведре цепочка переходов
+        становилась бесплатной: клиент считал, что потратил один запрос, а
+        отправлял до шести. Ведро при этом стояло на нуле постоянно, то есть
+        путь был не редким, а основным.
+
+        Отказать здесь нельзя: запросы уже отправлены, и не заплатить за них
+        значит соврать бюджету. Поэтому метод ждёт и платит.
+
+        Args:
+            count (int): Сколько запросов доплатить. Ноль и меньше - ничего.
+
+        Yields:
+            Request: Просьба подождать, если в ведре пусто.
+
+        Returns:
+            None
+        """
+        for _ in range(max(0, count)):
+            reservation = self._budget.reserve(monotonic())
+            if reservation.granted:
+                continue
+
+            yield Pause(reservation.wait_ms)
+            # Пауза вычислена ведром точно, поэтому вторая попытка обычно
+            # проходит. Не пройти она может, если бюджет делится с другим
+            # клиентом и тот успел раньше. Настаивать дальше нельзя: долг не
+            # растёт, а зациклиться на нём хуже, чем недосчитать один токен и
+            # сказать об этом вслух.
+            if not self._budget.reserve(monotonic()).granted:
+                _log.warning(
+                    "бюджет не доплачен за уже отправленный запрос: ведро %s занято",
+                    reservation.bucket,
+                )
 
     def watch(
         self,
@@ -539,6 +633,7 @@ class Engine:
         known_chats: dict[str, str] | None = None
         known_threads: dict[str, frozenset[str]] = {}
         pending: list[str] = []
+        greeted = False
 
         if state is not None:
             stored = state.load()
@@ -570,6 +665,10 @@ class Engine:
             # дочитаться, не дочитался бы уже никогда: событие о нём доставлено,
             # курсор диалогов сдвинут, и повода вернуться к нему больше нет.
             pending = list(cursor.get("pending_threads") or [])
+            # Здоровались ли уже. Восстановленный курсор любого из списков
+            # означает, что здоровались: watch.primed - событие о начале
+            # наблюдения, а не о начале процесса.
+            greeted = known_orders is not None or known_chats is not None
             if known_orders is not None or known_chats is not None:
                 _log.info(
                     "курсор восстановлен: заказов %s, диалогов %s",
@@ -584,7 +683,6 @@ class Engine:
             chats = yield from self.read_chats()
             now = monotonic()
 
-            cold = known_orders is None or known_chats is None
             chat_events = diff_chats(known_chats, chats, account_id=account_id)
             head = dedup.filter(
                 (*diff_orders(known_orders, orders, account_id=account_id), *chat_events),
@@ -599,7 +697,7 @@ class Engine:
                 if event.id in delivered_ids and event.entity_id not in pending:
                     pending.append(event.entity_id)
 
-            messages = yield from self._follow(
+            messages, thread_cursors, followed = yield from self._follow(
                 pending,
                 known_threads,
                 account_id=account_id,
@@ -607,14 +705,22 @@ class Engine:
             )
             fresh = (*head, *dedup.filter(messages, now))
 
-            batch: tuple[Event, ...]
-            if cold:
-                # Холодный старт молчит о данных и говорит один раз о себе.
-                # Иначе первый запуск дал бы лавину «изменений» по всему, что
-                # уже существует.
-                batch = (primed(account_id, orders.observed_at, "account:" + account_id),)
-            else:
-                batch = fresh
+            batch = fresh
+            if not greeted:
+                # Холодный старт молчит о данных и говорит один раз о себе:
+                # иначе первый запуск дал бы лавину «изменений» по всему, что
+                # уже существует. Молчание при этом обеспечивают сами diff_*,
+                # возвращающие пустое при отсутствии курсора, - а приветствие
+                # только добавляется к партии, а не заменяет её.
+                #
+                # Замена стоила дорого. Курсор заказов снимается лишь с полного
+                # чтения, поэтому одна пропавшая ячейка в одной строке держала
+                # признак холодного старта поднятым вечно: события о диалогах
+                # выбрасывались, а вместо них каждый шаг уходило одно и то же
+                # приветствие. Наблюдение за перепиской замолкало целиком из-за
+                # состояния чужой страницы - молча.
+                greeted = True
+                batch = (primed(account_id, orders.observed_at, "account:" + account_id), *fresh)
 
             reply = yield Deliver(batch)
             if not isinstance(reply, StepResult):
@@ -633,7 +739,14 @@ class Engine:
                     known_orders = orders_cursor(orders)
                 if chats.completeness is Completeness.COMPLETE:
                     known_chats = chats_cursor(chats)
+                known_threads.update(thread_cursors)
             else:
+                # Прочитанные переписки возвращаются в очередь, и это половина
+                # правила, без которой вторая не работает. Событие об изменении
+                # диалога к этому моменту доставлено и погашено, повторно оно не
+                # придёт - значит без возврата диалог не перечитается уже
+                # никогда, сколько бы курсор ни откатывали.
+                pending[:0] = [node for node in followed if node not in pending]
                 _log.warning(
                     "курсор не сдвинут: обработчик не принял %d событий, они придут снова",
                     len(result.failed),
