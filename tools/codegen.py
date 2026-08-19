@@ -555,12 +555,109 @@ def render_retry(spec: Path) -> str:
     return "".join(out)
 
 
+def render_budget(spec: Path) -> str:
+    """Порождает числа бюджета запросов.
+
+    Args:
+        spec (Path): Корень рабочей копии Funora-spec.
+
+    Returns:
+        str: Содержимое модуля.
+    """
+    doc = _load(spec, "spec/runtime/budget.yaml")
+    buckets: dict[str, Any] = doc["buckets"]
+    limits: dict[str, Any] = doc["limits"]
+
+    extra = (
+        "Числа помечены в спецификации провизорными: измерять настоящие пороги\n"
+        "площадки означало бы намеренно их превышать. Поэтому они подобраны\n"
+        "консервативно и будут уточняться наблюдением, а не подбором.\n"
+        "\n"
+        "Расходуются отправленные запросы, включая повторы и переходы по\n"
+        "редиректам. Считать только логические операции нельзя: тогда шторм\n"
+        "повторов оказывается бесплатным ровно в тот момент, когда площадке\n"
+        "хуже всего.\n"
+    )
+
+    out = [
+        HEADER.format(
+            title="Числа бюджета запросов.",
+            source="spec/runtime/budget.yaml",
+            extra=extra,
+        ).replace(
+            "from typing import ClassVar, Final",
+            "from dataclasses import dataclass\nfrom typing import Final",
+        )
+    ]
+
+    out.append("__all__ = [\n")
+    for name in (
+        "BucketLimits",
+        "BUCKETS",
+        "MAX_WAIT_MS",
+        "COUNTS_RETRIES",
+        "COUNTS_REDIRECTS",
+        "MAX_REDIRECTS",
+        "PROVISIONAL",
+    ):
+        out.append(f'    "{name}",\n')
+    out.append("]\n")
+
+    out.append("\n\n@dataclass(frozen=True, slots=True)\n")
+    out.append("class BucketLimits:\n")
+    out.append('    """Ёмкость и скорость пополнения одного ведра.\n\n')
+    out.append("    Attributes:\n")
+    out.append("        name (str): Имя ведра.\n")
+    out.append("        capacity (int): Сколько запросов помещается всего.\n")
+    out.append("        refill_per_second (float): Сколько восстанавливается за секунду.\n")
+    out.append("        burst (int): Сколько можно потратить залпом.\n")
+    out.append('    """\n\n')
+    out.append("    name: str\n")
+    out.append("    capacity: int\n")
+    out.append("    refill_per_second: float\n")
+    out.append("    burst: int\n")
+
+    out.append("\n\n#: Вёдра бюджета. Вложены: запрос расходует сначала общее, потом ведро\n")
+    out.append("#: аккаунта. Порядок нормативен, иначе при нескольких аккаунтах в одном\n")
+    out.append("#: процессе общий предел обходится.\n")
+    out.append("BUCKETS: Final[dict[str, BucketLimits]] = {\n")
+    for name, entry in buckets.items():
+        out.append(f'    "{name}": BucketLimits(\n')
+        out.append(f'        name="{name}",\n')
+        out.append(f"        capacity={entry['capacity']},\n")
+        out.append(f"        refill_per_second={float(entry['refill_per_second'])},\n")
+        out.append(f"        burst={entry['burst']},\n")
+        out.append("    ),\n")
+    out.append("}\n")
+
+    out.append("\n#: Сколько ждать освобождения бюджета, прежде чем отказать.\n")
+    out.append(f"MAX_WAIT_MS: Final[int] = {doc['exhausted']['max_wait_ms']}\n")
+
+    out.append("\n#: Расходуют ли бюджет повторы.\n")
+    out.append(f"COUNTS_RETRIES: Final[bool] = {bool(doc['counting']['counts_retries'])}\n")
+
+    out.append("\n#: Расходуют ли бюджет переходы по редиректам.\n")
+    out.append(f"COUNTS_REDIRECTS: Final[bool] = {bool(doc['counting']['counts_redirects'])}\n")
+
+    out.append("\n#: Предел числа переходов на один запрос.\n")
+    out.append(f"MAX_REDIRECTS: Final[int] = {limits['max_redirects']}\n")
+
+    out.append("\n#: Признак того, что числа подобраны, а не измерены.\n")
+    out.append("#:\n")
+    out.append("#: Снимается только тогда, когда пороги станут известны из наблюдений.\n")
+    out.append("#: Измерять их намеренным превышением нельзя.\n")
+    out.append(f"PROVISIONAL: Final[bool] = {bool(doc.get('provisional', True))}\n")
+
+    return "".join(out)
+
+
 #: Что порождается: имя файла в пакете и функция, которая его строит.
 TARGETS: Final[dict[str, Callable[[Path], str]]] = {
     "errors.py": render_errors,
     "capabilities.py": render_capabilities,
     "response_classes.py": render_response_classes,
     "retry.py": render_retry,
+    "budget.py": render_budget,
 }
 
 

@@ -10,10 +10,10 @@
 реализации, проверившие условия в разном порядке, разойдутся именно на той
 странице, ради которой правило написано.
 
-Чего здесь пока нет и почему это сказано вслух. Бюджет запросов не резервируется:
-модуля бюджета ещё нет, числа в spec/runtime/budget.yaml помечены провизорными, и
-подставить их сейчас значило бы выдать догадку за ограничение. До появления
-бюджета клиент рассчитан на разумную частоту вызовов со стороны вызывающего.
+Бюджет расходуется на каждый отправляемый запрос, включая повторы: считать
+логические операции значило бы сделать шторм повторов бесплатным ровно тогда,
+когда площадке хуже всего. Числа бюджета помечены в спецификации провизорными,
+потому что измерить настоящие пороги можно только намеренным их превышением.
 """
 
 from __future__ import annotations
@@ -21,9 +21,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from time import sleep
+from time import monotonic, sleep
 from typing import Final
 
+from ._budget import Budget
 from ._classify import DEFAULT_IDENTITY_CSS, classify
 from ._gate import check_capability
 from ._orders import Completeness, OrdersPage, parse_orders_page
@@ -32,7 +33,12 @@ from ._secret import Secret, SecretProvider
 from ._transport import Fetcher, Observation, TransportSettings
 from ._verdicts import error_for
 from .capabilities import CAPABILITY_INITIAL, Capability, CapabilityState
-from .errors import ConfigurationError, FunoraError, NetworkError
+from .errors import (
+    BudgetExhaustedError,
+    ConfigurationError,
+    FunoraError,
+    NetworkError,
+)
 
 __all__ = ["Client", "OrdersService"]
 
@@ -137,13 +143,17 @@ class Client:
             собирает его сам, и в проверках: создание транспорта поднимает
             контекст TLS, а это полсекунды на каждый вызов, из-за чего набор
             проверок начинают выключать.
+        budget (Budget | None): Общий бюджет запросов. Передаётся, когда в одном
+            процессе живут несколько клиентов: площадке видна сетевая
+            идентичность, а не то, сколько клиентов мы завели у себя, и общий
+            предел обходится ровно тем, что каждый заводит свой бюджет.
 
     Raises:
         ConfigurationError: Если не передано ни секрета, ни транспорта. Повтор
             здесь не поможет, исправлять надо вызов.
     """
 
-    __slots__ = ("_fetcher", "_settings", "_state", "orders")
+    __slots__ = ("_budget", "_fetcher", "_settings", "_state", "orders")
 
     def __init__(
         self,
@@ -152,6 +162,7 @@ class Client:
         settings: TransportSettings | None = None,
         experimental: frozenset[Capability] | None = None,
         transport: Fetcher | None = None,
+        budget: Budget | None = None,
     ) -> None:
         self._settings = settings or TransportSettings()
 
@@ -166,6 +177,7 @@ class Client:
                 "обратиться к площадке не от кого"
             )
 
+        self._budget = budget or Budget()
         self._state = _State(opted_in=experimental or frozenset())
         self.orders = OrdersService(self)
 
@@ -231,6 +243,7 @@ class Client:
             # держится отдельной переменной, чтобы обработчик не зависел от
             # того, успел ли ответ появиться.
             retry_after_ms: int | None = None
+            self._spend_budget()
             try:
                 observation = self._fetcher.fetch(_ORDERS_PATH)
                 retry_after_ms = observation.retry_after_ms
@@ -269,6 +282,44 @@ class Client:
             page = parse_orders_page(observation.html, observed_at=datetime.now(UTC))
             self._note_success(capability, page)
             return page
+
+    def _spend_budget(self) -> None:
+        """Занимает бюджет под один отправляемый запрос.
+
+        Расходуется именно отправляемый запрос, а не логическая операция:
+        повтор - тоже запрос. Считать иначе означало бы сделать шторм повторов
+        бесплатным ровно в тот момент, когда площадке хуже всего.
+
+        Ожидание выполняется здесь, а не в бюджете: сам бюджет не спит, чтобы
+        его можно было проверять числами вместо секунд.
+
+        Returns:
+            None
+
+        Raises:
+            BudgetExhaustedError: Если ждать пришлось бы дольше предела. Запрос
+                при этом не отправляется вовсе.
+        """
+        reservation = self._budget.require(monotonic())
+        if reservation.granted:
+            return
+
+        _log.info(
+            "бюджет: ведро %s занято, пауза %d мс",
+            reservation.bucket,
+            reservation.wait_ms,
+        )
+        sleep(reservation.wait_ms / 1000)
+
+        # Вторая попытка обязана быть последней: цикл ожидания здесь превратил бы
+        # предел ожидания в пожелание, а вызов снаружи стал бы неотличим от
+        # зависшего процесса.
+        again = self._budget.require(monotonic())
+        if not again.granted:
+            raise BudgetExhaustedError(
+                f"бюджет не освободился за {reservation.wait_ms} мс ожидания "
+                f"(ведро {again.bucket}). Запрос не отправлен"
+            )
 
     def _note_success(self, capability: Capability, page: OrdersPage) -> None:
         """Записывает состояние возможности по успешному чтению.

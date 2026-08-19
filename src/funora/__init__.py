@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+from ._budget import Budget, Reservation
 from ._classify import DEFAULT_IDENTITY_CSS, ResponseClass, Signature, Verdict, classify
 from ._client import Client, OrdersService
 from ._gate import check_capability
@@ -53,6 +54,8 @@ __all__ = [
     # клиент
     "Client",
     "OrdersService",
+    "Budget",
+    "Reservation",
     # секреты
     "Secret",
     "SecretProvider",
