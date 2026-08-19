@@ -11,8 +11,8 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from time import monotonic
 from pathlib import Path
+from time import monotonic
 
 import pytest
 
