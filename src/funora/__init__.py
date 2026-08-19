@@ -48,6 +48,7 @@ from ._skeleton import SkeletonError, skeletonize
 from ._thread import Message, Origin, Thread, parse_thread
 from ._transport import Fetcher, Observation, TransportSettings
 from ._verdicts import error_for
+from ._watch import Router, StepResult, dispatch
 from .capabilities import CAPABILITY_INITIAL, Capability, CapabilityState
 from .errors import ERROR_BY_ABI_CODE, ERROR_BY_STABLE_ID, FunoraError
 from .events import EventType
@@ -116,6 +117,9 @@ __all__ = [
     "diff_thread",
     "Schedule",
     "Deduplicator",
+    "Router",
+    "StepResult",
+    "dispatch",
     # возможности
     "Capability",
     "CapabilityState",

@@ -27,13 +27,16 @@ from typing import Final
 from ._budget import Budget
 from ._chats import ChatsPage, parse_chats_page
 from ._classify import DEFAULT_IDENTITY_CSS, classify
+from ._diff import diff_chats, diff_orders
 from ._gate import check_capability
 from ._orders import Completeness, OrdersPage, parse_orders_page
+from ._poll import Deduplicator, Schedule
 from ._retry import Safety, plan_attempt
 from ._secret import Secret, SecretProvider
 from ._thread import Thread, parse_thread
 from ._transport import Fetcher, Observation, TransportSettings
 from ._verdicts import error_for
+from ._watch import Router, dispatch, primed
 from .capabilities import CAPABILITY_INITIAL, Capability, CapabilityState
 from .errors import (
     BudgetExhaustedError,
@@ -411,6 +414,83 @@ class Client:
         )
         self._note_success(capability, thread.completeness, thread)
         return thread
+
+    def watch(
+        self,
+        router: Router,
+        *,
+        account_id: str = "self",
+        max_iterations: int | None = None,
+        schedule: Schedule | None = None,
+    ) -> None:
+        """Ведёт наблюдение: опрашивает площадку и раздаёт события обработчикам.
+
+        Метод блокирующий и спит между опросами. Это единственное место, где
+        цикл сходится: расписание, гашение повторов, порождение событий и раздача
+        по обработчикам проверены по отдельности и в сеть не ходят.
+
+        Первый проход молчит и выдаёт одно событие watch.primed. Иначе холодный
+        старт дал бы лавину «изменений» по всем существующим заказам и диалогам
+        сразу.
+
+        Базовый снимок сдвигается только после того, как все обработчики
+        отработали. Упавший обработчик оставляет базу на месте, и то же событие
+        приходит снова: гарантия доставки - не менее одного раза, и обработчик
+        обязан быть идемпотентным.
+
+        Args:
+            router (Router): Реестр обработчиков.
+            account_id (str): Идентификатор аккаунта для отпечатков событий.
+            max_iterations (int | None): Сколько шагов сделать. None означает
+                бесконечно; ограничение нужно проверкам и разовым прогонам.
+            schedule (Schedule | None): Расписание опроса. По умолчанию из
+                спецификации.
+
+        Returns:
+            None
+
+        Raises:
+            FunoraError: Любая ошибка чтения, которую не удалось повторить.
+        """
+        plan = schedule or Schedule()
+        dedup = Deduplicator()
+        orders_base: OrdersPage | None = None
+        chats_base: ChatsPage | None = None
+        step = 0
+
+        while max_iterations is None or step < max_iterations:
+            step += 1
+            orders = self.orders.list()
+            chats = self.chats.list()
+            now = monotonic()
+
+            if orders_base is None or chats_base is None:
+                orders_base, chats_base = orders, chats
+                dispatch(router, (primed(account_id, orders.observed_at, "account:" + account_id),))
+                sleep(plan.note((), now) / 1000)
+                continue
+
+            events = (
+                *diff_orders(orders_base, orders, account_id=account_id),
+                *diff_chats(chats_base, chats, account_id=account_id),
+            )
+            fresh = dedup.filter(events, now)
+            result = dispatch(router, fresh)
+
+            if result.advance:
+                orders_base, chats_base = orders, chats
+                dedup.commit(result.delivered, now)
+            else:
+                # Доставленные события всё равно запоминаются: они дошли, и
+                # повторять их незачем. Не запоминаются только непринятые, и
+                # именно они придут снова.
+                dedup.commit(result.delivered, now)
+                _log.warning(
+                    "база не сдвинута: обработчик не принял %d событий, они придут снова",
+                    len(result.failed),
+                )
+
+            sleep(plan.note(fresh, now) / 1000)
 
     def _spend_budget(self) -> None:
         """Занимает бюджет под один отправляемый запрос.
