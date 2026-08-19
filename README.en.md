@@ -42,6 +42,19 @@ with Client(secret) as client:
         print(order.order_id, order.description_text)
 ```
 
+The same asynchronously. Two facades, one core: the normative step order, the
+retry policy, budget spending and the cursor rules are written once and handed to
+both ready-made. Porting a bot comes down to `await`.
+
+```python
+from funora import AsyncClient
+
+async with AsyncClient(secret) as client:
+    page = await client.orders.list()
+    for order in page.rows():
+        print(order.order_id, order.description_text)
+```
+
 ## What already reads
 
 | Operation | Returns |

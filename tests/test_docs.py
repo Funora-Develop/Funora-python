@@ -148,3 +148,37 @@ def test_readme_does_not_promise_payment_confirmation() -> None:
         text = (ROOT / name).read_text(encoding="utf-8").lower()
         for phrase in ("is_paid", "ispaid", "payment_confirmed", "оплата подтверждена"):
             assert phrase not in text, f"{name} обещает {phrase}"
+
+
+def test_async_facade_mirrors_the_sync_one() -> None:
+    """Проверяет, что асинхронный фасад обещает ровно то же, что синхронный.
+
+    Два фасада над одним ядром - это обещание вызывающему: перевести бота на
+    асинхронный клиент можно, дописав await. Обещание держится не само собой.
+    Появись операция в одном фасаде и не появись в другом - вызывающий узнает об
+    этом при переводе, то есть в худший момент.
+
+    Сверяются имена операций и объявленные типы результата. Тела не сверяются:
+    они и должны отличаться, в этом весь смысл двух фасадов.
+
+    Returns:
+        None
+    """
+    from funora._aclient import AsyncChatsService, AsyncClient, AsyncOrdersService
+    from funora._client import ChatsService, Client, OrdersService
+
+    pairs = ((OrdersService, AsyncOrdersService), (ChatsService, AsyncChatsService))
+    for plain, other in pairs:
+        here = {n for n in vars(plain) if not n.startswith("_")}
+        there = {n for n in vars(other) if not n.startswith("_")}
+        assert here == there, (
+            f"фасады {plain.__name__} и {other.__name__} разошлись: {here ^ there}"
+        )
+        for name in sorted(here):
+            expected = getattr(plain, name).__annotations__["return"]
+            actual = getattr(other, name).__annotations__["return"]
+            assert expected == actual, f"{name} обещает {expected} и {actual}"
+
+    surface = {n for n in vars(Client) if not n.startswith("_")}
+    other_surface = {n for n in vars(AsyncClient) if not n.startswith("_")}
+    assert surface == other_surface, f"клиенты разошлись: {surface ^ other_surface}"

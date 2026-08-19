@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+from ._aclient import AsyncChatsService, AsyncClient, AsyncOrdersService
 from ._budget import Budget, Reservation
 from ._chats import ChatListEntry, ChatsPage, parse_chats_page
 from ._classify import (
@@ -63,9 +64,9 @@ from ._secret import (
 from ._skeleton import SkeletonError, skeletonize
 from ._state import StateFile
 from ._thread import Message, Origin, Thread, parse_thread
-from ._transport import Fetcher, Observation, TransportSettings
+from ._transport import AsyncFetcher, Fetcher, Observation, TransportSettings
 from ._verdicts import error_for
-from ._watch import Router, StepResult, dispatch
+from ._watch import Router, StepResult, adispatch, dispatch
 from .capabilities import CAPABILITY_INITIAL, Capability, CapabilityState
 from .errors import ERROR_BY_ABI_CODE, ERROR_BY_STABLE_ID, FunoraError
 from .events import EventType
@@ -76,8 +77,11 @@ __all__ = [
     "__version__",
     # клиент
     "Client",
+    "AsyncClient",
     "OrdersService",
+    "AsyncOrdersService",
     "ChatsService",
+    "AsyncChatsService",
     "Budget",
     "Reservation",
     # секреты
@@ -108,6 +112,7 @@ __all__ = [
     "SkeletonError",
     # транспорт
     "Fetcher",
+    "AsyncFetcher",
     "Observation",
     "TransportSettings",
     # наблюдаемость
@@ -144,6 +149,7 @@ __all__ = [
     "Router",
     "StepResult",
     "dispatch",
+    "adispatch",
     "StateFile",
     # возможности
     "Capability",

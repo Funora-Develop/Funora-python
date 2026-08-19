@@ -267,7 +267,7 @@ def test_unsupported_capability_blocks_before_the_network() -> None:
         None
     """
     with _client([]) as client:
-        client._state.capabilities[Capability.ORDERS_LIST] = CapabilityState.UNSUPPORTED
+        client.engine._state.capabilities[Capability.ORDERS_LIST] = CapabilityState.UNSUPPORTED
         with pytest.raises(UnsupportedCapabilityError):
             client.orders.list()
         assert client._fetcher.calls == 0  # type: ignore[attr-defined]
@@ -280,9 +280,9 @@ def test_session_flag_flips_only_after_a_good_read() -> None:
         None
     """
     with _client([_observation(_page("orders-trade.logged.ru"))]) as client:
-        assert not client._state.session_ever_valid
+        assert not client.engine._state.session_ever_valid
         client.orders.list()
-        assert client._state.session_ever_valid
+        assert client.engine._state.session_ever_valid
 
 
 def test_incomplete_page_still_needs_acknowledgement() -> None:
@@ -429,7 +429,7 @@ def test_chats_and_orders_share_the_capability_gate() -> None:
         None
     """
     with _client([]) as client:
-        client._state.capabilities[Capability.CHATS_LIST] = CapabilityState.UNSUPPORTED
+        client.engine._state.capabilities[Capability.CHATS_LIST] = CapabilityState.UNSUPPORTED
         with pytest.raises(UnsupportedCapabilityError):
             client.chats.list()
         assert client._fetcher.calls == 0  # type: ignore[attr-defined]
@@ -501,7 +501,7 @@ def test_thread_uses_its_own_capability() -> None:
         None
     """
     with _client([]) as client:
-        client._state.capabilities[Capability.CHATS_HISTORY] = CapabilityState.UNSUPPORTED
+        client.engine._state.capabilities[Capability.CHATS_HISTORY] = CapabilityState.UNSUPPORTED
         with pytest.raises(UnsupportedCapabilityError):
             client.chats.thread("1")
         assert client._fetcher.calls == 0  # type: ignore[attr-defined]

@@ -41,6 +41,19 @@ with Client(secret) as client:
         print(order.order_id, order.description_text)
 ```
 
+То же асинхронно. Фасада два, ядро одно: нормативный порядок шагов, политика
+повторов, расход бюджета и правила курсора написаны один раз и обоим достаются
+готовыми. Перевод бота сводится к `await`.
+
+```python
+from funora import AsyncClient
+
+async with AsyncClient(secret) as client:
+    page = await client.orders.list()
+    for order in page.rows():
+        print(order.order_id, order.description_text)
+```
+
 ## Что уже читается
 
 | Операция | Возвращает |
