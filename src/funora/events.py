@@ -1,0 +1,91 @@
+"""Типы событий и вывод ключа упорядочивания.
+
+Файл порождён из спецификации, править его руками нельзя: правка исчезнет при
+следующей сборке. Источник - spec/events/delivery.yaml в репозитории Funora-spec.
+Перестроить: python tools/codegen.py
+
+Правило вывода ключа упорядочивания нормативно. Две реализации,
+выведшие разные ключи, получат разную степень параллелизма и разный
+наблюдаемый порядок - при полном согласии в том, какие события бывают.
+
+Поля, запрещённые в отпечатке события, перечислены здесь же. Момент
+наблюдения и версия адаптера меняются от запуска к запуску и от релиза
+к релизу; включение любого из них обнулит дедупликацию ровно там, где
+она нужнее всего - после перезапуска.
+"""
+
+from __future__ import annotations
+
+from enum import StrEnum
+from typing import Final
+
+__all__ = [
+    "EventType",
+    "ORDERING_KEY",
+    "FINGERPRINT_FIELDS",
+    "DEDUP_TTL_MS",
+]
+
+
+class EventType(StrEnum):
+    """Тип события.
+
+    Значение совпадает с именем типа в спецификации: оно уходит в журнал
+    и в конверт события, где обязано совпадать между всеми реализациями.
+    """
+
+    MESSAGE_CREATED = "message.created"
+    CHAT_UNREAD_CHANGED = "chat.unread_changed"
+    ORDER_CREATED = "order.created"
+    ORDER_STATUS_CHANGED = "order.status_changed"
+    REVIEW_CHANGED = "review.changed"
+    LOT_PRICE_CHANGED = "lot.price_changed"
+    LOT_STOCK_CHANGED = "lot.stock_changed"
+    MARKET_OFFER_APPEARED = "market.offer_appeared"
+    MARKET_OFFER_DISAPPEARED = "market.offer_disappeared"
+    MARKET_PRICE_CHANGED = "market.price_changed"
+    SELLER_ONLINE_CHANGED = "seller.online_changed"
+    PROTOCOL_HEALTH_CHANGED = "protocol.health_changed"
+    WATCH_PRIMED = "watch.primed"
+    WATCH_DEGRADED = "watch.degraded"
+    SNAPSHOT_INCOMPLETE = "snapshot.incomplete"
+    EVENT_LOSS = "event.loss"
+
+
+#: Шаблон ключа упорядочивания для каждого типа события.
+#:
+#: Порядок сохраняется внутри одного ключа. События с разными ключами
+#: обрабатываются параллельно и порядка между собой не имеют.
+ORDERING_KEY: Final[dict[EventType, str]] = {
+    EventType.MESSAGE_CREATED: "chat:{chat_id}",
+    EventType.CHAT_UNREAD_CHANGED: "chat:{chat_id}",
+    EventType.ORDER_CREATED: "order:{order_id}",
+    EventType.ORDER_STATUS_CHANGED: "order:{order_id}",
+    EventType.REVIEW_CHANGED: "order:{order_id}",
+    EventType.LOT_PRICE_CHANGED: "lot:{lot_id}",
+    EventType.LOT_STOCK_CHANGED: "lot:{lot_id}",
+    EventType.MARKET_OFFER_APPEARED: "watch:{watch_id}",
+    EventType.MARKET_OFFER_DISAPPEARED: "watch:{watch_id}",
+    EventType.MARKET_PRICE_CHANGED: "watch:{watch_id}",
+    EventType.SELLER_ONLINE_CHANGED: "watch:{watch_id}",
+    EventType.PROTOCOL_HEALTH_CHANGED: "account:{account_id}",
+    EventType.WATCH_PRIMED: "watch:{watch_id}",
+    EventType.WATCH_DEGRADED: "watch:{watch_id}",
+    EventType.SNAPSHOT_INCOMPLETE: "watch:{watch_id}",
+    EventType.EVENT_LOSS: "account:{account_id}",
+}
+
+#: Поля, из которых строится отпечаток события.
+#:
+#: Перечень закрытый. Добавление поля меняет идентичность всех событий
+#: сразу, то есть обнуляет дедупликацию и сохранённые ключи
+#: идемпотентности.
+FINGERPRINT_FIELDS: Final[tuple[str, ...]] = (
+    "account_id",
+    "type",
+    "entity_id",
+    "entity_revision",
+)
+
+#: Сколько хранится запись о доставленном событии, миллисекунды.
+DEDUP_TTL_MS: Final[int] = 3600000

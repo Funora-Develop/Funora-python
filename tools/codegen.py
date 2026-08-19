@@ -651,6 +651,85 @@ def render_budget(spec: Path) -> str:
     return "".join(out)
 
 
+def render_events(spec: Path) -> str:
+    """Порождает типы событий и правило вывода ключа упорядочивания.
+
+    Args:
+        spec (Path): Корень рабочей копии Funora-spec.
+
+    Returns:
+        str: Содержимое модуля.
+    """
+    doc = _load(spec, "spec/events/delivery.yaml")
+    derivation: dict[str, Any] = doc["ordering"]["derivation"]
+    identity: dict[str, Any] = doc["identity"]
+    dedup: dict[str, Any] = doc["deduplication"]
+
+    if not doc["ordering"].get("key_required"):
+        raise ValueError(
+            "spec/events/delivery.yaml: ключ упорядочивания обязан быть объявлен обязательным"
+        )
+
+    extra = (
+        "Правило вывода ключа упорядочивания нормативно. Две реализации,\n"
+        "выведшие разные ключи, получат разную степень параллелизма и разный\n"
+        "наблюдаемый порядок - при полном согласии в том, какие события бывают.\n"
+        "\n"
+        "Поля, запрещённые в отпечатке события, перечислены здесь же. Момент\n"
+        "наблюдения и версия адаптера меняются от запуска к запуску и от релиза\n"
+        "к релизу; включение любого из них обнулит дедупликацию ровно там, где\n"
+        "она нужнее всего - после перезапуска.\n"
+    )
+
+    out = [
+        HEADER.format(
+            title="Типы событий и вывод ключа упорядочивания.",
+            source="spec/events/delivery.yaml",
+            extra=extra,
+        ).replace(
+            "from typing import ClassVar, Final",
+            "from enum import StrEnum\nfrom typing import Final",
+        )
+    ]
+
+    out.append("__all__ = [\n")
+    for name in ("EventType", "ORDERING_KEY", "FINGERPRINT_FIELDS", "DEDUP_TTL_MS"):
+        out.append(f'    "{name}",\n')
+    out.append("]\n")
+
+    out.append("\n\nclass EventType(StrEnum):\n")
+    out.append('    """Тип события.\n\n')
+    out.append("    Значение совпадает с именем типа в спецификации: оно уходит в журнал\n")
+    out.append("    и в конверт события, где обязано совпадать между всеми реализациями.\n")
+    out.append('    """\n\n')
+    for name in derivation:
+        out.append(f'    {_const(name)} = "{name}"\n')
+
+    out.append("\n\n#: Шаблон ключа упорядочивания для каждого типа события.\n")
+    out.append("#:\n")
+    out.append("#: Порядок сохраняется внутри одного ключа. События с разными ключами\n")
+    out.append("#: обрабатываются параллельно и порядка между собой не имеют.\n")
+    out.append("ORDERING_KEY: Final[dict[EventType, str]] = {\n")
+    for name, template in derivation.items():
+        out.append(f'    EventType.{_const(name)}: "{template}",\n')
+    out.append("}\n")
+
+    out.append("\n#: Поля, из которых строится отпечаток события.\n")
+    out.append("#:\n")
+    out.append("#: Перечень закрытый. Добавление поля меняет идентичность всех событий\n")
+    out.append("#: сразу, то есть обнуляет дедупликацию и сохранённые ключи\n")
+    out.append("#: идемпотентности.\n")
+    out.append("FINGERPRINT_FIELDS: Final[tuple[str, ...]] = (\n")
+    for field_name in identity["fingerprint_from"]:
+        out.append(f'    "{field_name}",\n')
+    out.append(")\n")
+
+    out.append("\n#: Сколько хранится запись о доставленном событии, миллисекунды.\n")
+    out.append(f"DEDUP_TTL_MS: Final[int] = {dedup['ttl_ms']}\n")
+
+    return "".join(out)
+
+
 #: Что порождается: имя файла в пакете и функция, которая его строит.
 TARGETS: Final[dict[str, Callable[[Path], str]]] = {
     "errors.py": render_errors,
@@ -658,6 +737,7 @@ TARGETS: Final[dict[str, Callable[[Path], str]]] = {
     "response_classes.py": render_response_classes,
     "retry.py": render_retry,
     "budget.py": render_budget,
+    "events.py": render_events,
 }
 
 
