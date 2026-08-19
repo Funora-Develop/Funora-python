@@ -28,7 +28,7 @@ from typing import Final
 from ._budget import Budget
 from ._chats import ChatsPage, parse_chats_page
 from ._classify import DEFAULT_IDENTITY_CSS, classify
-from ._diff import diff_chats, diff_orders
+from ._diff import chats_cursor, diff_chats, diff_orders, orders_cursor
 from ._gate import check_capability
 from ._host import host_of
 from ._orders import Completeness, OrdersPage, parse_orders_page
@@ -464,44 +464,71 @@ class Client:
         dedup = Deduplicator()
         state = StateFile(state_path) if state_path is not None else None
 
+        known_orders: frozenset[str] | None = None
+        known_chats: dict[str, str] | None = None
+
         if state is not None:
-            restored = dedup.restore(state.load().get("dedup", {}), monotonic())
+            stored = state.load()
+            restored = dedup.restore(stored.get("dedup", {}), monotonic())
             if restored:
                 _log.info("восстановлено записей гашения: %d", restored)
 
-        orders_base: OrdersPage | None = None
-        chats_base: ChatsPage | None = None
-        step = 0
+            # Курсор восстанавливается вместе с гашением. Без него перезапуск
+            # уходил в холодный старт и молча съедал всё, что изменилось за
+            # простой: заказ, оплаченный между остановкой и стартом, не порождал
+            # события никогда - ни исключения, ни строки в журнале.
+            cursor = stored.get("cursor") or {}
+            if cursor.get("orders") is not None:
+                known_orders = frozenset(cursor["orders"])
+            if cursor.get("chats") is not None:
+                known_chats = dict(cursor["chats"])
+            if known_orders is not None or known_chats is not None:
+                _log.info(
+                    "курсор восстановлен: заказов %s, диалогов %s",
+                    len(known_orders) if known_orders is not None else "нет",
+                    len(known_chats) if known_chats is not None else "нет",
+                )
 
+        step = 0
         while max_iterations is None or step < max_iterations:
             step += 1
             orders = self.orders.list()
             chats = self.chats.list()
             now = monotonic()
 
-            if orders_base is None or chats_base is None:
-                orders_base, chats_base = orders, chats
-                dispatch(router, (primed(account_id, orders.observed_at, "account:" + account_id),))
-                sleep(plan.note((), now) / 1000)
-                continue
-
+            cold = known_orders is None or known_chats is None
             events = (
-                *diff_orders(orders_base, orders, account_id=account_id),
-                *diff_chats(chats_base, chats, account_id=account_id),
+                *diff_orders(known_orders, orders, account_id=account_id),
+                *diff_chats(known_chats, chats, account_id=account_id),
             )
             fresh = dedup.filter(events, now)
-            result = dispatch(router, fresh)
 
-            if result.advance:
-                orders_base, chats_base = orders, chats
-                dedup.commit(result.delivered, now)
+            if cold:
+                # Холодный старт молчит о данных и говорит один раз о себе.
+                # Иначе первый запуск дал бы лавину «изменений» по всему, что
+                # уже существует.
+                result = dispatch(
+                    router,
+                    (primed(account_id, orders.observed_at, "account:" + account_id),),
+                )
             else:
-                # Доставленные события всё равно запоминаются: они дошли, и
-                # повторять их незачем. Не запоминаются только непринятые, и
-                # именно они придут снова.
-                dedup.commit(result.delivered, now)
+                result = dispatch(router, fresh)
+
+            dedup.commit(result.delivered, now)
+
+            # Курсор снимается только с полного чтения. Снятый с неполного, он
+            # потерял бы выпавшие строки, и при следующем чтении они выглядели
+            # бы новыми заказами: бот выдал бы товар по заказу, который был и
+            # раньше. Неполное чтение при этом не пропадает - события по нему
+            # порождаются, просто курсор остаётся прежним.
+            if result.advance:
+                if orders.completeness is Completeness.COMPLETE:
+                    known_orders = orders_cursor(orders)
+                if chats.completeness is Completeness.COMPLETE:
+                    known_chats = chats_cursor(chats)
+            else:
                 _log.warning(
-                    "база не сдвинута: обработчик не принял %d событий, они придут снова",
+                    "курсор не сдвинут: обработчик не принял %d событий, они придут снова",
                     len(result.failed),
                 )
 
@@ -510,7 +537,22 @@ class Client:
                 # доставленного. Сохрани мы раньше - перезапуск между записью и
                 # обработчиком потерял бы событие: файл говорил бы, что оно
                 # доставлено, а обработчик его не видел.
-                state.save({"dedup": dedup.snapshot()})
+                state.save(
+                    {
+                        "dedup": dedup.snapshot(),
+                        "cursor": {
+                            "orders": sorted(known_orders) if known_orders is not None else None,
+                            "chats": known_chats,
+                        },
+                    }
+                )
+
+            if result.fatal is not None:
+                # Ошибка Funora из обработчика - не его баг, а условие площадки:
+                # истёкшая сессия, исчерпанный бюджет. Партия при этом
+                # дорабатывается до конца и состояние сохраняется, иначе отказ
+                # на первом событии терял бы все остальные.
+                raise result.fatal
 
             sleep(plan.note(fresh, now) / 1000)
 

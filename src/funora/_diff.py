@@ -7,14 +7,21 @@
 Три правила объясняют почти весь код, и все три про то, чего модуль **не**
 делает.
 
-Первый снимок событий не порождает. Не с чем сравнивать, и объявить все
+Сравнение идёт не со вторым снимком, а с курсором - набором того, что уже
+известно. Разница не в оформлении. Сравнение снимка со снимком давало ложное
+событие: строка, выпавшая из прошлого чтения из-за поломки разметки, при
+следующем чтении выглядела новым заказом, и бот выдавал товар по заказу, который
+существовал и раньше. Курсор хранит известное и не теряет его от одной
+испорченной строки.
+
+Пустой курсор событий не порождает. Не с чем сравнивать, и объявить все
 двенадцать существующих заказов новыми означало бы разослать двенадцать
 уведомлений об оплате при первом же запуске бота.
 
-Неполный снимок не порождает событий об исчезновении. Запись, не попавшая в
-частично прочитанную страницу, не исчезла - её не прочитали. Разница между этими
-двумя случаями и есть разница между «заказ отменён» и «мы не смогли его увидеть»,
-а обработчик по первому вернёт деньги.
+Событий об исчезновении не порождается вовсе. Запись, не попавшая в частично
+прочитанную страницу, не исчезла - её не прочитали, и отличить одно от другого
+по странице нечем. Разница между этими случаями есть разница между «заказ
+отменён» и «мы не смогли его увидеть», а обработчик по первому вернёт деньги.
 
 События об изменении статуса не порождаются вовсе. Соответствия классов разметки
 статусам не наблюдалось, статус выдаётся ненаблюдённым, и породить из него
@@ -30,11 +37,19 @@ from hashlib import blake2s
 from typing import Any, Final
 
 from ._chats import ChatsPage
-from ._orders import Completeness, OrdersPage
+from ._orders import OrdersPage
 from ._thread import Thread
 from .events import FINGERPRINT_FIELDS, ORDERING_KEY, EventType
 
-__all__ = ["Event", "diff_orders", "diff_chats", "diff_thread"]
+__all__ = [
+    "Event",
+    "diff_orders",
+    "diff_chats",
+    "diff_thread",
+    "orders_cursor",
+    "chats_cursor",
+    "thread_cursor",
+]
 
 #: Происхождение события: выведено из разметки, а не из текста.
 _STRUCTURAL: Final[str] = "structural"
@@ -138,43 +153,31 @@ def _event(
     )
 
 
-def _usable(page: OrdersPage | ChatsPage | Thread | None) -> bool:
-    """Сообщает, годится ли снимок для сравнения на исчезновение.
-
-    Args:
-        page (OrdersPage | ChatsPage | Thread | None): Снимок.
-
-    Returns:
-        bool: True, только если снимок прочитан полностью.
-    """
-    return page is not None and page.completeness is Completeness.COMPLETE
-
-
 def diff_orders(
-    before: OrdersPage | None,
-    after: OrdersPage,
+    known: frozenset[str] | None,
+    page: OrdersPage,
     *,
     account_id: str,
 ) -> tuple[Event, ...]:
-    """Порождает события по двум снимкам списка заказов.
+    """Порождает события по списку заказов и курсору.
 
     Args:
-        before (OrdersPage | None): Прошлый снимок. None при первом чтении.
-        after (OrdersPage): Текущий снимок.
+        known (frozenset[str] | None): Идентификаторы заказов, о которых уже
+            известно. None при первом запуске, когда курсора ещё нет.
+        page (OrdersPage): Прочитанная страница. Может быть неполной: заказ,
+            которого нет в курсоре, новый независимо от полноты чтения.
         account_id (str): Идентификатор аккаунта.
 
     Returns:
-        tuple[Event, ...]: События. Пустой набор при первом чтении: сравнивать
-        не с чем, а объявить все существующие заказы новыми означало бы
-        разослать уведомления обо всех сразу при первом запуске.
+        tuple[Event, ...]: События. Пустой набор при отсутствии курсора:
+        сравнивать не с чем, а объявить все существующие заказы новыми означало
+        бы разослать уведомления обо всех сразу при первом запуске.
     """
-    if before is None:
+    if known is None:
         return ()
 
-    known = {entry.order_id for entry in before.rows(accept_incomplete=True)}
     events: list[Event] = []
-
-    for entry in after.rows(accept_incomplete=True):
+    for entry in page.rows(accept_incomplete=True):
         if entry.order_id in known:
             continue
         events.append(
@@ -186,7 +189,7 @@ def diff_orders(
                 # ничего, что менялось бы наблюдаемо. Статус ненаблюдаем, и
                 # события о его изменении не порождаются вовсе.
                 revision="appeared",
-                observed_at=after.observed_at,
+                observed_at=page.observed_at,
                 key_field="order_id",
                 payload={"href": entry.href, "row_index": entry.row_index},
             )
@@ -195,36 +198,48 @@ def diff_orders(
     return tuple(events)
 
 
+def orders_cursor(page: OrdersPage) -> frozenset[str]:
+    """Собирает курсор по прочитанной странице заказов.
+
+    Курсор снимается только с полного чтения, и решает это вызывающий. Снятый с
+    неполного, он потерял бы выпавшие строки - и при следующем чтении они
+    выглядели бы новыми заказами.
+
+    Args:
+        page (OrdersPage): Прочитанная страница.
+
+    Returns:
+        frozenset[str]: Идентификаторы заказов на странице.
+    """
+    return frozenset(entry.order_id for entry in page.rows(accept_incomplete=True))
+
+
 def diff_chats(
-    before: ChatsPage | None,
-    after: ChatsPage,
+    known: dict[str, str] | None,
+    page: ChatsPage,
     *,
     account_id: str,
 ) -> tuple[Event, ...]:
-    """Порождает события по двум снимкам списка диалогов.
+    """Порождает события по списку диалогов и курсору.
 
     Args:
-        before (ChatsPage | None): Прошлый снимок. None при первом чтении.
-        after (ChatsPage): Текущий снимок.
+        known (dict[str, str] | None): Позиция последнего сообщения по каждому
+            известному диалогу. None при первом запуске.
+        page (ChatsPage): Прочитанная страница.
         account_id (str): Идентификатор аккаунта.
 
     Returns:
         tuple[Event, ...]: События об изменении диалогов.
     """
-    if before is None:
+    if known is None:
         return ()
 
-    previous = {
-        entry.node_id: entry.last_message_position.or_none()
-        for entry in before.rows(accept_incomplete=True)
-    }
     events: list[Event] = []
-
-    for entry in after.rows(accept_incomplete=True):
+    for entry in page.rows(accept_incomplete=True):
         position = entry.last_message_position.or_none()
         if position is None:
             continue
-        if previous.get(entry.node_id) == position:
+        if known.get(entry.node_id) == position:
             continue
 
         events.append(
@@ -236,7 +251,7 @@ def diff_chats(
                 # изменении состояния меняется. Сравнивается только на
                 # равенство - арифметика над ней запрещена спецификацией.
                 revision=position,
-                observed_at=after.observed_at,
+                observed_at=page.observed_at,
                 key_field="chat_id",
                 payload={
                     "unread": entry.unread.or_none(),
@@ -250,35 +265,47 @@ def diff_chats(
     return tuple(events)
 
 
+def chats_cursor(page: ChatsPage) -> dict[str, str]:
+    """Собирает курсор по прочитанной странице диалогов.
+
+    Args:
+        page (ChatsPage): Прочитанная страница.
+
+    Returns:
+        dict[str, str]: Позиция последнего сообщения по каждому диалогу.
+    """
+    cursor: dict[str, str] = {}
+    for entry in page.rows(accept_incomplete=True):
+        position = entry.last_message_position.or_none()
+        if position is not None:
+            cursor[entry.node_id] = position
+    return cursor
+
+
 def diff_thread(
-    before: Thread | None,
-    after: Thread,
+    known: frozenset[str] | None,
+    thread: Thread,
     *,
     account_id: str,
     chat_id: str,
 ) -> tuple[Event, ...]:
-    """Порождает события по двум снимкам переписки.
+    """Порождает события по переписке и курсору.
 
     Args:
-        before (Thread | None): Прошлый снимок. None при первом чтении.
-        after (Thread): Текущий снимок.
+        known (frozenset[str] | None): Идентификаторы уже известных сообщений.
+            None при первом чтении переписки.
+        thread (Thread): Прочитанная переписка.
         account_id (str): Идентификатор аккаунта.
-        chat_id (str): Идентификатор диалога, к которому относится переписка.
+        chat_id (str): Идентификатор диалога.
 
     Returns:
         tuple[Event, ...]: События о новых сообщениях.
     """
-    if before is None:
+    if known is None:
         return ()
 
-    known = {
-        message.message_id.value
-        for message in before.messages(accept_incomplete=True)
-        if message.message_id.is_observed
-    }
     events: list[Event] = []
-
-    for message in after.messages(accept_incomplete=True):
+    for message in thread.messages(accept_incomplete=True):
         if not message.message_id.is_observed:
             continue
         if message.message_id.value in known:
@@ -290,7 +317,7 @@ def diff_thread(
                 event_type=EventType.MESSAGE_CREATED,
                 entity_id=chat_id,
                 revision=message.message_id.value,
-                observed_at=after.observed_at,
+                observed_at=thread.observed_at,
                 key_field="chat_id",
                 payload={
                     "message_id": message.message_id.value,
@@ -307,26 +334,20 @@ def diff_thread(
     return tuple(events)
 
 
-def disappeared(
-    before: OrdersPage | ChatsPage | Thread | None,
-    after: OrdersPage | ChatsPage | Thread,
-) -> bool:
-    """Сообщает, можно ли делать выводы об исчезновении записей.
-
-    Вынесено отдельной функцией, чтобы правило было видно и его нельзя было
-    потерять при добавлении новой операции: неполный снимок не даёт права
-    объявить что-либо исчезнувшим. Запись, не попавшая в частично прочитанную
-    страницу, не исчезла - её не прочитали, и разница между этими случаями есть
-    разница между «заказ отменён» и «мы не смогли его увидеть».
+def thread_cursor(thread: Thread) -> frozenset[str]:
+    """Собирает курсор по прочитанной переписке.
 
     Args:
-        before (OrdersPage | ChatsPage | Thread | None): Прошлый снимок.
-        after (OrdersPage | ChatsPage | Thread): Текущий снимок.
+        thread (Thread): Прочитанная переписка.
 
     Returns:
-        bool: True, только если оба снимка прочитаны полностью.
+        frozenset[str]: Идентификаторы наблюдённых сообщений.
     """
-    return _usable(before) and _usable(after)
+    return frozenset(
+        message.message_id.value
+        for message in thread.messages(accept_incomplete=True)
+        if message.message_id.is_observed
+    )
 
 
 def ordering_keys(events: Iterable[Event]) -> set[str]:
