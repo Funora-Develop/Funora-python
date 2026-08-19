@@ -18,6 +18,7 @@ import pytest
 
 import funora._client as client_module
 from funora._budget import Budget
+from funora._chats import ChatsPage
 from funora._client import Client
 from funora._orders import Completeness
 from funora._transport import Observation
@@ -400,3 +401,55 @@ def test_exhausted_budget_does_not_send_the_request(no_sleep: list[float]) -> No
         with pytest.raises(BudgetExhaustedError):
             client.orders.list()
         assert fetcher.calls == 0, "запрос отправлен несмотря на исчерпанный бюджет"
+
+
+def test_chats_list_reads_the_dialog_list() -> None:
+    """Проверяет вторую операцию чтения.
+
+    Returns:
+        None
+    """
+    with _client([_observation(_page("chat.logged.ru"))]) as client:
+        page = client.chats.list()
+        assert isinstance(page, ChatsPage)
+        assert page.completeness is Completeness.COMPLETE
+        assert len(page.rows()) == 47
+
+
+def test_chats_and_orders_share_the_capability_gate() -> None:
+    """Проверяет, что вторая операция проходит те же ворота.
+
+    Порядок шагов общий для всех операций чтения намеренно: скопированный
+    порядок расходится, и две операции одного клиента начинают вести себя
+    по-разному на одной и той же странице.
+
+    Returns:
+        None
+    """
+    with _client([]) as client:
+        client._state.capabilities[Capability.CHATS_LIST] = CapabilityState.UNSUPPORTED
+        with pytest.raises(UnsupportedCapabilityError):
+            client.chats.list()
+        assert client._fetcher.calls == 0  # type: ignore[attr-defined]
+
+
+def test_capabilities_are_tracked_separately() -> None:
+    """Проверяет, что деградация одной операции не задевает другую.
+
+    Сломанная разметка заказов ничего не говорит о разметке переписки, и
+    запрещать вторую из-за первой значило бы терять работоспособное.
+
+    Returns:
+        None
+    """
+    broken_orders = _page("orders-trade.logged.ru").replace(
+        '<div class="tc-status text-primary">', '<div class="tc-gone">'
+    )
+    with _client([_observation(broken_orders), _observation(_page("chat.logged.ru"))]) as client:
+        client.orders.list()
+        assert client.capability(Capability.ORDERS_LIST) is CapabilityState.DEGRADED
+        assert client.capability(Capability.CHATS_LIST) is not CapabilityState.DEGRADED
+
+        client.chats.list()
+        assert client.capability(Capability.CHATS_LIST) is CapabilityState.SUPPORTED
+        assert client.capability(Capability.ORDERS_LIST) is CapabilityState.DEGRADED

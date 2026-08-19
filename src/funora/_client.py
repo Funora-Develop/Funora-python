@@ -25,6 +25,7 @@ from time import monotonic, sleep
 from typing import Final
 
 from ._budget import Budget
+from ._chats import ChatsPage, parse_chats_page
 from ._classify import DEFAULT_IDENTITY_CSS, classify
 from ._gate import check_capability
 from ._orders import Completeness, OrdersPage, parse_orders_page
@@ -40,12 +41,15 @@ from .errors import (
     NetworkError,
 )
 
-__all__ = ["Client", "OrdersService"]
+__all__ = ["Client", "OrdersService", "ChatsService"]
 
 _log = logging.getLogger("funora.client")
 
 #: Путь страницы списка заказов.
 _ORDERS_PATH: Final[str] = "/orders/trade"
+
+#: Путь страницы списка диалогов.
+_CHATS_PATH: Final[str] = "/chat/"
 
 
 @dataclass
@@ -130,6 +134,35 @@ class OrdersService:
         return self._client._read_orders()
 
 
+class ChatsService:
+    """Операции над перепиской.
+
+    Args:
+        client (Client): Клиент, которому принадлежит служба.
+    """
+
+    __slots__ = ("_client",)
+
+    def __init__(self, client: Client) -> None:
+        self._client = client
+
+    def list(self) -> ChatsPage:
+        """Читает список диалогов.
+
+        Признак непрочитанного в записях помечен как выведенный: расхождения
+        позиций при непрочитанном диалоге не наблюдалось ни разу, и правило может
+        оказаться неверным. Структурный признак у страницы один - счётчик в
+        шапке, и он доступен в поле unread_badge_visible.
+
+        Returns:
+            ChatsPage: Записи вместе с полнотой и перечнем повреждений.
+
+        Raises:
+            FunoraError: Любая ошибка из иерархии Funora.
+        """
+        return self._client._read_chats()
+
+
 class Client:
     """Клиент площадки.
 
@@ -153,7 +186,7 @@ class Client:
             здесь не поможет, исправлять надо вызов.
     """
 
-    __slots__ = ("_budget", "_fetcher", "_settings", "_state", "orders")
+    __slots__ = ("_budget", "_fetcher", "_settings", "_state", "chats", "orders")
 
     def __init__(
         self,
@@ -180,6 +213,7 @@ class Client:
         self._budget = budget or Budget()
         self._state = _State(opted_in=experimental or frozenset())
         self.orders = OrdersService(self)
+        self.chats = ChatsService(self)
 
     def __enter__(self) -> Client:
         """Входит в контекстный менеджер.
@@ -228,7 +262,29 @@ class Client:
         Raises:
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
-        capability = Capability.ORDERS_LIST
+        observation = self._fetch_ok(Capability.ORDERS_LIST, _ORDERS_PATH)
+        page = parse_orders_page(observation.html, observed_at=datetime.now(UTC))
+        self._note_success(Capability.ORDERS_LIST, page.completeness, page)
+        return page
+
+    def _fetch_ok(self, capability: Capability, path: str) -> Observation:
+        """Получает пригодный для разбора ответ по нормативному порядку шагов.
+
+        Метод общий для всех операций чтения намеренно. Порядок шагов нормативен,
+        а скопированный порядок расходится: правку вносят в одно место, забывают
+        о втором, и две операции одного клиента начинают вести себя по-разному на
+        одной и той же странице.
+
+        Args:
+            capability (Capability): Возможность, под которую идёт чтение.
+            path (str): Путь запрашиваемой страницы.
+
+        Returns:
+            Observation: Ответ, признанный пригодным для разбора.
+
+        Raises:
+            FunoraError: Если ответ непригоден и повтор не помог либо не положен.
+        """
         check_capability(
             capability,
             state=self._state.capabilities[capability],
@@ -245,7 +301,7 @@ class Client:
             retry_after_ms: int | None = None
             self._spend_budget()
             try:
-                observation = self._fetcher.fetch(_ORDERS_PATH)
+                observation = self._fetcher.fetch(path)
                 retry_after_ms = observation.retry_after_ms
                 _check_integrity(observation)
                 verdict = classify(
@@ -279,9 +335,21 @@ class Client:
                 continue
 
             self._state.session_ever_valid = True
-            page = parse_orders_page(observation.html, observed_at=datetime.now(UTC))
-            self._note_success(capability, page)
-            return page
+            return observation
+
+    def _read_chats(self) -> ChatsPage:
+        """Выполняет чтение списка диалогов по тому же порядку шагов.
+
+        Returns:
+            ChatsPage: Разобранная страница.
+
+        Raises:
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        observation = self._fetch_ok(Capability.CHATS_LIST, _CHATS_PATH)
+        page = parse_chats_page(observation.html, observed_at=datetime.now(UTC))
+        self._note_success(Capability.CHATS_LIST, page.completeness, page)
+        return page
 
     def _spend_budget(self) -> None:
         """Занимает бюджет под один отправляемый запрос.
@@ -321,17 +389,24 @@ class Client:
                 f"(ведро {again.bucket}). Запрос не отправлен"
             )
 
-    def _note_success(self, capability: Capability, page: OrdersPage) -> None:
+    def _note_success(
+        self,
+        capability: Capability,
+        completeness: Completeness,
+        page: OrdersPage | ChatsPage,
+    ) -> None:
         """Записывает состояние возможности по успешному чтению.
 
         Args:
             capability (Capability): Возможность.
-            page (OrdersPage): Прочитанная страница.
+            completeness (Completeness): Полнота прочитанного.
+            page (OrdersPage | ChatsPage): Прочитанная страница. Нужна только
+                для подробностей в журнале.
 
         Returns:
             None
         """
-        if page.completeness is Completeness.COMPLETE:
+        if completeness is Completeness.COMPLETE:
             self._state.capabilities[capability] = CapabilityState.SUPPORTED
             return
 
