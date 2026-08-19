@@ -12,15 +12,18 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+from time import monotonic
 
 import pytest
 
 import funora._client as client_module
+from funora._budget import Budget
 from funora._client import Client
 from funora._orders import Completeness
 from funora._transport import Observation
 from funora.capabilities import Capability, CapabilityState
 from funora.errors import (
+    BudgetExhaustedError,
     ConfigurationError,
     InvalidCredentialsError,
     NetworkError,
@@ -306,3 +309,94 @@ def test_client_needs_a_secret_or_a_transport() -> None:
     """
     with pytest.raises(ConfigurationError):
         Client()
+
+
+def test_budget_is_spent_per_request(no_sleep: list[float]) -> None:
+    """Проверяет, что бюджет расходуется на каждый отправленный запрос.
+
+    Расходуется именно запрос, а не логическая операция: повтор - тоже запрос.
+    Считать иначе означало бы сделать шторм повторов бесплатным ровно в тот
+    момент, когда площадке хуже всего.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    budget = Budget()
+    good = _observation(_page("orders-trade.logged.ru"))
+    with Client(transport=_FakeFetcher([good] * 5), budget=budget) as client:  # type: ignore[arg-type]
+        before = budget.reserve(0.0)
+        assert before.granted
+        for _ in range(3):
+            client.orders.list()
+
+    spent = 0
+    probe = Budget()
+    while probe.reserve(0.0).granted:
+        spent += 1
+    remaining = 0
+    while budget.reserve(0.0).granted:
+        remaining += 1
+    assert remaining < spent, "бюджет не израсходован ни на один запрос"
+
+
+def test_budget_is_shared_between_clients() -> None:
+    """Проверяет, что общий бюджет действительно общий.
+
+    Площадке видна сетевая идентичность, а не то, сколько клиентов мы завели у
+    себя. Заведи каждый свой бюджет - общий предел обходится тривиально.
+
+    Returns:
+        None
+    """
+    budget = Budget()
+    good = _observation(_page("orders-trade.logged.ru"))
+    now = monotonic()
+
+    first = Client(transport=_FakeFetcher([good] * 50), budget=budget)  # type: ignore[arg-type]
+    second = Client(transport=_FakeFetcher([good] * 50), budget=budget)  # type: ignore[arg-type]
+
+    first.orders.list()
+    after_first = 0
+    probe = Budget()
+    while probe.reserve(now).granted:
+        after_first += 1
+
+    second.orders.list()
+    left = 0
+    while budget.reserve(now).granted:
+        left += 1
+
+    assert left < after_first - 1, "два клиента расходовали разные бюджеты"
+
+    first.close()
+    second.close()
+
+
+def test_exhausted_budget_does_not_send_the_request(no_sleep: list[float]) -> None:
+    """Проверяет, что при исчерпании запрос не отправляется вовсе.
+
+    В этом весь смысл ошибки: она означает решение SDK не ходить, а не ответ
+    площадки.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    # Опустошать надо по тем же часам, которые спросит клиент. Опустошение в
+    # момент ноль ничего не даёт: к настоящему монотонному моменту ведро успеет
+    # восполниться, и проверка станет зелёной, ничего не проверив.
+    budget = Budget(names=("write",))
+    now = monotonic()
+    while budget.reserve(now).granted:
+        pass
+
+    fetcher = _FakeFetcher([_observation(_page("orders-trade.logged.ru"))])
+    with Client(transport=fetcher, budget=budget) as client:  # type: ignore[arg-type]
+        with pytest.raises(BudgetExhaustedError):
+            client.orders.list()
+        assert fetcher.calls == 0, "запрос отправлен несмотря на исчерпанный бюджет"
