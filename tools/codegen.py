@@ -820,7 +820,12 @@ def render_extraction(spec: Path) -> str:
     ]
 
     out.append("__all__ = [\n")
-    for name in ("OrderStatus", "STATUS_BY_CELL_CLASS", "STATUS_BY_ROW_CLASS", "PRESENCE_BY_CLASS"):
+    for name in (
+        "OrderStatus",
+        "STATUS_BY_CELL_CLASS",
+        "ROW_MARKER_BY_STATUS",
+        "PRESENCE_BY_CLASS",
+    ):
         out.append('    "' + name + '",\n')
     out.append("]\n")
 
@@ -846,15 +851,23 @@ def render_extraction(spec: Path) -> str:
         )
     out.append("}\n")
 
-    out.append("\n#: Статус по модификатору строки. Пустая строка - строка без модификатора.\n")
-    out.append("STATUS_BY_ROW_CLASS: Final[dict[str, OrderStatus]] = {\n")
+    out.append("\n#: Модификатор строки для состояний, у которых он наблюдался.\n")
+    out.append("#:\n")
+    out.append("#: Носитель односторонний. Модификатор стоит у оплаченного заказа, а\n")
+    out.append("#: закрытый узнаётся по его отсутствию - и отсутствие само по себе не\n")
+    out.append("#: свидетельство: под ним с равным успехом лежит переименование класса.\n")
+    out.append("#: Поэтому модификатор служит проверкой в одну сторону, а состояние\n")
+    out.append("#: берётся из класса ячейки.\n")
+    out.append("ROW_MARKER_BY_STATUS: Final[dict[OrderStatus, str]] = {\n")
     for entry in entries:
+        if not entry.get("row_class"):
+            continue
         out.append(
-            '    "'
-            + entry["row_class"]
-            + '": OrderStatus.'
+            "    OrderStatus."
             + _const(entry["status"])
-            + ",  # "
+            + ': "'
+            + entry["row_class"]
+            + '",  # '
             + entry["display_ru"]
             + "\n"
         )

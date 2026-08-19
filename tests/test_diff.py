@@ -19,6 +19,7 @@ import pytest
 
 from funora._chats import parse_chats_page
 from funora._diff import (
+    UNREAD_STATUS,
     chats_cursor,
     diff_chats,
     diff_orders,
@@ -29,6 +30,7 @@ from funora._diff import (
 from funora._orders import Completeness, parse_orders_page
 from funora._thread import parse_thread
 from funora.events import ORDERING_KEY, EventType
+from funora.extraction import OrderStatus
 
 #: Каталог со снимками страниц.
 FIXTURES = Path(__file__).parent / "fixtures" / "pages"
@@ -218,21 +220,115 @@ def test_event_id_changes_with_the_revision() -> None:
     assert first[0].id != second[0].id
 
 
-def test_no_status_change_events_are_ever_produced() -> None:
-    """Проверяет, что события об изменении статуса не порождаются.
+def _with_ids(name: str = "orders-trade.states.logged.ru") -> str:
+    """Разводит замаскированные идентификаторы заказов.
 
-    Соответствия классов разметки статусам не наблюдалось, статус выдаётся
-    ненаблюдённым, и породить из него событие значило бы выдумать факт.
+    В снимке все заказы несут один и тот же замаскированный идентификатор:
+    маска схлопывает и 12345, и QN2CW7HY в одно значение. Без разведения любая
+    проверка, зависящая от различимости заказов, проходит впустую.
+
+    Args:
+        name (str): Имя снимка без расширения.
+
+    Returns:
+        str: Разметка с различимыми идентификаторами.
+    """
+    html = _raw(name)
+    number = 100
+    while 'href="https://funpay.com/orders/{n}/"' in html:
+        number += 1
+        html = html.replace(
+            'href="https://funpay.com/orders/{n}/"',
+            f'href="https://funpay.com/orders/{number}/"',
+            1,
+        )
+    return html
+
+
+def test_status_change_produces_an_event() -> None:
+    """Проверяет событие об изменении состояния заказа.
+
+    Событие было объявлено в спецификации и не порождалось никогда: состояние
+    было ненаблюдаемым, и породить его значило бы выдумать факт. Теперь
+    состояние читается, и переход «оплачен - закрыт» наблюдаем.
 
     Returns:
         None
     """
-    changed = _raw("orders-trade.logged.ru").replace(
-        "tc-status text-primary", "tc-status text-warning"
+    before = _with_ids()
+    after = before.replace('"tc-item info"', '"tc-item"').replace(
+        '"tc-status text-primary"', '"tc-status text-success"'
     )
-    events = diff_orders(orders_cursor(_orders()), _orders(changed), account_id=ACCOUNT)
 
-    assert all(e.type is not EventType.ORDER_STATUS_CHANGED for e in events)
+    cursor = orders_cursor(_orders(before))
+    events = diff_orders(cursor, _orders(after), account_id=ACCOUNT)
+
+    assert {e.type for e in events} == {EventType.ORDER_STATUS_CHANGED}
+    assert len(events) == 5, "оплаченных заказов в снимке пять"
+    for event in events:
+        assert event.payload["from"] == OrderStatus.PAID
+        assert event.payload["to"] == OrderStatus.CLOSED
+        assert event.ordering_key == f"order:{event.entity_id}"
+
+
+def test_unchanged_status_produces_nothing() -> None:
+    """Проверяет, что повторное чтение того же состояния молчит.
+
+    Returns:
+        None
+    """
+    html = _with_ids()
+    cursor = orders_cursor(_orders(html))
+    assert diff_orders(cursor, _orders(html), account_id=ACCOUNT) == ()
+
+
+def test_learning_to_read_a_status_is_not_a_change() -> None:
+    """Проверяет, что переход из непрочитанного в прочитанное не событие.
+
+    Самая важная проверка этой пары. Такой переход говорит о том, что мы
+    научились читать, а не о том, что заказ изменился, - и обработчик, получив
+    его, выдал бы товар по заказу, с которым ничего не происходило.
+
+    Возникает это не умозрительно: ровно так выглядит первое чтение после того,
+    как в таблицу соответствия добавили новое состояние.
+
+    Returns:
+        None
+    """
+    html = _with_ids()
+    unreadable = html.replace("text-primary", "text-blue").replace("text-success", "text-green")
+
+    blind = orders_cursor(_orders(unreadable))
+    assert set(blind.values()) == {UNREAD_STATUS}, "порча не сделала состояния нечитаемыми"
+
+    # Прозрели: состояния читаются. Событий об изменении быть не должно.
+    events = diff_orders(blind, _orders(html), account_id=ACCOUNT)
+    assert events == ()
+
+    # И в обратную сторону: ослепли - тоже не событие.
+    seeing = orders_cursor(_orders(html))
+    assert diff_orders(seeing, _orders(unreadable), account_id=ACCOUNT) == ()
+
+
+def test_status_change_event_is_stable_across_reads() -> None:
+    """Проверяет, что повторное чтение изменения даёт тот же отпечаток.
+
+    Отпечаток строится от нового состояния, а не от момента наблюдения. Иначе
+    каждое чтение давало бы новое событие, и гашение повторов перестало бы
+    работать ровно там, где оно нужно, - при опросе раз в несколько секунд.
+
+    Returns:
+        None
+    """
+    before = _with_ids()
+    after = before.replace('"tc-item info"', '"tc-item"').replace(
+        '"tc-status text-primary"', '"tc-status text-success"'
+    )
+    cursor = orders_cursor(_orders(before))
+
+    first = diff_orders(cursor, _orders(after), account_id=ACCOUNT)
+    second = diff_orders(cursor, _orders(after), account_id=ACCOUNT)
+    assert [e.id for e in first] == [e.id for e in second]
 
 
 def test_new_message_produces_an_event_with_origin() -> None:
@@ -297,7 +393,8 @@ def test_partial_snapshot_does_not_make_old_orders_new() -> None:
 
     full = _orders(distinct)
     cursor = orders_cursor(full)
-    assert cursor == {"101", "102", "103"}
+    assert set(cursor) == {"101", "102", "103"}
+    assert set(cursor.values()) == {OrderStatus.PAID}, "снимок целиком оплачен"
 
     first = distinct.index('<a class="tc-item info" href=')
     end_of_tag = distinct.index(">", first)
@@ -333,7 +430,7 @@ def test_new_order_is_seen_even_in_a_partial_read() -> None:
             1,
         )
 
-    cursor = frozenset({"102", "103"})
+    cursor = dict.fromkeys(("102", "103"), UNREAD_STATUS)
     broken = distinct.replace('<div class="tc-status text-primary">', '<div class="tc-gone">')
     damaged = _orders(broken)
     assert damaged.completeness is Completeness.PARTIAL

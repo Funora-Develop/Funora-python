@@ -72,8 +72,8 @@ from .errors import ERROR_BY_ABI_CODE, ERROR_BY_STABLE_ID, FunoraError
 from .events import EventType
 from .extraction import (
     PRESENCE_BY_CLASS,
+    ROW_MARKER_BY_STATUS,
     STATUS_BY_CELL_CLASS,
-    STATUS_BY_ROW_CLASS,
     OrderStatus,
 )
 
@@ -130,11 +130,11 @@ __all__ = [
     "OrdersPage",
     "OrderStatus",
     "STATUS_BY_CELL_CLASS",
-    "STATUS_BY_ROW_CLASS",
+    "ROW_MARKER_BY_STATUS",
     "PRESENCE_BY_CLASS",
     "OrderStatus",
     "STATUS_BY_CELL_CLASS",
-    "STATUS_BY_ROW_CLASS",
+    "ROW_MARKER_BY_STATUS",
     "PRESENCE_BY_CLASS",
     "OrderListEntry",
     "Completeness",

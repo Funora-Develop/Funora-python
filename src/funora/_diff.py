@@ -23,9 +23,11 @@
 по странице нечем. Разница между этими случаями есть разница между «заказ
 отменён» и «мы не смогли его увидеть», а обработчик по первому вернёт деньги.
 
-События об изменении статуса не порождаются вовсе. Соответствия классов разметки
-статусам не наблюдалось, статус выдаётся ненаблюдённым, и породить из него
-событие значило бы выдумать факт.
+События об изменении состояния порождаются только когда обе стороны сравнения
+прочитаны. Переход из непрочитанного состояния в прочитанное событием не
+считается: он говорит о том, что мы научились читать, а не о том, что заказ
+изменился. Обработчик, получивший такое событие, выдал бы товар по заказу, с
+которым ничего не происходило.
 """
 
 from __future__ import annotations
@@ -42,6 +44,7 @@ from ._thread import Thread
 from .events import FINGERPRINT_FIELDS, ORDERING_KEY, EventType
 
 __all__ = [
+    "UNREAD_STATUS",
     "Event",
     "diff_orders",
     "diff_chats",
@@ -153,17 +156,33 @@ def _event(
     )
 
 
+#: Чем отмечается заказ, состояние которого прочитать не удалось.
+#:
+#: Метка нужна затем, чтобы отличить «состояние было другим» от «состояния мы не
+#: знали». Событие об изменении порождается только когда обе стороны прочитаны:
+#: переход из непрочитанного в прочитанное - это про нас, а не про заказ.
+UNREAD_STATUS: Final[str] = "?"
+
+
 def diff_orders(
-    known: frozenset[str] | None,
+    known: dict[str, str] | None,
     page: OrdersPage,
     *,
     account_id: str,
 ) -> tuple[Event, ...]:
     """Порождает события по списку заказов и курсору.
 
+    Событий два вида. Заказ, которого нет в курсоре, - новый. Заказ, состояние
+    которого прочитано сейчас, прочитано было и отличается, - изменившийся.
+
+    Второе условие строгое намеренно. Переход из непрочитанного состояния в
+    прочитанное событием не считается: он говорит о том, что мы научились
+    читать, а не о том, что заказ изменился. Обработчик, получивший такое
+    событие, выдал бы товар по заказу, с которым ничего не происходило.
+
     Args:
-        known (frozenset[str] | None): Идентификаторы заказов, о которых уже
-            известно. None при первом запуске, когда курсора ещё нет.
+        known (dict[str, str] | None): Известные заказы и их состояния. None при
+            первом запуске, когда курсора ещё нет.
         page (OrdersPage): Прочитанная страница. Может быть неполной: заказ,
             которого нет в курсоре, новый независимо от полноты чтения.
         account_id (str): Идентификатор аккаунта.
@@ -178,40 +197,72 @@ def diff_orders(
 
     events: list[Event] = []
     for entry in page.rows(accept_incomplete=True):
-        if entry.order_id in known:
+        now = entry.status.value if entry.status.is_observed else UNREAD_STATUS
+
+        if entry.order_id not in known:
+            events.append(
+                _event(
+                    account_id=account_id,
+                    event_type=EventType.ORDER_CREATED,
+                    entity_id=entry.order_id,
+                    # Версией служит сам факт появления: заказ появляется в
+                    # списке однажды, и различать разные появления одного и того
+                    # же заказа не требуется.
+                    revision="appeared",
+                    observed_at=page.observed_at,
+                    key_field="order_id",
+                    payload={
+                        "href": entry.href,
+                        "row_index": entry.row_index,
+                        "status": now,
+                    },
+                )
+            )
             continue
+
+        before = known[entry.order_id]
+        if before == now or UNREAD_STATUS in (before, now):
+            continue
+
         events.append(
             _event(
                 account_id=account_id,
-                event_type=EventType.ORDER_CREATED,
+                event_type=EventType.ORDER_STATUS_CHANGED,
                 entity_id=entry.order_id,
-                # Версией служит сам факт появления: у заказа из списка нет
-                # ничего, что менялось бы наблюдаемо. Статус ненаблюдаем, и
-                # события о его изменении не порождаются вовсе.
-                revision="appeared",
+                # Версия - новое состояние. Повторное чтение того же состояния
+                # даёт тот же отпечаток, и гашение повторов срабатывает само.
+                revision=now,
                 observed_at=page.observed_at,
                 key_field="order_id",
-                payload={"href": entry.href, "row_index": entry.row_index},
+                payload={"href": entry.href, "from": before, "to": now},
             )
         )
 
     return tuple(events)
 
 
-def orders_cursor(page: OrdersPage) -> frozenset[str]:
+def orders_cursor(page: OrdersPage) -> dict[str, str]:
     """Собирает курсор по прочитанной странице заказов.
 
     Курсор снимается только с полного чтения, и решает это вызывающий. Снятый с
     неполного, он потерял бы выпавшие строки - и при следующем чтении они
     выглядели бы новыми заказами.
 
+    Хранится не множество идентификаторов, а соответствие «заказ - состояние».
+    Множества хватало ровно до тех пор, пока состояние было ненаблюдаемым:
+    сравнивать было нечего, и событие об изменении породить было не из чего.
+
     Args:
         page (OrdersPage): Прочитанная страница.
 
     Returns:
-        frozenset[str]: Идентификаторы заказов на странице.
+        dict[str, str]: Идентификаторы заказов и их состояния. Непрочитанное
+        состояние отмечается UNREAD_STATUS.
     """
-    return frozenset(entry.order_id for entry in page.rows(accept_incomplete=True))
+    return {
+        entry.order_id: (entry.status.value if entry.status.is_observed else UNREAD_STATUS)
+        for entry in page.rows(accept_incomplete=True)
+    }
 
 
 def diff_chats(
