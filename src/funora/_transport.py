@@ -81,7 +81,15 @@ class Observation:
         html (str): Тело ответа.
         elapsed_ms (int): Длительность запроса, миллисекунды.
         redirects (int): Сколько переходов было выполнено.
-        content_length (int): Размер тела в байтах.
+        content_length (int): Размер полученного тела в байтах.
+        declared_length (int | None): Длина, объявленная заголовком
+            Content-Length, если он был. Нужна для проверки целостности:
+            страница, оборванная посреди таблицы, проходит и классификацию, и
+            разбор, а вызывающий получает половину заказов с нулём повреждений.
+            Это правдоподобный неверный ответ, о неверности которого узнать
+            неоткуда, и сверка длин - единственный способ его заметить.
+        retry_after_ms (int | None): Значение заголовка Retry-After в
+            миллисекундах, если площадка его прислала.
     """
 
     status: int
@@ -90,6 +98,8 @@ class Observation:
     elapsed_ms: int
     redirects: int
     content_length: int
+    declared_length: int | None = None
+    retry_after_ms: int | None = None
 
 
 def _warn_if_headers_logged() -> None:
@@ -233,4 +243,45 @@ class Fetcher:
             elapsed_ms=int(elapsed * 1000),
             redirects=redirects,
             content_length=len(raw),
+            declared_length=_header_int(response, "content-length"),
+            retry_after_ms=_retry_after_ms(response),
         )
+
+
+def _header_int(response: httpx.Response, name: str) -> int | None:
+    """Читает целочисленный заголовок ответа.
+
+    Args:
+        response (httpx.Response): Ответ.
+        name (str): Имя заголовка.
+
+    Returns:
+        int | None: Значение либо None, если заголовка нет или он не число.
+    """
+    raw = response.headers.get(name)
+    if raw is None:
+        return None
+    try:
+        return int(raw.strip())
+    except ValueError:
+        return None
+
+
+def _retry_after_ms(response: httpx.Response) -> int | None:
+    """Читает заголовок Retry-After в миллисекундах.
+
+    Разбирается только числовая форма, в секундах. Форма с датой не
+    поддерживается намеренно: она требует доверия к часам площадки и к
+    согласованности часовых поясов, а ошибка здесь выражается в неверной паузе -
+    то есть в поведении, которое потом объясняют чем угодно, кроме заголовка.
+
+    Args:
+        response (httpx.Response): Ответ.
+
+    Returns:
+        int | None: Пауза в миллисекундах либо None.
+    """
+    seconds = _header_int(response, "retry-after")
+    if seconds is None or seconds < 0:
+        return None
+    return seconds * 1000
