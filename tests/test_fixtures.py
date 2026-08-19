@@ -238,3 +238,24 @@ def test_every_snapshot_has_provenance() -> None:
     for snapshot in sorted(PAGES.glob("*.skeleton.txt")):
         beside = snapshot.with_name(snapshot.name.replace(".skeleton.txt", ".provenance.json"))
         assert beside.exists(), f"{snapshot.name}: рядом нет provenance"
+
+
+def test_provenance_says_whether_the_file_was_converted() -> None:
+    """Проверяет, что описание захвата различает снимок и его преобразование.
+
+    Поле format говорит, каков файл сейчас. Само по себе оно вводит в
+    заблуждение: четыре снимка помечены текущим форматом, а сняты были прежними
+    и преобразованы повторной маскировкой. Расхождение между таким файлом и
+    снятым нативно объясняется сменой формата с тем же успехом, что и сменой
+    разметки, - и решить, что важнее, можно только зная происхождение.
+
+    Returns:
+        None
+    """
+    for snapshot in sorted(PAGES.glob("*.provenance.json")):
+        data = json.loads(snapshot.read_text(encoding="utf-8"))
+        assert "captured_format" in data, f"{snapshot.name}: не сказано, в чём снят"
+        assert "converted" in data, f"{snapshot.name}: не сказано, преобразован ли"
+        assert data["converted"] is (data["captured_format"] != data["format"]), (
+            f"{snapshot.name}: пометка преобразования расходится с форматами"
+        )
