@@ -1,8 +1,7 @@
 """Funora - неофициальный SDK и framework для площадки FunPay.
 
-Пакет находится в стадии наблюдения за протоколом. Публичного клиента ещё нет:
-сейчас здесь инструмент, который отвечает на вопросы, без ответа на которые
-спецификацию нельзя перевести из состояния draft.
+В пакете есть первая операция чтения и инструмент наблюдения за протоколом.
+Стабильным контрактом не является ничто: спецификация в состоянии draft.
 
 Что уже есть:
 
@@ -21,6 +20,7 @@
 from __future__ import annotations
 
 from ._classify import DEFAULT_IDENTITY_CSS, ResponseClass, Signature, Verdict, classify
+from ._client import Client, OrdersService
 from ._gate import check_capability
 from ._observed import Confidence, Observed, Presence
 from ._orders import (
@@ -50,6 +50,9 @@ __version__ = "0.0.1.dev0"
 
 __all__ = [
     "__version__",
+    # клиент
+    "Client",
+    "OrdersService",
     # секреты
     "Secret",
     "SecretProvider",
