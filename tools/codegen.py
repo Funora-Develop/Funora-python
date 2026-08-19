@@ -451,11 +451,116 @@ def render_response_classes(spec: Path) -> str:
     return "".join(out)
 
 
+def render_retry(spec: Path) -> str:
+    """Порождает таблицу политик повторов.
+
+    Args:
+        spec (Path): Корень рабочей копии Funora-spec.
+
+    Returns:
+        str: Содержимое модуля.
+    """
+    doc = _load(spec, "spec/protocol/retry-policy.yaml")
+    policies: dict[str, Any] = doc["policies"]
+    limits: dict[str, Any] = doc["limits"]
+
+    fallbacks = [name for name, entry in policies.items() if entry.get("fallback")]
+    if len(fallbacks) != 1:
+        raise ValueError(
+            "spec/protocol/retry-policy.yaml: запасная политика обязана быть "
+            f"ровно одна, найдено {len(fallbacks)}"
+        )
+
+    extra = (
+        "Числа не выбираются реализацией. Отступление, синхронизированное между\n"
+        "шестью SDK, превращается в согласованную волну запросов, и площадка\n"
+        "видит не шесть вежливых клиентов, а один невежливый.\n"
+        "\n"
+        "Запасная политика намеренно строже конкретных: неизвестный класс отказа\n"
+        "не повод быть смелее.\n"
+    )
+
+    out = [
+        HEADER.format(
+            title="Политики повторов.",
+            source="spec/protocol/retry-policy.yaml",
+            extra=extra,
+        ).replace(
+            "from typing import ClassVar, Final",
+            "from dataclasses import dataclass\nfrom typing import Final",
+        )
+    ]
+
+    out.append(
+        '__all__ = ["RetryPolicy", "RETRY_POLICIES", "FALLBACK_POLICY", "GLOBAL_MAX_ATTEMPTS"]\n'
+    )
+
+    out.append("\n\n@dataclass(frozen=True, slots=True)\n")
+    out.append("class RetryPolicy:\n")
+    out.append('    """Политика повторов для одного класса ошибки.\n\n')
+    out.append("    Attributes:\n")
+    out.append("        stable_id (str): Устойчивый идентификатор класса ошибки.\n")
+    out.append("        max_attempts (int): Сколько попыток допустимо всего, включая первую.\n")
+    out.append("        base_ms (int): Основа задержки, миллисекунды.\n")
+    out.append("        multiplier (float): Во сколько раз растёт задержка.\n")
+    out.append("        cap_ms (int): Потолок задержки, миллисекунды.\n")
+    out.append("        jitter (str): Вид разброса.\n")
+    out.append("        respect_retry_after (bool): Уважать ли заголовок Retry-After.\n")
+    out.append("        max_retry_after_ms (int): Верхняя граница уважения заголовка.\n")
+    out.append("        fail_closed (bool): Останавливать ли работу до вмешательства.\n")
+    out.append("        account_scoped (bool): Действует ли ограничение на весь аккаунт.\n")
+    out.append('    """\n\n')
+    out.append("    stable_id: str\n")
+    out.append("    max_attempts: int\n")
+    out.append("    base_ms: int\n")
+    out.append("    multiplier: float\n")
+    out.append("    cap_ms: int\n")
+    out.append("    jitter: str\n")
+    out.append("    respect_retry_after: bool\n")
+    out.append("    max_retry_after_ms: int\n")
+    out.append("    fail_closed: bool\n")
+    out.append("    account_scoped: bool\n")
+
+    default_after = limits["max_retry_after_ms"]["value"]
+    out.append("\n\n#: Политика по устойчивому идентификатору класса ошибки.\n")
+    out.append("RETRY_POLICIES: Final[dict[str, RetryPolicy]] = {\n")
+    for name, entry in policies.items():
+        out.append(f'    "{name}": RetryPolicy(\n')
+        out.append(f'        stable_id="{name}",\n')
+        out.append(f"        max_attempts={entry['max_attempts']},\n")
+        out.append(f"        base_ms={entry.get('base_ms', 0)},\n")
+        out.append(f"        multiplier={float(entry.get('multiplier', 1))},\n")
+        out.append(f"        cap_ms={entry.get('cap_ms', 0)},\n")
+        out.append(f'        jitter="{entry.get("jitter", limits["jitter"]["kind"])}",\n')
+        out.append(f"        respect_retry_after={bool(entry.get('respect_retry_after'))},\n")
+        out.append(
+            f"        max_retry_after_ms={entry.get('max_retry_after_ms', default_after)},\n"
+        )
+        out.append(f"        fail_closed={bool(entry.get('fail_closed'))},\n")
+        out.append(f"        account_scoped={bool(entry.get('account_scoped'))},\n")
+        out.append("    ),\n")
+    out.append("}\n")
+
+    out.append("\n#: Политика для классов ошибок без собственной записи.\n")
+    out.append("#:\n")
+    out.append("#: Строже конкретных намеренно: неизвестный класс отказа не повод быть\n")
+    out.append("#: смелее. Реализация, подставляющая здесь самую щедрую политику,\n")
+    out.append("#: получает самое агрессивное поведение как раз тогда, когда меньше\n")
+    out.append("#: всего понимает происходящее.\n")
+    out.append(f'FALLBACK_POLICY: Final[RetryPolicy] = RETRY_POLICIES["{fallbacks[0]}"]\n')
+
+    out.append("\n#: Потолок числа попыток независимо от политики класса ошибки.\n")
+    out.append(f"GLOBAL_MAX_ATTEMPTS: Final[int] = {limits['global_max_attempts']['value']}\n")
+
+    return "".join(out)
+
+
 #: Что порождается: имя файла в пакете и функция, которая его строит.
 TARGETS: Final[dict[str, Callable[[Path], str]]] = {
     "errors.py": render_errors,
     "capabilities.py": render_capabilities,
     "response_classes.py": render_response_classes,
+    "retry.py": render_retry,
 }
 
 

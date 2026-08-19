@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 from ._classify import DEFAULT_IDENTITY_CSS, ResponseClass, Signature, Verdict, classify
+from ._gate import check_capability
 from ._observed import Confidence, Observed, Presence
 from ._orders import (
     Completeness,
@@ -30,6 +31,7 @@ from ._orders import (
     Severity,
     parse_orders_page,
 )
+from ._retry import Attempt, Safety, plan_attempt, policy_for
 from ._secret import (
     CallableSecretProvider,
     EnvSecretProvider,
@@ -62,6 +64,11 @@ __all__ = [
     "Signature",
     "DEFAULT_IDENTITY_CSS",
     "error_for",
+    "check_capability",
+    "plan_attempt",
+    "policy_for",
+    "Attempt",
+    "Safety",
     # скелет
     "skeletonize",
     "SkeletonError",
