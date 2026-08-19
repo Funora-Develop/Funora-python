@@ -46,7 +46,9 @@ from ._diff import (
     chats_cursor,
     diff_chats,
     diff_orders,
+    diff_thread,
     orders_cursor,
+    thread_cursor,
 )
 from ._gate import check_capability
 from ._host import host_of
@@ -359,6 +361,89 @@ class Engine:
             self._state.session_ever_valid = True
             return observation
 
+    def _follow(
+        self,
+        pending: list[str],
+        known: dict[str, frozenset[str]],
+        *,
+        account_id: str,
+        limit: int,
+    ) -> Generator[Request, Reply, tuple[Event, ...]]:
+        """Дочитывает переписки диалогов, о которых сказал список.
+
+        Метод существует потому, что событие о новом сообщении иначе не
+        порождается вовсе. Список диалогов говорит, что диалог изменился, но не
+        говорит чем: сообщение видно только на странице самой переписки.
+
+        Читать все переписки на каждом шаге нельзя - полсотни диалогов дали бы
+        полсотни запросов в минуту, а спецификация относит чтение переписки к
+        разряду interactive. Поэтому читаются только изменившиеся, и не больше
+        предела за шаг.
+
+        Очередь при этом не выбрасывается. Изменись разом больше диалогов, чем
+        предел, - остальные дождутся следующих шагов. Выбросить их значило бы
+        потерять сообщения молча: событие об изменении диалога уже доставлено,
+        курсор диалогов сдвинут, и повода вернуться к такому диалогу больше нет.
+
+        Первое чтение переписки событий не порождает. Отличить новое сообщение
+        от давнего в ней нечем: курсора для этой переписки ещё не было, и
+        объявить новыми все её сообщения значило бы разослать историю целиком.
+        Это то же правило, по которому молчит холодный старт.
+
+        Отказ на одной переписке не отменяет остальные и не отменяет шаг.
+        Диалог при этом выбывает из очереди: повторять вечно то, что не
+        читается, значило бы запереть очередь навсегда, а следующее изменение
+        того же диалога вернёт его обратно.
+
+        Args:
+            pending (list[str]): Очередь диалогов, ожидающих дочитывания.
+                Изменяется на месте: прочитанные и отброшенные убираются.
+            known (dict[str, frozenset[str]]): Курсоры переписок по диалогам.
+                Пополняется прочитанным.
+            account_id (str): Идентификатор аккаунта.
+            limit (int): Сколько переписок прочитать за этот шаг.
+
+        Yields:
+            Request: Просьбы о вводе-выводе.
+
+        Returns:
+            tuple[Event, ...]: События о новых сообщениях.
+        """
+        events: list[Event] = []
+        for _ in range(max(0, limit)):
+            if not pending:
+                break
+            node_id = pending.pop(0)
+
+            try:
+                thread = yield from self.read_thread(node_id)
+            except FunoraError as exc:
+                # Повторяемые отказы уже отработаны политикой повторов внутри
+                # чтения; сюда доходит то, что повтором не лечится.
+                _log.warning(
+                    "переписка %s не прочитана и выбывает из очереди: %s",
+                    node_id,
+                    type(exc).__name__,
+                )
+                continue
+
+            events.extend(
+                diff_thread(
+                    known.get(node_id),
+                    thread,
+                    account_id=account_id,
+                    chat_id=node_id,
+                )
+            )
+            # Курсор переписки снимается только с полного чтения - по той же
+            # причине, что и курсоры списков: снятый с неполного, он потерял бы
+            # выпавшие сообщения, и при следующем чтении они выглядели бы
+            # новыми.
+            if thread.completeness is Completeness.COMPLETE:
+                known[node_id] = thread_cursor(thread)
+
+        return tuple(events)
+
     def spend_budget(self) -> Generator[Request, Reply, None]:
         """Занимает бюджет под один отправляемый запрос.
 
@@ -408,6 +493,7 @@ class Engine:
         max_iterations: int | None = None,
         schedule: Schedule | None = None,
         state_path: Path | None = None,
+        max_threads_per_step: int = 5,
     ) -> Generator[Request, Reply, None]:
         """Ведёт наблюдение: опрашивает площадку и раздаёт события обработчикам.
 
@@ -431,6 +517,10 @@ class Engine:
                 переживает перезапуск. Без него кэш живёт только в памяти, и
                 после любого перезапуска повторно приходит всё, что успело
                 прийти до него.
+            max_threads_per_step (int): Сколько переписок читать за один шаг.
+                Предел нужен: изменись разом полсотни диалогов, шаг превратился
+                бы в полсотни запросов. Непрочитанные не теряются - они ждут в
+                очереди и читаются следующими шагами.
 
         Yields:
             Request: Просьбы о вводе-выводе и о раздаче событий.
@@ -447,6 +537,8 @@ class Engine:
 
         known_orders: dict[str, str] | None = None
         known_chats: dict[str, str] | None = None
+        known_threads: dict[str, frozenset[str]] = {}
+        pending: list[str] = []
 
         if state is not None:
             stored = state.load()
@@ -470,6 +562,14 @@ class Engine:
                 known_orders = dict.fromkeys(saved_orders, UNREAD_STATUS)
             if cursor.get("chats") is not None:
                 known_chats = dict(cursor["chats"])
+            known_threads = {
+                node: frozenset(ids) for node, ids in (cursor.get("threads") or {}).items()
+            }
+            # Очередь непрочитанных переписок тоже переживает перезапуск. Не
+            # переживи она - диалог, изменившийся перед остановкой и не успевший
+            # дочитаться, не дочитался бы уже никогда: событие о нём доставлено,
+            # курсор диалогов сдвинут, и повода вернуться к нему больше нет.
+            pending = list(cursor.get("pending_threads") or [])
             if known_orders is not None or known_chats is not None:
                 _log.info(
                     "курсор восстановлен: заказов %s, диалогов %s",
@@ -485,11 +585,27 @@ class Engine:
             now = monotonic()
 
             cold = known_orders is None or known_chats is None
-            events = (
-                *diff_orders(known_orders, orders, account_id=account_id),
-                *diff_chats(known_chats, chats, account_id=account_id),
+            chat_events = diff_chats(known_chats, chats, account_id=account_id)
+            head = dedup.filter(
+                (*diff_orders(known_orders, orders, account_id=account_id), *chat_events),
+                now,
             )
-            fresh = dedup.filter(events, now)
+
+            # В очередь попадают только те диалоги, чьё изменение пережило
+            # гашение. Иначе повторно пришедшее событие заставляло бы перечитать
+            # переписку, в которой ничего нового нет: курсор её уже сдвинут.
+            delivered_ids = {event.id for event in head}
+            for event in chat_events:
+                if event.id in delivered_ids and event.entity_id not in pending:
+                    pending.append(event.entity_id)
+
+            messages = yield from self._follow(
+                pending,
+                known_threads,
+                account_id=account_id,
+                limit=max_threads_per_step,
+            )
+            fresh = (*head, *dedup.filter(messages, now))
 
             batch: tuple[Event, ...]
             if cold:
@@ -534,6 +650,8 @@ class Engine:
                         "cursor": {
                             "orders": known_orders,
                             "chats": known_chats,
+                            "threads": {node: sorted(ids) for node, ids in known_threads.items()},
+                            "pending_threads": pending,
                         },
                     }
                 )

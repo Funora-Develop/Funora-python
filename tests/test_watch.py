@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -661,3 +662,286 @@ def test_platform_error_from_handler_reaches_the_caller(
         client.watch(router, max_iterations=1, state_path=state_path)
 
     assert state_path.is_file(), "состояние обязано сохраниться до подъёма ошибки"
+
+
+class _ByPath:
+    """Подставной транспорт, отвечающий по адресу, а не по счётчику.
+
+    Счётчик годился, пока цикл спрашивал ровно две страницы по очереди. С
+    дочитыванием переписок порядок обращений перестал быть постоянным, и
+    транспорт, отдающий страницы по кругу, выдал бы на запрос заказов страницу
+    переписки - проверка сломалась бы не там, где ошибка.
+
+    Args:
+        orders (str): Страница заказов.
+        chats (list[str]): Страницы списка диалогов, по одной на обращение.
+            Последняя повторяется, если обращений больше.
+        threads (list[str]): Страницы переписки, так же по обращениям.
+    """
+
+    def __init__(self, orders: str, chats: list[str], threads: list[str]) -> None:
+        self._orders = orders
+        self._chats = chats
+        self._threads = threads
+        self.paths: list[str] = []
+        self._chat_calls = 0
+        self._thread_calls = 0
+
+    def fetch(self, path: str) -> Observation:
+        """Отдаёт страницу, отвечающую адресу.
+
+        Args:
+            path (str): Запрошенный путь.
+
+        Returns:
+            Observation: Наблюдение.
+        """
+        self.paths.append(path)
+        if path.startswith("/orders"):
+            body = self._orders
+        elif "node=" in path:
+            body = self._threads[min(self._thread_calls, len(self._threads) - 1)]
+            self._thread_calls += 1
+        else:
+            body = self._chats[min(self._chat_calls, len(self._chats) - 1)]
+            self._chat_calls += 1
+        return _observation(body)
+
+    def threads_read(self) -> list[str]:
+        """Возвращает адреса прочитанных переписок.
+
+        Returns:
+            list[str]: Адреса в порядке обращения.
+        """
+        return [path for path in self.paths if "node=" in path]
+
+    def close(self) -> None:
+        """Закрывает подставной транспорт.
+
+        Returns:
+            None
+        """
+
+
+def _numeric_dialogs(html: str) -> str:
+    """Заменяет замаскированные идентификаторы диалогов числовыми.
+
+    Маска скелета превращает идентификатор в подпись вида ``T9:d#1``, а разбор
+    отвергает такое до сети: в адрес подставляется только буквенно-цифровое.
+    Отказ правильный, но проверять на нём чтение переписки нельзя - оно до сети
+    просто не доходит.
+
+    Args:
+        html (str): Разметка списка диалогов.
+
+    Returns:
+        str: Она же с числовыми идентификаторами.
+    """
+    counter = [1000]
+
+    def swap(_match: re.Match[str]) -> str:
+        """Выдаёт следующий числовой идентификатор.
+
+        Args:
+            _match (re.Match[str]): Совпадение. Не используется.
+
+        Returns:
+            str: Атрибут с числовым значением.
+        """
+        counter[0] += 1
+        return f'data-id="{counter[0]}"'
+
+    return re.sub(r'data-id="[^"]*"', swap, html)
+
+
+def _moved(html: str, mark: str) -> str:
+    """Двигает позицию последнего сообщения у первого диалога.
+
+    Так выглядит изменение диалога с точки зрения списка: позиция сдвинулась, а
+    что именно произошло, по списку не видно - за этим и читается переписка.
+
+    Args:
+        html (str): Разметка списка диалогов.
+        mark (str): Чем пометить новую позицию.
+
+    Returns:
+        str: Разметка с изменившимся первым диалогом.
+    """
+    return html.replace('data-node-msg="T10:d#1"', f'data-node-msg="T10:d#{mark}"', 1)
+
+
+def _follow_run(
+    chats: list[str],
+    steps: int,
+    threads: list[str] | None = None,
+    **watch_args: object,
+) -> tuple[_ByPath, list[Event]]:
+    """Прокручивает цикл наблюдения с адресным транспортом.
+
+    Args:
+        chats (list[str]): Страницы списка диалогов по обращениям.
+        steps (int): Сколько шагов сделать.
+        threads (list[str] | None): Страницы переписки по обращениям.
+        **watch_args (object): Прочие аргументы watch.
+
+    Returns:
+        tuple[_ByPath, list[Event]]: Транспорт и полученные события.
+    """
+    seen: list[Event] = []
+    router = Router()
+    router.on()(seen.append)
+
+    transport = _ByPath(
+        _page("orders-trade.logged.ru"),
+        chats,
+        threads or [_page("chat-thread.logged.ru")],
+    )
+    with Client(transport=transport) as client:  # type: ignore[arg-type]
+        client.watch(router, max_iterations=steps, **watch_args)  # type: ignore[arg-type]
+    return transport, seen
+
+
+def test_cold_start_reads_no_threads(no_sleep: list[float]) -> None:
+    """Проверяет, что первый запуск переписок не читает.
+
+    Холодный старт молчит о данных, событий о диалогах не порождает, и читать
+    ему нечего. Прочитай он полсотни переписок при первом же запуске - это была
+    бы полсотня запросов на ровном месте.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    transport, events = _follow_run([_numeric_dialogs(_page("chat.logged.ru"))], 1)
+    assert transport.threads_read() == []
+    assert [str(e.type) for e in events] == ["watch.primed"]
+
+
+def test_changed_dialog_is_followed_and_yields_a_message(no_sleep: list[float]) -> None:
+    """Проверяет главное: событие о новом сообщении доходит до обработчика.
+
+    До этой правки оно не порождалось никогда. Тип был объявлен, функция
+    порождения написана и проверена, но цикл переписки не читал - и обработчик
+    новых сообщений не срабатывал ни разу, молча.
+
+    Шагов три, и меньше нельзя. Первый - холодный старт. На втором диалог
+    меняется, переписка читается впервые, и событий она не даёт: курсора для неё
+    ещё не было, а объявить новыми все её сообщения значило бы разослать историю
+    целиком. На третьем диалог меняется снова - и вот теперь новое сообщение
+    видно как новое.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    dialogs = _numeric_dialogs(_page("chat.logged.ru"))
+    node_id = re.search(r'data-id="(\d+)"', dialogs).group(1)
+
+    before = _page("chat-thread.logged.ru")
+    after = before.replace('id="T18:adp#10"', 'id="message-fresh"', 1)
+    assert after != before, "порча не применилась, проверка бессмысленна"
+
+    transport, events = _follow_run(
+        [dialogs, _moved(dialogs, "777"), _moved(dialogs, "888")],
+        3,
+        [before, after, after],
+    )
+
+    assert transport.threads_read() == [f"/chat/?node={node_id}"] * 2
+    new_messages = [e for e in events if e.type is EventType.MESSAGE_CREATED]
+    assert len(new_messages) == 1, "новое сообщение обязано дойти ровно один раз"
+    # Сущность события - диалог, а не сообщение: порядок сохраняется внутри
+    # диалога, и ключ упорядочивания строится из него. Само сообщение опознаётся
+    # нагрузкой и версией, из которой собран отпечаток.
+    assert new_messages[0].ordering_key == f"chat:{node_id}"
+    assert new_messages[0].entity_id == node_id
+    assert new_messages[0].payload["message_id"] == "message-fresh"
+    assert new_messages[0].payload["origin"] in {"system", "human", "unknown"}
+
+
+def test_unreadable_thread_leaves_the_queue(no_sleep: list[float]) -> None:
+    """Проверяет, что нечитаемая переписка не заваливает шаг и не запирает очередь.
+
+    Идентификатор, который не подставить в адрес, отвергается до сети. Отказ
+    правильный, но он не должен ни отменять шаг, ни оставаться в очереди
+    навсегда: повторять вечно то, что не читается, значило бы больше не прочитать
+    ничего.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    masked = _page("chat.logged.ru")
+    transport, events = _follow_run([masked, _moved(masked, "777"), _moved(masked, "888")], 3)
+
+    assert transport.threads_read() == [], "адрес с маской не должен доходить до сети"
+    assert any(e.type is EventType.CHAT_UNREAD_CHANGED for e in events), (
+        "отказ чтения переписки не должен отменять событие о диалоге"
+    )
+
+
+def test_queue_is_bounded_and_drains(no_sleep: list[float], tmp_path: Path) -> None:
+    """Проверяет предел чтений за шаг и то, что остальное не теряется.
+
+    Изменись разом полсотни диалогов - шаг превратился бы в полсотни запросов.
+    Предел это закрывает, но выбросить непрочитанное нельзя: событие о диалоге
+    уже доставлено, курсор сдвинут, и повода вернуться к нему больше нет.
+    Поэтому очередь ждёт следующих шагов и переживает перезапуск.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+        tmp_path (Path): Временный каталог.
+
+    Returns:
+        None
+    """
+    dialogs = _numeric_dialogs(_page("chat.logged.ru"))
+    # Двигаются позиции сразу у трёх диалогов: столько же и попадёт в очередь.
+    many = dialogs
+    for mark in ("#1", "#2", "#3"):
+        many = many.replace(f'data-node-msg="T10:d{mark}"', f'data-node-msg="T10:d#9{mark[-1]}"', 1)
+    assert many != dialogs
+
+    state = tmp_path / "state.json"
+    transport, _ = _follow_run([dialogs, many, many], 2, max_threads_per_step=1, state_path=state)
+    assert len(transport.threads_read()) == 1, "предел за шаг не соблюдён"
+
+    saved = json.loads(state.read_text(encoding="utf-8"))
+    waiting = saved["payload"]["cursor"]["pending_threads"]
+    assert len(waiting) == 2, "непрочитанные обязаны ждать в очереди, а не пропадать"
+
+
+def test_queue_survives_a_restart(no_sleep: list[float], tmp_path: Path) -> None:
+    """Проверяет, что очередь дочитывания переживает перезапуск.
+
+    Не переживи она - диалог, изменившийся перед остановкой и не успевший
+    дочитаться, не дочитался бы уже никогда: событие о нём доставлено, курсор
+    диалогов сдвинут, и повода вернуться к нему больше нет.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+        tmp_path (Path): Временный каталог.
+
+    Returns:
+        None
+    """
+    dialogs = _numeric_dialogs(_page("chat.logged.ru"))
+    many = dialogs
+    for mark in ("#1", "#2"):
+        many = many.replace(f'data-node-msg="T10:d{mark}"', f'data-node-msg="T10:d#9{mark[-1]}"', 1)
+
+    state = tmp_path / "state.json"
+    _follow_run([dialogs, many], 2, max_threads_per_step=1, state_path=state)
+    left = json.loads(state.read_text(encoding="utf-8"))["payload"]["cursor"]["pending_threads"]
+    assert left, "после первого запуска в очереди должно что-то остаться"
+
+    # Второй запуск: список диалогов не меняется, новых событий нет - и всё
+    # равно очередь обязана дочитаться.
+    transport, _ = _follow_run([many], 1, max_threads_per_step=1, state_path=state)
+    assert transport.threads_read(), "очередь не пережила перезапуск"
