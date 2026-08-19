@@ -15,18 +15,23 @@ import re
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from time import monotonic
 
 import pytest
 
 import funora._client as client_module
+from funora._budget import Budget
 from funora._client import Client
 from funora._diff import Event
+from funora._engine import Engine, Pause
 from funora._poll import Schedule
-from funora._transport import Observation
+from funora._transport import Observation, TransportSettings
 from funora._watch import Router, dispatch
 from funora.errors import (
+    AccessBlockedError,
     FunoraError,
     HandlerError,
+    RateLimitedError,
     SessionExpiredError,
     StateSchemaIncompatibleError,
 )
@@ -863,7 +868,7 @@ def test_changed_dialog_is_followed_and_yields_a_message(no_sleep: list[float]) 
     assert new_messages[0].payload["origin"] in {"system", "human", "unknown"}
 
 
-def test_unreadable_thread_leaves_the_queue(no_sleep: list[float]) -> None:
+def test_unreadable_thread_leaves_the_queue(no_sleep: list[float], tmp_path: Path) -> None:
     """Проверяет, что нечитаемая переписка не заваливает шаг и не запирает очередь.
 
     Идентификатор, который не подставить в адрес, отвергается до сети. Отказ
@@ -878,12 +883,19 @@ def test_unreadable_thread_leaves_the_queue(no_sleep: list[float]) -> None:
         None
     """
     masked = _page("chat.logged.ru")
-    transport, events = _follow_run([masked, _moved(masked, "777"), _moved(masked, "888")], 3)
+    state = tmp_path / "state.json"
+    transport, events = _follow_run(
+        [masked, _moved(masked, "777"), _moved(masked, "888")], 3, state_path=state
+    )
 
     assert transport.threads_read() == [], "адрес с маской не должен доходить до сети"
     assert any(e.type is EventType.CHAT_UNREAD_CHANGED for e in events), (
         "отказ чтения переписки не должен отменять событие о диалоге"
     )
+    # Очередь осматривается явно. Без этого «выбывает из очереди» оставалось
+    # объявленным в трёх местах и не проверенным ни одним.
+    waiting = json.loads(state.read_text(encoding="utf-8"))["payload"]["cursor"]["pending_threads"]
+    assert waiting == [], "нечитаемый диалог остался в очереди и жжёт слот каждый шаг"
 
 
 def test_queue_is_bounded_and_drains(no_sleep: list[float], tmp_path: Path) -> None:
@@ -945,3 +957,423 @@ def test_queue_survives_a_restart(no_sleep: list[float], tmp_path: Path) -> None
     # равно очередь обязана дочитаться.
     transport, _ = _follow_run([many], 1, max_threads_per_step=1, state_path=state)
     assert transport.threads_read(), "очередь не пережила перезапуск"
+
+
+def _dialogs_changing(steps: int) -> list[str]:
+    """Готовит список диалогов, меняющийся на каждом шаге.
+
+    Args:
+        steps (int): Сколько шагов обеспечить.
+
+    Returns:
+        list[str]: Страницы списка диалогов по обращениям.
+    """
+    base = _numeric_dialogs(_page("chat.logged.ru"))
+    return [base] + [_moved(base, f"{index}9") for index in range(1, steps)]
+
+
+def test_rejected_message_comes_again(no_sleep: list[float]) -> None:
+    """Проверяет главное правило проекта для событий о сообщениях.
+
+    База сдвигается только после того, как обработчик принял событие. Для
+    заказов это закреплено давно; для сообщений проверки не было - и правило
+    оказалось нарушено ровно там, где его не проверяли.
+
+    Цена нарушения предельная: курсор переписки сдвигался до раздачи и не
+    откатывался, поэтому упавший обработчик терял сообщение НАВСЕГДА. При этом
+    в журнал писалась строка «они придут снова», а шаг оставался зелёным.
+
+    Returns:
+        None
+    """
+    thread_a = _page("chat-thread.logged.ru")
+    thread_b = thread_a.replace('id="T18:adp#10"', 'id="message-fresh"', 1)
+
+    seen: list[str] = []
+    failed = [False]
+    router = Router()
+
+    @router.on(EventType.MESSAGE_CREATED)
+    def handle(event: Event) -> None:
+        if not failed[0]:
+            failed[0] = True
+            # Обычное исключение, а не из иерархии Funora: та означает условие
+            # площадки и валит шаг целиком, а здесь проверяется отказ самого
+            # обработчика.
+            raise ValueError("не смог")
+        seen.append(event.payload["message_id"])
+
+    transport = _ByPath(
+        _page("orders-trade.logged.ru"),
+        _dialogs_changing(8),
+        [thread_a] + [thread_b] * 8,
+    )
+    with Client(transport=transport) as client:  # type: ignore[arg-type]
+        client.watch(router, max_iterations=8)
+
+    assert seen, "непринятое сообщение обязано прийти снова - иначе оно потеряно навсегда"
+    assert seen[0] == "message-fresh"
+
+
+def test_thread_cursor_survives_a_restart(no_sleep: list[float], tmp_path: Path) -> None:
+    """Проверяет, что курсоры переписок переживают перезапуск.
+
+    Не переживи они - каждое чтение после перезапуска становится «первым» и
+    молчит по правилу. Сообщения, пришедшие за простой, не порождают события
+    никогда, и заметить это нечем: шаг зелёный, журнал молчит.
+
+    Returns:
+        None
+    """
+    thread_a = _page("chat-thread.logged.ru")
+    thread_b = thread_a.replace('id="T18:adp#10"', 'id="message-fresh"', 1)
+    state = tmp_path / "state.json"
+
+    first = _ByPath(_page("orders-trade.logged.ru"), _dialogs_changing(3), [thread_a] * 3)
+    with Client(transport=first) as client:  # type: ignore[arg-type]
+        client.watch(Router(), max_iterations=3, state_path=state)
+
+    saved = json.loads(state.read_text(encoding="utf-8"))["payload"]["cursor"]
+    assert saved.get("threads"), "курсоры переписок не сохранены"
+
+    # Перезапуск. Новое сообщение обязано дойти: курсор восстановлен, значит
+    # чтение уже не «первое» и молчать ему не с чего.
+    seen: list[str] = []
+    router = Router()
+    router.on(EventType.MESSAGE_CREATED)(lambda e: seen.append(e.payload["message_id"]))
+
+    second = _ByPath(_page("orders-trade.logged.ru"), _dialogs_changing(3), [thread_b] * 3)
+    with Client(transport=second) as client:  # type: ignore[arg-type]
+        client.watch(router, max_iterations=2, state_path=state)
+
+    assert seen == ["message-fresh"], "после перезапуска сообщение не дошло"
+
+
+def test_partial_first_read_does_not_silence_the_dialog(no_sleep: list[float]) -> None:
+    """Проверяет, что неполное первое чтение переписки не хоронит диалог.
+
+    Курсор переписки снимается с ЛЮБОГО чтения, в отличие от курсоров списков, и
+    разница не в небрежности.
+
+    Курсор списка, снятый с неполного чтения, теряет выпавшие строки, и при
+    следующем чтении они выглядят новыми заказами: бот выдаёт товар по заказу,
+    который был и раньше. Это утверждение о мире, и оно оказывается ложным.
+
+    У переписки иначе. Сообщение, выпавшее из неполного чтения и попавшее в
+    следующее, действительно новое - для нас: события о нём никто не получал.
+    Повторить такое дешевле, чем промолчать.
+
+    Цена прежнего правила: пустой курсор молчит по правилу первого чтения, а
+    неполное первое чтение оставляло его пустым навсегда. Диалог замолкал
+    совсем, тратя запрос на каждом шаге. Для торгового бота первое чтение
+    переписки - это первое сообщение нового покупателя.
+
+    Returns:
+        None
+    """
+
+    def flawed(html: str) -> str:
+        """Делает чтение переписки неполным, не теряя ни одного сообщения.
+
+        Лишний прямой потомок контейнера - переименованный класс, полоса
+        непрочитанного, кнопка догрузки - даёт расхождение счётчиков и полноту
+        partial. Разбор при этом читает все одиннадцать сообщений: важно, что
+        неполнота берётся не из потери данных, а из недоверия к разметке.
+
+        Args:
+            html (str): Разметка переписки.
+
+        Returns:
+            str: Она же, читаемая неполно.
+        """
+        marker = '<div class="chat-message-list">'
+        cut = html.index(marker) + len(marker)
+        return html[:cut] + '<div class="chat-stripe"></div>' + html[cut:]
+
+    whole = _page("chat-thread.logged.ru")
+    fresh = whole.replace('id="T18:adp#10"', 'id="message-fresh"', 1)
+    assert fresh != whole, "порча не применилась, проверка бессмысленна"
+
+    seen: list[str] = []
+    router = Router()
+    router.on(EventType.MESSAGE_CREATED)(lambda e: seen.append(e.payload["message_id"]))
+
+    # Неполны ВСЕ чтения: именно так выглядит изменение шаблона на стороне
+    # площадки. При прежнем правиле курсор не снимался никогда, а пустой курсор
+    # молчит - диалог замолкал совсем, тратя запрос на каждом шаге.
+    transport = _ByPath(
+        _page("orders-trade.logged.ru"),
+        _dialogs_changing(5),
+        [flawed(whole), flawed(fresh), flawed(fresh), flawed(fresh)],
+    )
+    with Client(transport=transport) as client:  # type: ignore[arg-type]
+        client.watch(router, max_iterations=5)
+
+    assert "message-fresh" in seen, "при неполных чтениях диалог замолчал навсегда"
+
+
+def test_primed_comes_once_even_if_orders_are_partial(no_sleep: list[float]) -> None:
+    """Проверяет, что неполное чтение заказов не глушит поток навсегда.
+
+    Курсор заказов снимается только с полного чтения, а признак холодного старта
+    считался общим на оба списка. Пока страница заказов читалась неполно, цикл
+    считал себя холодным вечно: события о диалогах выбрасывались, а вместо них
+    каждый шаг уходило одно и то же watch.primed.
+
+    Одной пропавшей ячейки в одной строке заказов хватало, чтобы наблюдение за
+    перепиской замолчало целиком - молча.
+
+    Returns:
+        None
+    """
+    orders = _page("orders-trade.logged.ru")
+    # Ячейка времени пропала в одной строке: полнота partial, строки читаются.
+    broken = orders.replace('<div class="tc-date-left">', '<div class="tc-gone">', 1)
+    assert broken != orders
+
+    seen: list[EventType] = []
+    router = Router()
+    router.on()(lambda e: seen.append(e.type))
+
+    transport = _ByPath(broken, _dialogs_changing(4), [_page("chat-thread.logged.ru")] * 4)
+    with Client(transport=transport) as client:  # type: ignore[arg-type]
+        client.watch(router, max_iterations=4)
+
+    assert seen.count(EventType.WATCH_PRIMED) == 1, (
+        "watch.primed обязано прийти один раз, а не на каждом шаге"
+    )
+    assert EventType.CHAT_UNREAD_CHANGED in seen, (
+        "события о диалогах выброшены из-за состояния чужой страницы"
+    )
+
+
+class _FailingThreads(_ByPath):
+    """Транспорт, отказывающий на чтении переписки заданной ошибкой.
+
+    Args:
+        orders (str): Страница заказов.
+        chats (list[str]): Списки диалогов по обращениям.
+        error (Exception): Чем отказывать на адресе переписки.
+    """
+
+    def __init__(self, orders: str, chats: list[str], error: Exception) -> None:
+        super().__init__(orders, chats, [""])
+        self._error = error
+
+    def fetch(self, path: str) -> Observation:
+        """Отдаёт список либо отказывает на переписке.
+
+        Args:
+            path (str): Запрошенный путь.
+
+        Returns:
+            Observation: Наблюдение для списков.
+
+        Raises:
+            Exception: Заданная ошибка на адресе переписки.
+        """
+        if "node=" in path:
+            self.paths.append(path)
+            raise self._error
+        return super().fetch(path)
+
+
+def test_blocked_access_stops_the_step_instead_of_hammering(
+    no_sleep: list[float], tmp_path: Path
+) -> None:
+    """Проверяет, что условие аккаунта закрывает шаг, а не перебирает очередь.
+
+    Отказ вида «доступ заблокирован» относится к аккаунту, а не к переписке.
+    Прежде он попадал под общий перехват: все диалоги очереди по очереди
+    выбывали молча, шаг завершался успехом, очередь сохранялась пустой, а клиент
+    стучался столько раз, сколько узлов в очереди, - при заблокированном
+    доступе.
+
+    Спецификация про такие ошибки говорит прямо: остановка, короткий
+    автоматический повтор запрещён.
+
+    Returns:
+        None
+    """
+    state = tmp_path / "state.json"
+    transport = _FailingThreads(
+        _page("orders-trade.logged.ru"),
+        _dialogs_changing(3),
+        AccessBlockedError("доступ закрыт"),
+    )
+
+    with Client(transport=transport) as client, pytest.raises(AccessBlockedError):  # type: ignore[arg-type]
+        client.watch(Router(), max_iterations=3, state_path=state, max_threads_per_step=5)
+
+    assert len(transport.threads_read()) == 1, (
+        "после первого отказа аккаунта клиент продолжил перебирать очередь"
+    )
+
+
+def test_rate_limited_thread_returns_to_the_queue(no_sleep: list[float], tmp_path: Path) -> None:
+    """Проверяет, что временный отказ откладывает переписку, а не выбрасывает её.
+
+    Выбросить диалог по временному отказу значило бы поставить доставку
+    сообщения в зависимость от того, напишет ли покупатель ещё раз. Написавший
+    один раз и ждущий ответа не напишет.
+
+    Returns:
+        None
+    """
+    state = tmp_path / "state.json"
+    transport = _FailingThreads(
+        _page("orders-trade.logged.ru"),
+        _dialogs_changing(3),
+        RateLimitedError("слишком часто"),
+    )
+
+    with Client(transport=transport) as client:  # type: ignore[arg-type]
+        client.watch(Router(), max_iterations=3, state_path=state, max_threads_per_step=5)
+
+    waiting = json.loads(state.read_text(encoding="utf-8"))["payload"]["cursor"]["pending_threads"]
+    assert waiting, "диалог выброшен по временному отказу"
+
+    # Перебора очереди нет: попытки уходят к одному и тому же диалогу, а не по
+    # разу к каждому из пяти. Само повторение внутри одной попытки - работа
+    # политики повторов, и она здесь ни при чём.
+    assert len(set(transport.threads_read())) == 1, (
+        "после временного отказа клиент пошёл перебирать остальную очередь"
+    )
+
+
+def test_redirects_are_paid_for_even_when_the_bucket_is_empty() -> None:
+    """Проверяет, что переходы оплачиваются и при пустом ведре.
+
+    Число переходов заранее неизвестно, поэтому бюджет за них списывается вслед
+    за ответом. Прежде списание шло голым reserve, чей отказ никто не смотрел, -
+    и ровно при пустом ведре цепочка переходов становилась бесплатной: клиент
+    считал, что потратил один запрос, а отправлял до шести.
+
+    Returns:
+        None
+    """
+    budget = Budget()
+    engine = Engine(TransportSettings(), budget)
+
+    # Ведро осушается: дальше каждый запрос обязан ждать.
+    while budget.reserve(monotonic()).granted:
+        pass
+
+    core = engine.settle(3)
+    waits = 0
+    reply = None
+    while True:
+        try:
+            request = core.send(reply)
+        except StopIteration:
+            break
+        reply = None
+        if isinstance(request, Pause):
+            waits += 1
+            # Ведро пополняется само по часам; здесь просто отмечаем просьбу.
+            assert request.ms > 0, "пауза обязана быть ненулевой при пустом ведре"
+
+    assert waits == 3, "за каждый уже отправленный запрос обязана быть доплата"
+
+
+def test_rejected_message_comes_again_even_if_the_list_goes_quiet(
+    no_sleep: list[float],
+) -> None:
+    """Проверяет вторую половину правила: возврат диалога в очередь.
+
+    Откатить курсор переписки мало. Событие об изменении диалога к моменту
+    отказа уже доставлено и погашено, повторно оно не придёт - и если список
+    диалогов после этого замер, диалог не перечитается уже никогда, сколько бы
+    курсор ни откатывали.
+
+    Список замирает не в теории: покупатель написал один раз и ждёт ответа.
+
+    Returns:
+        None
+    """
+    base = _numeric_dialogs(_page("chat.logged.ru"))
+    # Первое изменение вызывает первое чтение - оно молчит по правилу. Второе
+    # даёт событие, на котором обработчик падает. Дальше список замирает: именно
+    # так и выглядит покупатель, написавший один раз и ждущий ответа.
+    chats = [base, _moved(base, "77"), _moved(base, "88")] + [_moved(base, "88")] * 6
+
+    thread_a = _page("chat-thread.logged.ru")
+    thread_b = thread_a.replace('id="T18:adp#10"', 'id="message-fresh"', 1)
+
+    seen: list[str] = []
+    failed = [False]
+    router = Router()
+
+    @router.on(EventType.MESSAGE_CREATED)
+    def handle(event: Event) -> None:
+        if not failed[0]:
+            failed[0] = True
+            raise ValueError("не смог")
+        seen.append(event.payload["message_id"])
+
+    transport = _ByPath(_page("orders-trade.logged.ru"), chats, [thread_a] + [thread_b] * 8)
+    with Client(transport=transport) as client:  # type: ignore[arg-type]
+        client.watch(router, max_iterations=8)
+
+    assert seen == ["message-fresh"], (
+        "диалог не перечитан: список замер, а из очереди узел не вернулся"
+    )
+
+
+def test_extra_requests_of_one_fetch_are_charged() -> None:
+    """Проверяет, что чтение оплачивает все ушедшие запросы, а не один.
+
+    Число переходов заранее неизвестно, поэтому за них платят вслед за ответом.
+    Проверка стоит на уровне ядра, а не помощника: пропасть могло именно
+    обращение к доплате, а не она сама.
+
+    Returns:
+        None
+    """
+
+    class _Redirecting:
+        """Транспорт, сообщающий о четырёх ушедших запросах."""
+
+        def fetch(self, path: str) -> Observation:
+            """Отдаёт наблюдение с четырьмя отправленными запросами.
+
+            Args:
+                path (str): Путь. Не используется.
+
+            Returns:
+                Observation: Наблюдение.
+            """
+            body = _page("orders-trade.logged.ru")
+            return replace(_observation(body), requests_sent=4)
+
+        def close(self) -> None:
+            """Закрывает транспорт.
+
+            Returns:
+                None
+            """
+
+    # Мерка снимается с нетронутого бюджета: подсчёт разрешений опустошает
+    # ведро, и мерить им же тот бюджет, что проверяем, нельзя.
+    before = _tokens(Budget())
+
+    budget = Budget()
+    with Client(transport=_Redirecting(), budget=budget) as client:  # type: ignore[arg-type]
+        client.orders.list()
+
+    assert before - _tokens(budget) == 4, "оплачен не весь ушедший трафик"
+
+
+def _tokens(budget: Budget) -> int:
+    """Считает, сколько разрешений бюджет ещё выдаст подряд.
+
+    Args:
+        budget (Budget): Бюджет.
+
+    Returns:
+        int: Число разрешений.
+    """
+    count = 0
+    while budget.reserve(monotonic()).granted:
+        count += 1
+    return count
