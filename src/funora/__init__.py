@@ -23,6 +23,7 @@ from ._budget import Budget, Reservation
 from ._chats import ChatListEntry, ChatsPage, parse_chats_page
 from ._classify import DEFAULT_IDENTITY_CSS, ResponseClass, Signature, Verdict, classify
 from ._client import ChatsService, Client, OrdersService
+from ._diff import Event, diff_chats, diff_orders, diff_thread
 from ._gate import check_capability
 from ._observed import Confidence, Observed, Presence
 from ._orders import (
@@ -48,6 +49,7 @@ from ._transport import Fetcher, Observation, TransportSettings
 from ._verdicts import error_for
 from .capabilities import CAPABILITY_INITIAL, Capability, CapabilityState
 from .errors import ERROR_BY_ABI_CODE, ERROR_BY_STABLE_ID, FunoraError
+from .events import EventType
 
 __version__ = "0.0.1.dev0"
 
@@ -105,6 +107,12 @@ __all__ = [
     "Thread",
     "Message",
     "Origin",
+    # события
+    "Event",
+    "EventType",
+    "diff_orders",
+    "diff_chats",
+    "diff_thread",
     # возможности
     "Capability",
     "CapabilityState",
