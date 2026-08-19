@@ -338,6 +338,14 @@ class Client:
             self._spend_budget()
             try:
                 observation = self._fetcher.fetch(path)
+                # Переходы уже случились и запросы уже ушли. Бюджет за них
+                # списывается вслед, а не заранее: заранее их число неизвестно.
+                # Не списывать вовсе нельзя - спецификация требует считать
+                # отправленные запросы, и цепочка переходов оказалась бы
+                # бесплатной ровно тогда, когда площадка нас куда-то гоняет.
+                extra = max(0, getattr(observation, "requests_sent", 1) - 1)
+                for _ in range(extra):
+                    self._budget.reserve(monotonic())
                 retry_after_ms = observation.retry_after_ms
                 _check_integrity(observation)
                 verdict = classify(

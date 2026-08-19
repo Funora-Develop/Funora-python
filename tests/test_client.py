@@ -507,3 +507,45 @@ def test_thread_uses_its_own_capability() -> None:
         assert client._fetcher.calls == 0  # type: ignore[attr-defined]
 
         assert client.capability(Capability.CHATS_LIST) is not CapabilityState.UNSUPPORTED
+
+
+def test_redirects_spend_budget_too() -> None:
+    """Проверяет, что переходы расходуют бюджет наравне с запросом.
+
+    Спецификация требует считать отправленные запросы, а не логические операции.
+    Переход - тоже запрос, и не считать его значит сделать цепочку переходов
+    бесплатной ровно тогда, когда площадка нас куда-то гоняет.
+
+    Returns:
+        None
+    """
+    page = _page("orders-trade.logged.ru")
+
+    plain = Budget()
+    with Client(  # type: ignore[arg-type]
+        transport=_FakeFetcher([_observation(page)]), budget=plain
+    ) as client:
+        client.orders.list()
+
+    with_hops = Budget()
+    with Client(  # type: ignore[arg-type]
+        transport=_FakeFetcher([_observation(page, redirects=3, requests_sent=4)]),
+        budget=with_hops,
+    ) as client:
+        client.orders.list()
+
+    def left(budget: Budget) -> int:
+        """Считает, сколько ещё помещается в бюджет.
+
+        Args:
+            budget (Budget): Проверяемый бюджет.
+
+        Returns:
+            int: Число выданных подряд разрешений.
+        """
+        count = 0
+        while budget.reserve(0.0).granted:
+            count += 1
+        return count
+
+    assert left(with_hops) < left(plain), "переходы обязаны расходовать бюджет"

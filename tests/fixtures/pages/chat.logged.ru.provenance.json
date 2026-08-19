@@ -6,7 +6,7 @@
   "content_length": 46969,
   "converted_from": "structural-skeleton-v1",
   "elapsed_ms": 531,
-  "format": "structural-skeleton-v2",
+  "format": "structural-skeleton-v3",
   "http_status": 200,
   "locale": "ru",
   "note": "Структурный скелет: текст заменён подписями, сегменты путей с идентификаторами обезличены. Сырой HTML не сохраняется.",

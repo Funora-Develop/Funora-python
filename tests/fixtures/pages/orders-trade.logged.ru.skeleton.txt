@@ -31,7 +31,7 @@
                 <div class="navbar-header">
                   <button aria-expanded="T5:a" class="collapsed navbar-toggle navbar-toggle-logged" data-target="T7:ap" data-toggle="T8:a" type="T6:a">
                     <span class="user-link-photo">
-                      <img alt src="https://sfunpay.com/s/avatar/vz/mp/{n}"/>
+                      <img alt src="https://sfunpay.com/{t}/{t}/{t}/{t}/{t}"/>
                     </span>
                     <span class="caret"></span>
                   </button>
@@ -135,7 +135,7 @@
                       <li class="dropdown hidden-sm hidden-xs">
                         <a aria-expanded="T5:a" aria-haspopup="T4:a" class="dropdown-toggle user-link" data-toggle="T8:a" href="{n}" role="T6:a">
                           <div class="user-link-photo">
-                            <img alt src="https://sfunpay.com/s/avatar/vz/mp/{n}"/>
+                            <img alt src="https://sfunpay.com/{t}/{t}/{t}/{t}/{t}"/>
                           </div>
                           <span class="caret"></span>
                         </a>
@@ -307,11 +307,11 @@
                       <div class="tc-user">
                         <div class="media media-user offline">
                           <div class="media-left">
-                            <div class="avatar-photo pseudo-a" data-href="T34:adp" style="T46:aps" tabindex="T1:d"></div>
+                            <div class="avatar-photo pseudo-a" data-href="{n}" style="T46:aps" tabindex="T1:d"></div>
                           </div>
                           <div class="media-body">
                             <div class="media-user-name">
-                              <span class="pseudo-a" data-href="T34:adp" tabindex="T1:d">
+                              <span class="pseudo-a" data-href="{n}" tabindex="T1:d">
                                 T13:ad
                               </span>
                             </div>
@@ -354,11 +354,11 @@
                       <div class="tc-user">
                         <div class="media media-user offline">
                           <div class="media-left">
-                            <div class="avatar-photo pseudo-a" data-href="T34:adp" style="T46:aps" tabindex="T1:d"></div>
+                            <div class="avatar-photo pseudo-a" data-href="{n}" style="T46:aps" tabindex="T1:d"></div>
                           </div>
                           <div class="media-body">
                             <div class="media-user-name">
-                              <span class="pseudo-a" data-href="T34:adp" tabindex="T1:d">
+                              <span class="pseudo-a" data-href="{n}" tabindex="T1:d">
                                 T13:ad
                               </span>
                             </div>
@@ -401,11 +401,11 @@
                       <div class="tc-user">
                         <div class="media media-user offline">
                           <div class="media-left">
-                            <div class="avatar-photo pseudo-a" data-href="T34:adp" style="T46:aps" tabindex="T1:d"></div>
+                            <div class="avatar-photo pseudo-a" data-href="{n}" style="T46:aps" tabindex="T1:d"></div>
                           </div>
                           <div class="media-body">
                             <div class="media-user-name">
-                              <span class="pseudo-a" data-href="T34:adp" tabindex="T1:d">
+                              <span class="pseudo-a" data-href="{n}" tabindex="T1:d">
                                 T13:ad
                               </span>
                             </div>
@@ -450,15 +450,15 @@
               </a>
             </div>
             <div class="footer-block footer-block-social">
-              <a class="btn btn-gray btn-round" href="https://telegram.me/{n}" rel="T8:a" target="T6:ap">
+              <a class="btn btn-gray btn-round" href="https://telegram.me/{t}" rel="T8:a" target="T6:ap">
                 <svg height="T2:d" width="T2:d">
                   <use href="/{n}/img/layout/sprites.svg#social-logo-telegram"></use>
                 </svg>
               </a>
-              <a class="btn btn-gray btn-round" href="https://www.youtube.com/c/funpayofficial" rel="T8:a" target="T6:ap">
+              <a class="btn btn-gray btn-round" href="https://www.youtube.com/{t}/{t}" rel="T8:a" target="T6:ap">
                 <i class="fab fa-youtube"></i>
               </a>
-              <a class="btn btn-gray btn-round" href="https://vk.com/funpay" rel="T8:a" target="T6:ap">
+              <a class="btn btn-gray btn-round" href="https://vk.com/{t}" rel="T8:a" target="T6:ap">
                 <i class="fab fa-vk"></i>
               </a>
             </div>
@@ -468,7 +468,7 @@
                 T11:c
                 <br/>
                 T1:c
-                <a href="https://www.artlebedev.ru/funpay/" target="T6:ap">
+                <a href="https://www.artlebedev.ru/{t}/" target="T6:ap">
                   T14:cs
                   <br/>
                   T8:c

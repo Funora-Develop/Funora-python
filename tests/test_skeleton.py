@@ -227,3 +227,63 @@ def test_output_has_no_carriage_returns() -> None:
     в стиле Windows превратил бы каждое такое сравнение в ложное расхождение.
     """
     assert chr(13) not in skeletonize(SAMPLE)
+
+
+def test_foreign_path_is_masked_whole() -> None:
+    """Проверяет, что путь на чужом хосте маскируется целиком.
+
+    Ссылки на чужие адреса пишут люди в переписке, и в них живёт то, ради чего
+    их и пишут. Прежнее правило маскировало сегмент только при наличии цифр либо
+    нелатинских знаков, поэтому имя вида ``t.me/ivanpetrov`` прошло бы дословно
+    в снимок, который лежит в открытом репозитории.
+
+    Returns:
+        None
+    """
+    sk = skeletonize('<html><body><a href="https://t.me/ivanpetrov">т</a></body></html>')
+    assert "ivanpetrov" not in sk
+    assert "t.me" in sk, "имя хоста публично и остаётся"
+    assert "https" in sk, "по схеме видно, защищено ли соединение"
+
+
+def test_own_path_keeps_its_shape() -> None:
+    """Проверяет, что защита не съела форму путей площадки.
+
+    Форма нужна: по ней узнаётся назначение ссылки, и без неё правила извлечения
+    писать не из чего.
+
+    Returns:
+        None
+    """
+    sk = skeletonize('<html><body><a href="https://funpay.com/orders/12345/">з</a></body></html>')
+    assert "/orders/{n}/" in sk
+    assert "12345" not in sk
+
+
+def test_no_foreign_login_survives_in_the_fixtures() -> None:
+    """Проверяет опубликованные снимки на остатки чужих имён.
+
+    Проверка идёт по самим файлам репозитория, а не по образцу: именно они
+    лежат в открытом доступе, и именно их читает первый пришедший человек.
+
+    Returns:
+        None
+    """
+    import re as _re
+    from pathlib import Path as _Path
+
+    folder = _Path(__file__).parent / "fixtures" / "pages"
+    link = _re.compile(r'href="(https?://[^"]*)"')
+
+    for snapshot in folder.glob("*.skeleton.txt"):
+        for url in link.findall(snapshot.read_text(encoding="utf-8")):
+            if "funpay.com" in url:
+                continue
+            tail = url.split("//", 1)[-1]
+            path = tail.split("/", 1)[1] if "/" in tail else ""
+            for segment in path.split("/"):
+                if not segment or segment.startswith("?"):
+                    continue
+                assert segment in ("{t}", "{n}", ""), (
+                    f"{snapshot.name}: сегмент {segment!r} чужого адреса не замаскирован"
+                )

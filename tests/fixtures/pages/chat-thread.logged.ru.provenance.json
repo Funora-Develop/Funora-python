@@ -6,7 +6,7 @@
   "content_length": 63826,
   "elapsed_ms": 288,
   "final_url": "https://funpay.com/chat/?{q}",
-  "format": "structural-skeleton-v2",
+  "format": "structural-skeleton-v3",
   "http_status": 200,
   "locale": "ru",
   "note": "Структурный скелет: текст заменён подписями, сегменты путей с идентификаторами обезличены. Сырой HTML не сохраняется.",
