@@ -42,11 +42,11 @@ WHEN = datetime(2026, 8, 19, 12, 0, tzinfo=UTC)
 ACCOUNT = "12345678"
 
 
-def _raw(name: str) -> str:
+def _raw(name: str = "orders-trade.logged.ru") -> str:
     """Читает снимок страницы.
 
     Args:
-        name (str): Имя снимка без расширения.
+        name (str): Имя снимка без расширения. По умолчанию список заказов.
 
     Returns:
         str: Разметка снимка.
@@ -117,6 +117,25 @@ def test_identical_snapshots_produce_nothing() -> None:
     assert diff_chats(chats_cursor(_chats()), _chats(), account_id=ACCOUNT) == ()
 
 
+def _one_more_order() -> str:
+    """Дописывает в снимок ещё один заказ с новым идентификатором.
+
+    Формат v5 нумерует идентификаторы, поэтому заказы снимка уже различимы и
+    разводить их вручную больше не нужно. Нужен другой - тот, которого в снимке
+    не было: именно его появление и есть событие.
+
+    Returns:
+        str: Разметка с одним лишним заказом.
+    """
+    html = _raw()
+    first = html.index('<a class="tc-item')
+    end = html.index("</a>", first) + len("</a>")
+    row = html[first:end]
+    fresh = row.replace("/orders/{n9}/", "/orders/{n999}/")
+    assert fresh != row, "идентификатор первой строки не найден, порча бессмысленна"
+    return html[:first] + fresh + html[first:]
+
+
 def test_new_order_produces_one_event() -> None:
     """Проверяет появление события о новом заказе.
 
@@ -124,16 +143,12 @@ def test_new_order_produces_one_event() -> None:
         None
     """
     before = _orders()
-    grown = _raw("orders-trade.logged.ru").replace(
-        'href="https://funpay.com/orders/{n}/"',
-        'href="https://funpay.com/orders/999/"',
-        1,
-    )
+    grown = _one_more_order()
     events = diff_orders(orders_cursor(before), _orders(grown), account_id=ACCOUNT)
 
     assert len(events) == 1
     assert events[0].type is EventType.ORDER_CREATED
-    assert events[0].entity_id == "999"
+    assert events[0].entity_id == "{n999}"
 
 
 def test_ordering_key_follows_the_spec_template() -> None:
@@ -146,15 +161,10 @@ def test_ordering_key_follows_the_spec_template() -> None:
     Returns:
         None
     """
-    grown = _raw("orders-trade.logged.ru").replace(
-        'href="https://funpay.com/orders/{n}/"',
-        'href="https://funpay.com/orders/999/"',
-        1,
-    )
-    event = diff_orders(orders_cursor(_orders()), _orders(grown), account_id=ACCOUNT)[0]
+    event = diff_orders(orders_cursor(_orders()), _orders(_one_more_order()), account_id=ACCOUNT)[0]
 
     template = ORDERING_KEY[EventType.ORDER_CREATED]
-    assert event.ordering_key == template.format(order_id="999")
+    assert event.ordering_key == template.format(order_id="{n999}")
 
 
 def test_event_id_does_not_depend_on_observation_time() -> None:
@@ -167,7 +177,9 @@ def test_event_id_does_not_depend_on_observation_time() -> None:
     Returns:
         None
     """
-    moved = _raw("chat.logged.ru").replace('data-node-msg="T10:d"', 'data-node-msg="T10:x"', 1)
+    moved = _raw("chat.logged.ru").replace(
+        'data-node-msg="T10:d#1"', 'data-node-msg="T10:d#999"', 1
+    )
 
     early = diff_chats(chats_cursor(_chats()), _chats(moved, WHEN), account_id=ACCOUNT)
     later = diff_chats(
@@ -187,7 +199,9 @@ def test_event_id_depends_on_the_account() -> None:
     Returns:
         None
     """
-    moved = _raw("chat.logged.ru").replace('data-node-msg="T10:d"', 'data-node-msg="T10:x"', 1)
+    moved = _raw("chat.logged.ru").replace(
+        'data-node-msg="T10:d#1"', 'data-node-msg="T10:d#999"', 1
+    )
 
     first = diff_chats(chats_cursor(_chats()), _chats(moved), account_id="11111111")
     second = diff_chats(chats_cursor(_chats()), _chats(moved), account_id="22222222")
@@ -208,41 +222,16 @@ def test_event_id_changes_with_the_revision() -> None:
     cursor = chats_cursor(_chats())
     first = diff_chats(
         cursor,
-        _chats(base.replace('data-node-msg="T10:d"', 'data-node-msg="T10:x"', 1)),
+        _chats(base.replace('data-node-msg="T10:d#1"', 'data-node-msg="T10:d#999"', 1)),
         account_id=ACCOUNT,
     )
     second = diff_chats(
         cursor,
-        _chats(base.replace('data-node-msg="T10:d"', 'data-node-msg="T10:y"', 1)),
+        _chats(base.replace('data-node-msg="T10:d#1"', 'data-node-msg="T10:d#888"', 1)),
         account_id=ACCOUNT,
     )
 
     assert first[0].id != second[0].id
-
-
-def _with_ids(name: str = "orders-trade.states.logged.ru") -> str:
-    """Разводит замаскированные идентификаторы заказов.
-
-    В снимке все заказы несут один и тот же замаскированный идентификатор:
-    маска схлопывает и 12345, и QN2CW7HY в одно значение. Без разведения любая
-    проверка, зависящая от различимости заказов, проходит впустую.
-
-    Args:
-        name (str): Имя снимка без расширения.
-
-    Returns:
-        str: Разметка с различимыми идентификаторами.
-    """
-    html = _raw(name)
-    number = 100
-    while 'href="https://funpay.com/orders/{n}/"' in html:
-        number += 1
-        html = html.replace(
-            'href="https://funpay.com/orders/{n}/"',
-            f'href="https://funpay.com/orders/{number}/"',
-            1,
-        )
-    return html
 
 
 def test_status_change_produces_an_event() -> None:
@@ -255,7 +244,7 @@ def test_status_change_produces_an_event() -> None:
     Returns:
         None
     """
-    before = _with_ids()
+    before = _raw()
     after = before.replace('"tc-item info"', '"tc-item"').replace(
         '"tc-status text-primary"', '"tc-status text-success"'
     )
@@ -277,7 +266,7 @@ def test_unchanged_status_produces_nothing() -> None:
     Returns:
         None
     """
-    html = _with_ids()
+    html = _raw()
     cursor = orders_cursor(_orders(html))
     assert diff_orders(cursor, _orders(html), account_id=ACCOUNT) == ()
 
@@ -295,7 +284,7 @@ def test_learning_to_read_a_status_is_not_a_change() -> None:
     Returns:
         None
     """
-    html = _with_ids()
+    html = _raw()
     unreadable = html.replace("text-primary", "text-blue").replace("text-success", "text-green")
 
     blind = orders_cursor(_orders(unreadable))
@@ -320,7 +309,7 @@ def test_status_change_event_is_stable_across_reads() -> None:
     Returns:
         None
     """
-    before = _with_ids()
+    before = _raw()
     after = before.replace('"tc-item info"', '"tc-item"').replace(
         '"tc-status text-primary"', '"tc-status text-success"'
     )
@@ -329,6 +318,27 @@ def test_status_change_event_is_stable_across_reads() -> None:
     first = diff_orders(cursor, _orders(after), account_id=ACCOUNT)
     second = diff_orders(cursor, _orders(after), account_id=ACCOUNT)
     assert [e.id for e in first] == [e.id for e in second]
+
+
+def _one_more_message() -> str:
+    """Дописывает в переписку ещё одно сообщение с новым идентификатором.
+
+    Идентификатор берётся из снимка, а не пишется в проверке: подпись зависит от
+    формата, и записанная руками она разъезжается с ним молча - проверка тогда
+    сравнивает несуществующее с несуществующим и проходит.
+
+    Returns:
+        str: Разметка с одним лишним сообщением.
+    """
+    import re as _re
+
+    html = _raw("chat-thread.logged.ru")
+    found = _re.search(r'<div class="chat-msg-item[^"]*" id="([^"]*)"', html)
+    assert found is not None, "в снимке не нашлось ни одного сообщения"
+
+    start = found.start()
+    end = html.index("</div>", html.index('class="chat-msg-body"', start)) + len("</div>")
+    return html[:start] + html[start:end].replace(found.group(1), "message-777", 1) + html[start:]
 
 
 def test_new_message_produces_an_event_with_origin() -> None:
@@ -341,7 +351,7 @@ def test_new_message_produces_an_event_with_origin() -> None:
         None
     """
     before = _thread()
-    grown = _raw("chat-thread.logged.ru").replace('id="T18:adp"', 'id="message-777"', 1)
+    grown = _one_more_message()
     events = diff_thread(thread_cursor(before), _thread(grown), account_id=ACCOUNT, chat_id="42")
 
     assert len(events) == 1
@@ -359,7 +369,7 @@ def test_payload_carries_no_personal_data() -> None:
     Returns:
         None
     """
-    grown = _raw("chat-thread.logged.ru").replace('id="T18:adp"', 'id="message-777"', 1)
+    grown = _one_more_message()
     events = diff_thread(thread_cursor(_thread()), _thread(grown), account_id=ACCOUNT, chat_id="42")
 
     for event in events:
@@ -381,20 +391,12 @@ def test_partial_snapshot_does_not_make_old_orders_new() -> None:
         None
     """
     raw = _raw("orders-trade.logged.ru")
-    # В снимке все заказы несут один и тот же замаскированный идентификатор,
-    # поэтому без разведения проверка ничего не проверяет.
     distinct = raw
-    for number in ("101", "102", "103"):
-        distinct = distinct.replace(
-            'href="https://funpay.com/orders/{n}/"',
-            f'href="https://funpay.com/orders/{number}/"',
-            1,
-        )
 
     full = _orders(distinct)
     cursor = orders_cursor(full)
-    assert set(cursor) == {"101", "102", "103"}
-    assert set(cursor.values()) == {OrderStatus.PAID}, "снимок целиком оплачен"
+    assert len(set(cursor)) == full.rows_total, "идентификаторы обязаны быть различимы"
+    assert set(cursor.values()) <= {OrderStatus.PAID, OrderStatus.CLOSED}
 
     first = distinct.index('<a class="tc-item info" href=')
     end_of_tag = distinct.index(">", first)
@@ -402,7 +404,7 @@ def test_partial_snapshot_does_not_make_old_orders_new() -> None:
     damaged = _orders(broken)
 
     assert damaged.completeness is Completeness.PARTIAL
-    assert len(damaged.rows(accept_incomplete=True)) == 2
+    assert len(damaged.rows(accept_incomplete=True)) == full.rows_total - 1
 
     # Курсор снят с полного чтения и не пострадал, поэтому повторное полное
     # чтение событий не порождает.
@@ -421,22 +423,18 @@ def test_new_order_is_seen_even_in_a_partial_read() -> None:
     Returns:
         None
     """
-    raw = _raw("orders-trade.logged.ru")
-    distinct = raw
-    for number in ("101", "102", "103"):
-        distinct = distinct.replace(
-            'href="https://funpay.com/orders/{n}/"',
-            f'href="https://funpay.com/orders/{number}/"',
-            1,
-        )
+    html = _raw()
+    known = [e.order_id for e in _orders(html).rows()]
 
-    cursor = dict.fromkeys(("102", "103"), UNREAD_STATUS)
-    broken = distinct.replace('<div class="tc-status text-primary">', '<div class="tc-gone">')
+    # В курсоре все заказы, кроме первого: он и обязан оказаться единственным
+    # новым, несмотря на то что чтение неполно.
+    cursor = dict.fromkeys(known[1:], UNREAD_STATUS)
+    broken = html.replace('<div class="tc-status text-primary">', '<div class="tc-gone">')
     damaged = _orders(broken)
     assert damaged.completeness is Completeness.PARTIAL
 
     events = diff_orders(cursor, damaged, account_id=ACCOUNT)
-    assert [e.entity_id for e in events] == ["101"]
+    assert [e.entity_id for e in events] == [known[0]]
 
 
 @pytest.mark.parametrize("event_type", list(EventType))

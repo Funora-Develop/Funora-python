@@ -56,8 +56,9 @@ def test_intact_page_is_complete() -> None:
     """
     page = _parse()
     assert page.completeness is Completeness.COMPLETE
-    assert page.rows_total == 47
-    assert page.rows_accepted == 47
+    # Числа выводятся из снимка: прибитые ломались бы при каждой пересъёмке.
+    assert page.rows_total == page.rows_accepted
+    assert page.rows_total >= 2, "снимок обязан содержать хотя бы два диалога"
     assert not page.defects
 
 

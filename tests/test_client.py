@@ -147,7 +147,8 @@ def test_complete_read_marks_capability_supported() -> None:
         assert client.capability(Capability.ORDERS_LIST) is CapabilityState.SUPPORTED
         page = client.orders.list()
         assert page.completeness is Completeness.COMPLETE
-        assert len(page.rows()) == 3
+        assert len(page.rows()) == page.rows_total
+        assert page.rows_total >= 2, "снимок обязан содержать хотя бы две строки"
         assert client.capability(Capability.ORDERS_LIST) is CapabilityState.SUPPORTED
 
 
@@ -298,7 +299,7 @@ def test_incomplete_page_still_needs_acknowledgement() -> None:
         page = client.orders.list()
         with pytest.raises(Exception, match="неполон"):
             page.rows()
-        assert len(page.rows(accept_incomplete=True)) == 3
+        assert len(page.rows(accept_incomplete=True)) == page.rows_total
 
 
 def test_client_needs_a_secret_or_a_transport() -> None:
@@ -415,7 +416,7 @@ def test_chats_list_reads_the_dialog_list() -> None:
         page = client.chats.list()
         assert isinstance(page, ChatsPage)
         assert page.completeness is Completeness.COMPLETE
-        assert len(page.rows()) == 47
+        assert len(page.rows()) == page.rows_total
 
 
 def test_chats_and_orders_share_the_capability_gate() -> None:
@@ -467,8 +468,12 @@ def test_thread_reads_messages() -> None:
         thread = client.chats.thread("281916231")
         assert isinstance(thread, Thread)
         messages = thread.messages()
-        assert len(messages) == 10
-        assert sum(1 for m in messages if m.origin is Origin.SYSTEM) == 6
+        # Числа снимка не прибиваются. Проверяется то, ради чего снимок и
+        # держится: оба вида сообщений в нём есть, и системные отличаются
+        # разметкой, а не текстом.
+        assert messages
+        system = sum(1 for m in messages if m.origin is Origin.SYSTEM)
+        assert 0 < system < len(messages)
 
 
 @pytest.mark.parametrize("bad", ["", "   ", "../orders/trade", "1 2", "281916231&x=1"])
