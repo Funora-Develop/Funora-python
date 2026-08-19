@@ -25,6 +25,7 @@ from ._classify import DEFAULT_IDENTITY_CSS, ResponseClass, Signature, Verdict, 
 from ._client import ChatsService, Client, OrdersService
 from ._diff import Event, diff_chats, diff_orders, diff_thread
 from ._gate import check_capability
+from ._host import host_of, is_safe_hop, same_host
 from ._observed import Confidence, Observed, Presence
 from ._orders import (
     Completeness,
@@ -79,6 +80,9 @@ __all__ = [
     "DEFAULT_IDENTITY_CSS",
     "error_for",
     "check_capability",
+    "same_host",
+    "is_safe_hop",
+    "host_of",
     "plan_attempt",
     "policy_for",
     "Attempt",

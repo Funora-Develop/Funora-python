@@ -11,6 +11,13 @@
   * Клиент не следует за переходами автоматически: конечный URL нужен
     классификатору, а автоматический переход прячет тот факт, что нас увели на
     страницу входа.
+  * Переход на чужой хост не выполняется вовсе. Разбор нашёл здесь дыру, стоящую
+    аккаунта целиком: одного заголовка Location хватало, чтобы секрет ушёл на
+    произвольный адрес. Проверка после отправки бесполезна - секрет уже ушёл бы.
+  * Хранилище cookie отключено. С включённым площадка одним Set-Cookie
+    подкладывала свой golden_key, и он уходил следующим запросом впереди
+    настоящего: сервер читает первое вхождение, и клиент молча читал чужой
+    аккаунт как свой.
   * При запуске проверяется уровень журналирования HTTP-стека. httpx на уровне
     DEBUG печатает заголовки, то есть и сессионный ключ. Предупреждение выдаётся
     один раз: молча работать в таком режиме нельзя, а падать - слишком.
@@ -27,7 +34,9 @@ from urllib.parse import urljoin
 
 import httpx
 
+from ._host import host_of, is_safe_hop
 from ._secret import Secret
+from .errors import RemoteServerError
 
 __all__ = ["Observation", "Fetcher", "TransportSettings"]
 
@@ -162,6 +171,13 @@ class Fetcher:
                 max_keepalive_connections=self._settings.max_connections,
             ),
             follow_redirects=False,
+            # Хранилище cookie отключено намеренно. С включённым площадка одним
+            # заголовком Set-Cookie подкладывала свой golden_key, и он уходил
+            # следующим запросом ВПЕРЕДИ настоящего: сервер читает первое
+            # вхождение, и клиент молча читал чужой аккаунт как свой. Ни
+            # исключения, ни повреждений, ни строки в журнале - правдоподобные
+            # данные не того аккаунта. Заголовок Cookie собирается вручную.
+            cookies=None,
             headers={
                 "User-Agent": self._settings.user_agent,
                 "Accept-Language": "ru,en;q=0.8",
@@ -206,39 +222,71 @@ class Fetcher:
             path (str): Путь или полный адрес страницы.
 
         Returns:
-            Observation: Результат обращения.
+            Observation: Результат обращения. Если переход уводил на чужой хост
+            либо понижал схему, возвращается ответ-перенаправление с чужим
+            конечным адресом: решение принимает классификатор, а секрет туда не
+            уходит вовсе.
 
         Raises:
             httpx.HTTPError: При сетевом отказе.
-            ValueError: Если ответ превысил предел размера или число переходов.
+            RemoteServerError: Если ответ превысил предел размера.
         """
+        expected = host_of(self._settings.base_url)
         url = urljoin(self._settings.base_url, path)
+        rejected_url: str | None = None
         redirects = 0
         elapsed = 0.0
 
         while True:
+            # Секрет разворачивается здесь и уходит только на проверенный хост.
+            # Заголовок собирается вручную: хранилище cookie отключено, чтобы
+            # присланное площадкой значение не оседало и не уходило следующим
+            # запросом впереди настоящего.
             response = self._client.get(
                 url,
-                cookies={self._cookie_name: self._secret.reveal()},
+                headers={"Cookie": f"{self._cookie_name}={self._secret.reveal()}"},
             )
             elapsed += response.elapsed.total_seconds()
 
-            if response.is_redirect and redirects < self._settings.max_redirects:
-                location = response.headers.get("location", "")
-                if not location:
-                    break
-                url = urljoin(url, location)
+            if not (response.is_redirect and redirects < self._settings.max_redirects):
+                break
+
+            location = response.headers.get("location", "")
+            if not location:
+                break
+
+            target = urljoin(url, location)
+            if not is_safe_hop(url, target, expected):
+                # Запрос туда не отправляется вовсе: проверка после отправки
+                # была бы бесполезна, секрет уже ушёл бы.
+                #
+                # Отклонённый адрес всё равно объявляется конечным. Это не
+                # мелочь: классификатор увидит чужой хост и поставит диагноз
+                # wrong_identity, а с исходным адресом он увидел бы пустое тело
+                # и сказал бы unknown - то есть «разметка изменилась» вместо
+                # «нас пытались увести».
+                _log.warning(
+                    "переход отклонён: %s не принадлежит %s либо понижает схему",
+                    host_of(target) or "адрес без хоста",
+                    expected,
+                )
+                rejected_url = target
                 redirects += 1
-                continue
-            break
+                break
+
+            url = target
+            redirects += 1
 
         raw = response.content
         if len(raw) > self._settings.max_response_bytes:
-            raise ValueError(f"ответ превысил предел {self._settings.max_response_bytes} байт")
+            raise RemoteServerError(
+                f"ответ превысил предел {self._settings.max_response_bytes} байт: "
+                f"получено {len(raw)}"
+            )
 
         return Observation(
             status=response.status_code,
-            final_url=str(response.url),
+            final_url=rejected_url or str(response.url),
             html=response.text,
             elapsed_ms=int(elapsed * 1000),
             redirects=redirects,
