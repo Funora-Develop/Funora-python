@@ -101,6 +101,7 @@ with Client(secret) as client:
 
 - [docs/observations.md](docs/observations.md) - что установлено и как проверить.
 - [docs/protocol-questions.md](docs/protocol-questions.md) - что осталось открытым.
+- [docs/limits.md](docs/limits.md) - чего Funora не умеет и почему это не чинится кодом.
 - [tests/fixtures/pages/README.md](tests/fixtures/pages/README.md) - формат
   снимков и почему их можно публиковать.
 
