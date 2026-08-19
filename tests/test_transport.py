@@ -20,7 +20,7 @@ import pytest
 
 from funora._secret import Secret
 from funora._transport import Fetcher, TransportSettings
-from funora.errors import RemoteServerError
+from funora.errors import FunoraError, NetworkError, RemoteServerError
 
 #: Тело, которым отвечает подставной сервер.
 BODY = b"<html><body>ok</body></html>"
@@ -282,3 +282,31 @@ def test_secret_is_sent_once_per_request(secret: Secret) -> None:
 
     header = server.cookie_headers()[0]
     assert header.count("golden_key=") == 1, f"ключ передан не один раз: {header}"
+
+
+def test_network_failure_becomes_a_funora_error(secret: Secret) -> None:
+    """Проверяет, что сетевой отказ попадает в иерархию Funora.
+
+    Раньше наружу уходило исключение стека. Обработчик, ловящий FunoraError,
+    пропускал бы его мимо себя, и цикл наблюдения падал бы целиком вместо
+    повтора - при том, что политика повторов для сетевых отказов написана и
+    покрыта тестами.
+
+    Args:
+        secret (Secret): Секрет.
+
+    Returns:
+        None
+    """
+    # Порт, на котором никто не слушает: сокет открыт и сразу закрыт.
+    idle = socket.socket()
+    idle.bind(("127.0.0.1", 0))
+    port = idle.getsockname()[1]
+    idle.close()
+
+    settings = TransportSettings(base_url=f"http://127.0.0.1:{port}")
+    with Fetcher(secret, settings=settings) as fetcher, pytest.raises(NetworkError) as exc:
+        fetcher.fetch("/orders/trade")
+
+    assert isinstance(exc.value, FunoraError)
+    assert NetworkError.retryable, "сетевой отказ обязан быть повторяемым"

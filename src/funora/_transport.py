@@ -36,7 +36,7 @@ import httpx
 
 from ._host import host_of, is_safe_hop
 from ._secret import Secret
-from .errors import RemoteServerError
+from .errors import NetworkError, RemoteServerError, TimeoutError
 
 __all__ = ["Observation", "Fetcher", "TransportSettings"]
 
@@ -228,7 +228,8 @@ class Fetcher:
             уходит вовсе.
 
         Raises:
-            httpx.HTTPError: При сетевом отказе.
+            TimeoutError: Если истёк предел ожидания.
+            NetworkError: При любом другом сетевом отказе.
             RemoteServerError: Если ответ превысил предел размера.
         """
         expected = host_of(self._settings.base_url)
@@ -242,10 +243,22 @@ class Fetcher:
             # Заголовок собирается вручную: хранилище cookie отключено, чтобы
             # присланное площадкой значение не оседало и не уходило следующим
             # запросом впереди настоящего.
-            response = self._client.get(
-                url,
-                headers={"Cookie": f"{self._cookie_name}={self._secret.reveal()}"},
-            )
+            try:
+                response = self._client.get(
+                    url,
+                    headers={"Cookie": f"{self._cookie_name}={self._secret.reveal()}"},
+                )
+            except httpx.TimeoutException as exc:
+                # Отказы стека переводятся в иерархию Funora здесь, а не у
+                # вызывающего. Иначе обработчик, ловящий FunoraError, пропускал
+                # бы обрыв связи мимо себя, и цикл наблюдения падал бы целиком
+                # вместо повтора - при том, что политика повторов для сетевых
+                # отказов написана и покрыта тестами.
+                raise TimeoutError(f"истёк предел ожидания при обращении к {path}") from exc
+            except httpx.HTTPError as exc:
+                raise NetworkError(
+                    f"сетевой отказ при обращении к {path}: {type(exc).__name__}"
+                ) from exc
             elapsed += response.elapsed.total_seconds()
 
             if not (response.is_redirect and redirects < self._settings.max_redirects):

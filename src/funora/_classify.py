@@ -37,7 +37,7 @@ from selectolax.parser import HTMLParser
 __all__ = [
     "ResponseClass",
     "DEFAULT_IDENTITY_CSS",
-    "DEFAULT_TEXT_EXCLUDE",
+    "DEFAULT_CONTENT_MARKERS",
     "Verdict",
     "Signature",
     "classify",
@@ -194,51 +194,68 @@ _HARD_STATUS: Final[dict[int, tuple[ResponseClass, str]]] = {
 _TEXT_LIMIT: Final[int] = 200_000
 
 
-#: Контейнеры, содержимое которых пишет не площадка, а люди.
+#: Признаки того, что страница отдана приложением, а не перехватчиком.
 #:
-#: Текстовые сигнатуры по ним не ищутся, и это не осторожность, а исправление
-#: уязвимости. Без исключения покупателю достаточно написать в переписку
-#: «мой аккаунт заблокирован» или «там captcha вылезла», чтобы весь конвейер
-#: признал страницу блокировкой или проверкой и остановил бота. Шесть обычных
-#: сообщений из шести давали такой отказ, и ни одно не требовало доступа к
-#: чужому аккаунту.
+#: Перечень отвечает на вопрос «узнаём ли мы эту страницу», и текстовые сигнатуры
+#: применяются только тогда, когда ответ отрицательный.
 #:
-#: Перечень объявляет адаптер страницы: он знает, где на ней чужой ввод.
-DEFAULT_TEXT_EXCLUDE: Final[tuple[str, ...]] = (
-    ".chat-message-list",
-    ".chat-msg-text",
-    ".contact-item-message",
-    ".media-user-name",
+#: Прежде здесь стоял обратный перечень: где на странице пишут люди. Форма была
+#: неверна. Перечислять пользовательские участки значит перечислять их все, а
+#: любой пропущенный открывает дыру заново - что и случилось: заголовок лота в
+#: боковой панели переписки не попал в перечень, и одного слова в нём хватало,
+#: чтобы весь конвейер признал страницу блокировкой и остановил бота.
+#:
+#: Перечень признаков площадки закрыт по построению: настоящая страница проверки
+#: или блокировки заменяет содержимое целиком, и ни таблицы заказов, ни виджета
+#: переписки на ней нет.
+DEFAULT_CONTENT_MARKERS: Final[tuple[str, ...]] = (
     ".orders-table",
-    ".order-desc",
+    ".chat-contacts",
+    ".chat-message-list",
+    ".contact-list",
+    ".content-account",
 )
 
 
-def _page_text(html: str, exclude: tuple[str, ...] = ()) -> str:
+def _page_text(html: str) -> str:
     """Извлекает видимый текст страницы в нижнем регистре.
 
     Args:
         html (str): Исходный HTML.
-        exclude (tuple[str, ...]): Селекторы контейнеров, содержимое которых
-            в текст не попадает. Туда отправляется всё, что пишут пользователи.
 
     Returns:
-        str: Текст страницы, обрезанный до предела и приведённый к нижнему регистру.
+        str: Текст страницы, обрезанный до предела и приведённый к нижнему
+        регистру.
     """
     try:
         tree = HTMLParser(html[:_TEXT_LIMIT])
     except Exception:
         return ""
-    for selector in exclude:
-        try:
-            for node in tree.css(selector):
-                node.decompose()
-        except Exception:
-            continue
     body = tree.body or tree.root
     if body is None:
         return ""
     return (body.text(separator=" ") or "").lower()
+
+
+def _is_known_page(tree: HTMLParser | None, markers: tuple[str, ...]) -> bool:
+    """Сообщает, узнаётся ли страница как отданная приложением.
+
+    Args:
+        tree (HTMLParser | None): Разобранный документ.
+        markers (tuple[str, ...]): Признаки страниц приложения.
+
+    Returns:
+        bool: True, если найден хотя бы один признак.
+    """
+    if tree is None:
+        return False
+    for selector in markers:
+        try:
+            if tree.css_first(selector) is not None:
+                return True
+        except Exception:
+            continue
+    return False
 
 
 def classify(
@@ -249,7 +266,7 @@ def classify(
     expected_host: str,
     identity_css: str | None = DEFAULT_IDENTITY_CSS,
     signatures: tuple[Signature, ...] = DEFAULT_SIGNATURES,
-    text_exclude: tuple[str, ...] = DEFAULT_TEXT_EXCLUDE,
+    content_markers: tuple[str, ...] = DEFAULT_CONTENT_MARKERS,
 ) -> Verdict:
     """Классифицирует ответ площадки.
 
@@ -265,9 +282,11 @@ def classify(
             подтверждённый наблюдением признак. Передайте None, чтобы пропустить
             шаг проверки личности; это отразится в причине.
         signatures (tuple[Signature, ...]): Реестр сигнатур детекторов.
-        text_exclude (tuple[str, ...]): Селекторы контейнеров с чужим вводом.
-            Их содержимое не участвует в поиске текстовых сигнатур: иначе
-            собеседник останавливает бота одним словом в переписке.
+        content_markers (tuple[str, ...]): Признаки страниц приложения. Если
+            найден хотя бы один, текстовые сигнатуры не применяются вовсе:
+            страница узнана, и догадываться по тексту не о чем. Иначе
+            собеседник останавливает бота одним словом в переписке либо в
+            названии своего лота.
 
     Returns:
         Verdict: Класс ответа с причиной и признаком того, было ли решение принято
@@ -306,6 +325,12 @@ def classify(
     except Exception:
         tree = None
 
+    # Текстовые сигнатуры применяются только к неузнанной странице. Узнанная -
+    # это страница приложения, часть текста на которой пишут посторонние:
+    # переписка, названия лотов, имена. Догадка по такому тексту даёт
+    # контрагенту право остановить чужого бота одним словом.
+    known = _is_known_page(tree, content_markers)
+
     text: str | None = None
     for sig in signatures:
         if tree is not None:
@@ -321,9 +346,9 @@ def classify(
                         )
                 except Exception:
                     continue
-        if sig.patterns:
+        if sig.patterns and not known:
             if text is None:
-                text = _page_text(html, text_exclude)
+                text = _page_text(html)
             for pattern in sig.patterns:
                 if re.search(pattern, text):
                     return Verdict(

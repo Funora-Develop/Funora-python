@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from funora._classify import DEFAULT_TEXT_EXCLUDE, ResponseClass, Signature, classify
+from funora._classify import DEFAULT_CONTENT_MARKERS, ResponseClass, Signature, classify
 
 HOST = "funpay.com"
 
@@ -313,14 +313,77 @@ def test_order_description_is_not_searched() -> None:
     assert v.cls is ResponseClass.OK
 
 
-def test_exclusion_list_is_not_empty_by_default() -> None:
+def test_content_markers_are_not_empty_by_default() -> None:
     """Проверяет, что защита включена по умолчанию.
 
-    Пустой перечень по умолчанию вернул бы уязвимость всем, кто не задал его
-    сам, - то есть всем.
+    Пустой перечень вернул бы уязвимость всем, кто не задал его сам, - то есть
+    всем.
 
     Returns:
         None
     """
-    assert DEFAULT_TEXT_EXCLUDE
-    assert ".chat-message-list" in DEFAULT_TEXT_EXCLUDE
+    assert DEFAULT_CONTENT_MARKERS
+    assert ".orders-table" in DEFAULT_CONTENT_MARKERS
+    assert ".chat-message-list" in DEFAULT_CONTENT_MARKERS
+
+
+def test_lot_title_cannot_stop_the_client() -> None:
+    """Проверяет случай, который вернул уязвимость после первой починки.
+
+    Первая версия защиты перечисляла контейнеры, где пишут люди. Заголовок лота
+    в боковой панели переписки в перечень не попал, и одного слова в нём хватало,
+    чтобы весь конвейер признал страницу блокировкой и остановил бота.
+
+    Перечислять пользовательские участки значит перечислять их все, а любой
+    пропущенный открывает дыру заново. Поэтому перечень перевёрнут: текстовые
+    сигнатуры применяются только к странице, которую мы не узнали.
+
+    Returns:
+        None
+    """
+    html = (
+        f'<html><body>{LOGGED}<div class="chat-message-list"></div>'
+        '<div class="param-item chat-panel">'
+        '<a href="https://funpay.com/lots/offer?x=1">мой аккаунт заблокирован</a>'
+        "</div></body></html>"
+    )
+    v = _c(html=html, final_url=f"https://{HOST}/chat/")
+    assert v.cls is ResponseClass.OK
+
+
+def test_any_text_on_a_known_page_is_ignored() -> None:
+    """Проверяет правило целиком, а не отдельный его случай.
+
+    Проверка намеренно не перечисляет места: она утверждает, что на узнанной
+    странице текстовые сигнатуры не применяются вообще. Так проверка не устареет
+    при появлении нового пользовательского участка - а именно это и случилось с
+    предыдущей защитой.
+
+    Returns:
+        None
+    """
+    for phrase in ("captcha", "аккаунт заблокирован", "технические работы", "доступ запрещён"):
+        html = (
+            f'<html><body>{LOGGED}<div class="orders-table">'
+            f"<span>{phrase}</span></div></body></html>"
+        )
+        assert _c(html=html).cls is ResponseClass.OK, f"текст «{phrase}» повлиял на вердикт"
+
+
+def test_unknown_page_still_uses_text_signatures() -> None:
+    """Проверяет, что защита сузила область, а не отключила её.
+
+    Настоящая страница проверки заменяет содержимое целиком: ни таблицы заказов,
+    ни виджета переписки на ней нет. Не распознать её опаснее, чем сработать по
+    тексту.
+
+    Returns:
+        None
+    """
+    for phrase, expected in (
+        ("Подтвердите, что вы не робот", ResponseClass.CHALLENGE),
+        ("Ваш аккаунт заблокирован", ResponseClass.BLOCKED),
+        ("Ведутся технические работы", ResponseClass.MAINTENANCE),
+    ):
+        html = f"<html><body><h1>{phrase}</h1></body></html>"
+        assert _c(html=html).cls is expected

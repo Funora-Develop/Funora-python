@@ -21,7 +21,14 @@ from __future__ import annotations
 
 from ._budget import Budget, Reservation
 from ._chats import ChatListEntry, ChatsPage, parse_chats_page
-from ._classify import DEFAULT_IDENTITY_CSS, ResponseClass, Signature, Verdict, classify
+from ._classify import (
+    DEFAULT_CONTENT_MARKERS,
+    DEFAULT_IDENTITY_CSS,
+    ResponseClass,
+    Signature,
+    Verdict,
+    classify,
+)
 from ._client import ChatsService, Client, OrdersService
 from ._diff import (
     Event,
@@ -86,6 +93,7 @@ __all__ = [
     "Verdict",
     "Signature",
     "DEFAULT_IDENTITY_CSS",
+    "DEFAULT_CONTENT_MARKERS",
     "error_for",
     "check_capability",
     "same_host",

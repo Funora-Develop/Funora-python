@@ -33,7 +33,7 @@ from selectolax.parser import HTMLParser, Node
 
 from ._host import same_host
 from ._observed import Observed
-from ._orders import Completeness, Defect, Severity
+from ._result import Completeness, Defect, Severity, collect_rows
 from .errors import IncompleteResultError, ProtocolChangedError
 
 __all__ = ["Origin", "Message", "Thread", "parse_thread"]
@@ -325,35 +325,22 @@ def parse_thread(html: str, *, observed_at: datetime, host: str = "funpay.com") 
     tree = HTMLParser(html)
     defects: list[Defect] = []
 
-    container = tree.css_first(_LIST)
-    if container is None:
+    if tree.css_first(_LIST) is None:
         raise ProtocolChangedError(
             f"на странице нет контейнера сообщений ({_LIST}). Пустую переписку "
             "вернуть нельзя: она неотличима от несуществующей"
         )
 
-    messages = container.css(_MESSAGE)
-    children = [node for node in container.iter() if node.tag != "-text"]
-
-    if len(messages) != len(children):
-        defects.append(
-            Defect(
-                severity=Severity.PAGE,
-                code="row_selector_undercount",
-                detail=(
-                    f"селектор сообщения нашёл {len(messages)}, "
-                    f"а прямых детей контейнера {len(children)}"
-                ),
-            )
-        )
+    found = collect_rows(tree, _LIST, _MESSAGE)
+    defects.extend(found.defects)
 
     entries: list[Message] = []
-    for index, node in enumerate(messages):
+    for index, node in enumerate(found.rows):
         entry, message_defects = _parse_message(node, index, host)
         defects.extend(message_defects)
         entries.append(entry)
 
-    rows_total = max(len(messages), len(children))
+    rows_total = max(len(found.rows), found.children, len(tree.css(_MESSAGE)))
     rows_accepted = len(entries)
 
     if rows_total and not rows_accepted:
