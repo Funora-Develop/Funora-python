@@ -19,7 +19,7 @@ import pytest
 from selectolax.parser import HTMLParser
 
 from funora._classify import ResponseClass, classify
-from funora._skeleton import SKELETON_FORMAT, _self_check
+from funora._skeleton import SUPPORTED_SKELETON_FORMATS, _self_check
 
 #: Каталог с фикстурами страниц.
 PAGES = Path(__file__).parent / "fixtures" / "pages"
@@ -103,7 +103,7 @@ def test_fixture_has_provenance(name: str) -> None:
     # Версия сверяется с кодом, а не записана числом: иначе она расходится
     # с форматом молча, и снимок начинает читаться правилами, по которым
     # его не снимали.
-    assert data["format"] == SKELETON_FORMAT
+    assert data["format"] in SUPPORTED_SKELETON_FORMATS
 
 
 def test_logged_and_guest_markers_do_not_overlap() -> None:

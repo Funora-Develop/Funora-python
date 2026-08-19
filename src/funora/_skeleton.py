@@ -15,10 +15,11 @@
 
   * Структура сохраняется целиком: теги, вложенность, порядок, атрибут class.
   * Каждый текстовый узел заменяется подписью ``T{длина}:{классы символов}``.
-  * Путь на своём хосте сохраняет форму, а сегменты с цифрами становятся ``{n}``:
-    ``/orders/12345`` превращается в ``/orders/{n}``. Видно, что это ссылка на
-    заказ, но не видно какой. Сегменты там - служебные слова площадки, а
-    пользователь адресуется числом.
+  * Путь на своём хосте сохраняет форму, а сегменты с цифрами становятся
+    ``{n1}``, ``{n2}`` и так далее: ``/orders/12345`` превращается в
+    ``/orders/{n1}``. Видно, что это ссылка на заказ, и видно, тот же это заказ
+    или другой, - но не видно какой. Номер выдаётся по первому появлению
+    значения в пределах документа и между документами смысла не имеет.
   * Путь на чужом хосте маскируется целиком: ``t.me/ivanpetrov`` превращается в
     ``t.me/{t}``. Ссылки на чужие адреса пишут люди в переписке, и в них живёт
     то, ради чего их и пишут. Прежнее правило маскировало сегмент только при
@@ -33,6 +34,16 @@
 
 Классы символов в подписи: ``d`` цифры, ``a`` латиница, ``c`` кириллица,
 ``s`` пробельные, ``p`` пунктуация ASCII, ``o`` прочее.
+
+Про нумерацию стоит знать две вещи, и обе - про то, чего она НЕ делает.
+
+Она не действует на чужих хостах. Там номер сам по себе был бы сведением о
+третьем лице - «эти два сообщения ведут на один аккаунт», - а никакой проверке
+он не нужен: ``t.me/{t}`` остаётся неразличимым всюду.
+
+Она не связывает документы. Один и тот же заказ получает разные номера в двух
+снимках, а разные заказы - одинаковые. Сравнивать снимки по номерам нельзя, и
+это ловушка, которую вводит сам формат.
 """
 
 from __future__ import annotations
@@ -52,6 +63,7 @@ __all__ = [
     "mask_path",
     "SkeletonError",
     "SKELETON_FORMAT",
+    "SUPPORTED_SKELETON_FORMATS",
     "DEFAULT_OWN_HOST",
 ]
 
@@ -61,8 +73,23 @@ DEFAULT_OWN_HOST: Final[str] = "funpay.com"
 #: Имя формата, записываемое в описание происхождения фикстуры.
 #:
 #: Версия 1 записывала пустые элементы как ``<div/>`` и потому не разбиралась
-#: HTML-парсером. Файлы той версии несовместимы с этой и требуют преобразования.
-SKELETON_FORMAT: Final[str] = "structural-skeleton-v3"
+#: HTML-парсером. Версия 3 маскирует пути на чужих хостах целиком. Версия 4
+#: нумерует подписи идентификаторов в пределах документа: без номеров восемь
+#: заказов на странице неразличимы, и проверка по ключу проходит впустую.
+SKELETON_FORMAT: Final[str] = "structural-skeleton-v4"
+
+#: Форматы, которые проект умеет читать.
+#:
+#: Перечень нужен потому, что снимок не преобразуется в v4 автоматически:
+#: нумерация восстанавливает различимость только при захвате, а из уже
+#: замаскированного файла исходные значения не вернуть. Файлы прежних версий
+#: остаются пригодными для всего, что не зависит от различимости.
+SUPPORTED_SKELETON_FORMATS: Final[frozenset[str]] = frozenset(
+    {
+        "structural-skeleton-v3",
+        "structural-skeleton-v4",
+    }
+)
 
 #: Атрибуты, значение которых обрабатывается как путь.
 #:
@@ -176,7 +203,11 @@ def text_signature(text: str) -> str:
     return f"T{len(normalized)}:{classes}"
 
 
-def mask_path(value: str, own_host: str = DEFAULT_OWN_HOST) -> str:
+def mask_path(
+    value: str,
+    own_host: str = DEFAULT_OWN_HOST,
+    ordinals: dict[str, int] | None = None,
+) -> str:
     """Обезличивает значение атрибута, содержащего путь.
 
     Правило разное для своего хоста и для чужого, и разница не в осторожности.
@@ -192,9 +223,21 @@ def mask_path(value: str, own_host: str = DEFAULT_OWN_HOST) -> str:
     снимок, который лежит в открытом репозитории. Имя хоста при этом остаётся:
     оно публично и говорит, куда ведёт ссылка, не говоря, к кому.
 
+    Подпись идентификатора нумеруется в пределах документа: одинаковые значения
+    получают один номер, разные - разные. Без номеров восемь заказов на странице
+    неразличимы, и всякая проверка, опирающаяся на различимость, проходит
+    впустую, выглядя пройденной. Номер не раскрывает значения - он говорит
+    только, совпадают ли два.
+
+    Нумерация действует внутри одного документа и между документами смысла не
+    имеет: ``{n1}`` в двух снимках - разные вещи.
+
     Args:
         value (str): Исходное значение атрибута.
         own_host (str): Хост площадки. Пути на нём сохраняют форму.
+        ordinals (dict[str, int] | None): Таблица номеров документа, общая для
+            всех его путей. None означает разовую маскировку вне документа: там
+            нумеровать не с чем и подпись остаётся безномерной.
 
     Returns:
         str: Обезличенный путь.
@@ -230,7 +273,7 @@ def mask_path(value: str, own_host: str = DEFAULT_OWN_HOST) -> str:
             out.append(_SEG_TEXT)
             continue
         if _RE_DIGIT.search(part):
-            out.append(_SEG_NUM)
+            out.append(_numbered(part, ordinals))
         elif not part.isascii():
             out.append(_SEG_TEXT)
         else:
@@ -238,12 +281,36 @@ def mask_path(value: str, own_host: str = DEFAULT_OWN_HOST) -> str:
     return "/".join(out) + query
 
 
-def _mask_attr(name: str, value: str) -> str:
+def _numbered(part: str, ordinals: dict[str, int] | None) -> str:
+    """Возвращает подпись идентификатора с номером в пределах документа.
+
+    Номер выдаётся по первому появлению значения и повторно не выдаётся: два
+    вхождения одного идентификатора получают один номер, два разных - разные.
+    Само значение при этом никуда не попадает - таблица живёт в памяти и
+    выбрасывается вместе с документом.
+
+    Args:
+        part (str): Исходный сегмент пути.
+        ordinals (dict[str, int] | None): Таблица номеров документа либо None,
+            если маскируется отдельное значение вне документа.
+
+    Returns:
+        str: Подпись вида ``{n3}`` либо безномерная ``{n}``.
+    """
+    if ordinals is None:
+        return _SEG_NUM
+    if part not in ordinals:
+        ordinals[part] = len(ordinals) + 1
+    return f"{{n{ordinals[part]}}}"
+
+
+def _mask_attr(name: str, value: str, ordinals: dict[str, int]) -> str:
     """Обезличивает значение произвольного атрибута.
 
     Args:
         name (str): Имя атрибута в нижнем регистре.
         value (str): Исходное значение.
+        ordinals (dict[str, int]): Таблица номеров документа.
 
     Returns:
         str: Значение, пригодное для хранения в репозитории.
@@ -251,20 +318,23 @@ def _mask_attr(name: str, value: str) -> str:
     if name in _VERBATIM_ATTRS:
         return value
     if name in _URL_ATTRS:
-        return mask_path(value)
+        return mask_path(value, DEFAULT_OWN_HOST, ordinals)
     if not value:
         return value
     sig = text_signature(value)
     return sig or ""
 
 
-def _render(node: Node, out: list[str], depth: int) -> None:
+def _render(node: Node, out: list[str], depth: int, ordinals: dict[str, int]) -> None:
     """Рекурсивно записывает узел в выходной буфер.
 
     Args:
         node (Node): Узел документа.
         out (list[str]): Буфер строк результата.
         depth (int): Текущая глубина вложенности, для отступов.
+        ordinals (dict[str, int]): Таблица номеров документа. Общая на весь
+            обход: номер выдаётся по первому появлению значения, и порядок
+            обхода делает нумерацию повторяемой.
 
     Returns:
         None: Результат накапливается в out.
@@ -288,7 +358,7 @@ def _render(node: Node, out: list[str], depth: int) -> None:
         if raw is None:
             rendered.append(name)
             continue
-        masked = _mask_attr(name.lower(), raw)
+        masked = _mask_attr(name.lower(), raw, ordinals)
         rendered.append(f'{name}="{masked}"')
 
     head = tag if not rendered else tag + " " + " ".join(rendered)
@@ -307,7 +377,7 @@ def _render(node: Node, out: list[str], depth: int) -> None:
 
     out.append(f"{pad}<{head}>")
     for child in children:
-        _render(child, out, depth + 1)
+        _render(child, out, depth + 1, ordinals)
     out.append(f"{pad}</{tag}>")
 
 
@@ -359,7 +429,10 @@ def skeletonize(html: str) -> str:
         raise SkeletonError("документ не содержит корневого узла")
 
     out: list[str] = []
-    _render(root, out, 0)
+    # Таблица номеров создаётся на документ и живёт только во время обхода.
+    # Значений она не сохраняет никуда: нумерация нужна затем, чтобы по снимку
+    # было видно, какие ссылки совпадают, а какие нет.
+    _render(root, out, 0, {})
     skeleton = "\n".join(out) + "\n"
     _self_check(skeleton)
     return skeleton
