@@ -201,7 +201,7 @@ def test_cli_parses_arguments(tmp_path: Path) -> None:
         tmp_path (Path): Временный каталог pytest.
     """
     secrets = tmp_path / "secrets"
-    secrets.mkdir()
+    secrets.mkdir(parents=True)
     key = secrets / "golden_key"
     key.write_text("value", encoding="utf-8")
     # На POSIX источник отвергает файл, доступный посторонним, и это правильно.
@@ -299,3 +299,75 @@ def test_provenance_masks_path_and_url() -> None:
     for secret in ("123456789", "98765", "777"):
         assert secret not in blob, f"идентификатор {secret} попал в описание"
     assert data["path"] == "/chat/?{q}"
+
+
+def _secrets_dir(tmp_path: Path) -> Path:
+    """Готовит каталог с секретом для запуска командной строки.
+
+    Args:
+        tmp_path (Path): Временный каталог pytest.
+
+    Returns:
+        Path: Каталог с файлом секрета.
+    """
+    secrets = tmp_path / "secrets"
+    secrets.mkdir(parents=True)
+    key = secrets / "golden_key"
+    key.write_text("value", encoding="utf-8")
+    if os.name == "posix":
+        key.chmod(0o600)
+    return secrets
+
+
+def test_several_paths_are_captured_in_one_run(tmp_path: Path) -> None:
+    """Проверяет, что несколько страниц снимаются одним запуском.
+
+    Снимок делает человек руками, и три команды вместо одной - три повода
+    ошибиться и три разных момента наблюдения там, где нужен один.
+
+    Args:
+        tmp_path (Path): Временный каталог pytest.
+
+    Returns:
+        None
+    """
+    code = observe_mod.main(
+        [
+            "/orders/trade",
+            "/chat/",
+            "--out",
+            str(tmp_path / "out"),
+            "--secret-file",
+            str(_secrets_dir(tmp_path)),
+            "--locale",
+            "ru",
+        ]
+    )
+    assert code == 0
+    assert (tmp_path / "out" / "orders_trade.ru.skeleton.txt").exists()
+    assert (tmp_path / "out" / "chat.ru.skeleton.txt").exists()
+
+
+def test_analysis_modes_refuse_several_paths(tmp_path: Path) -> None:
+    """Проверяет, что разбор во времени не принимает несколько страниц.
+
+    Эти режимы сравнивают страницу саму с собой, и вторая в таком сравнении не
+    участвует. Промолчать значило бы разобрать первую и молча забыть остальные.
+
+    Args:
+        tmp_path (Path): Временный каталог pytest.
+
+    Returns:
+        None
+    """
+    for mode in ("--relations", "--compare"):
+        code = observe_mod.main(
+            [
+                "/orders/trade",
+                "/chat/",
+                mode,
+                "--secret-file",
+                str(_secrets_dir(tmp_path / mode.strip("-"))),
+            ]
+        )
+        assert code == 2, f"{mode} принял две страницы"

@@ -413,7 +413,14 @@ def main(argv: list[str] | None = None) -> int:
             "скелет, сырой HTML не сохраняется никогда."
         ),
     )
-    parser.add_argument("path", help="путь страницы, например /orders/trade")
+    parser.add_argument(
+        "path",
+        nargs="+",
+        help=(
+            "путь страницы, например /orders/trade. Можно указать несколько: "
+            "они снимаются подряд одним запуском"
+        ),
+    )
     parser.add_argument("--out", type=Path, default=Path("observations"), help="каталог результата")
     parser.add_argument(
         "--secret-file",
@@ -457,6 +464,13 @@ def main(argv: list[str] | None = None) -> int:
         provider = EnvSecretProvider()
 
     settings = TransportSettings(base_url=args.base_url)
+
+    # Режимы разбора работают с одной страницей: они сравнивают её саму с собой
+    # во времени, и вторая страница в таком сравнении не участвует.
+    if (args.relations or args.compare) and len(args.path) > 1:
+        print("режимы --relations и --compare работают с одной страницей", file=sys.stderr)
+        return 2
+
     if args.relations:
         return observe_relations(
             path=args.path,
@@ -473,15 +487,24 @@ def main(argv: list[str] | None = None) -> int:
             identity_css=args.identity_css,
             settings=settings,
         )
-    return observe(
-        path=args.path,
-        out_dir=args.out,
-        provider=provider,
-        secret_name=args.secret_name,
-        identity_css=args.identity_css,
-        locale=args.locale,
-        settings=settings,
-    )
+    worst = 0
+    for index, path in enumerate(args.path):
+        if index:
+            print()
+        code = observe(
+            path=path,
+            out_dir=args.out,
+            provider=provider,
+            secret_name=args.secret_name,
+            identity_css=args.identity_css,
+            locale=args.locale,
+            settings=settings,
+        )
+        # Отказ на одной странице не отменяет остальные: снимки независимы, а
+        # прервать цикл значило бы заставить человека повторять всё сначала.
+        # Код возврата при этом худший из полученных.
+        worst = max(worst, code)
+    return worst
 
 
 if __name__ == "__main__":
