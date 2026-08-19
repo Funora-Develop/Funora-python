@@ -1,0 +1,150 @@
+"""Проверки документации.
+
+Документация ломается тише кода: пример в README перестаёт работать, ссылка
+начинает вести в никуда, и узнаёт об этом первый пришедший человек, а не
+сборка. Здесь проверяется то, что можно проверить машинно.
+
+Набор намеренно не проверяет содержание. Он проверяет, что примеры остаются
+исполнимыми, ссылки - разрешимыми, а обещания об операциях - выполнимыми.
+"""
+
+from __future__ import annotations
+
+import ast
+import re
+from pathlib import Path
+
+import pytest
+
+from funora import Client
+from funora._chats import ChatsPage
+from funora._orders import OrdersPage
+from funora._thread import Thread
+
+#: Корень репозитория.
+ROOT = Path(__file__).resolve().parent.parent
+
+#: Документы, которые проверяются.
+DOCS = [
+    ROOT / "README.md",
+    ROOT / "README.en.md",
+    *sorted((ROOT / "docs").glob("*.md")),
+    ROOT / "tests" / "fixtures" / "pages" / "README.md",
+]
+
+#: Блок кода на Python внутри разметки.
+_CODE_BLOCK = re.compile(r"```python\n(.*?)```", re.DOTALL)
+
+#: Ссылка в разметке.
+_LINK = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
+
+
+@pytest.mark.parametrize("path", DOCS, ids=lambda p: p.name)
+def test_python_examples_are_syntactically_valid(path: Path) -> None:
+    """Проверяет, что примеры на Python разбираются интерпретатором.
+
+    Пример с опечаткой выглядит убедительно и не работает. Разбор ловит это,
+    ничего не выполняя.
+
+    Args:
+        path (Path): Проверяемый документ.
+
+    Returns:
+        None
+    """
+    for index, block in enumerate(_CODE_BLOCK.findall(path.read_text(encoding="utf-8"))):
+        try:
+            ast.parse(block)
+        except SyntaxError as exc:  # pragma: no cover - сообщение важнее ветки
+            pytest.fail(f"{path.name}, блок {index + 1}: {exc}")
+
+
+@pytest.mark.parametrize("path", DOCS, ids=lambda p: p.name)
+def test_relative_links_resolve(path: Path) -> None:
+    """Проверяет, что ссылки на файлы репозитория ведут к существующим файлам.
+
+    Ссылка, ведущая в никуда, встречает первого пришедшего человека и говорит
+    ему о проекте больше, чем хотелось бы.
+
+    Args:
+        path (Path): Проверяемый документ.
+
+    Returns:
+        None
+    """
+    broken: list[str] = []
+    for target in _LINK.findall(path.read_text(encoding="utf-8")):
+        if target.startswith(("http://", "https://", "#", "mailto:")):
+            continue
+        resolved = (path.parent / target.split("#", 1)[0]).resolve()
+        if not resolved.exists():
+            broken.append(target)
+
+    assert not broken, f"{path.name}: ссылки ведут в никуда: {broken}"
+
+
+def test_documented_operations_exist() -> None:
+    """Проверяет, что обещанные в README операции действительно есть.
+
+    Таблица операций - обещание. Обещание, которое перестало выполняться,
+    обнаруживается вызовом, а не чтением.
+
+    Returns:
+        None
+    """
+    client = Client(transport=object())  # type: ignore[arg-type]
+
+    assert callable(client.orders.list)
+    assert callable(client.chats.list)
+    assert callable(client.chats.thread)
+
+
+def test_documented_return_types_match() -> None:
+    """Проверяет, что операции возвращают обещанные типы.
+
+    Проверка идёт по объявлению, а не по вызову: вызывать здесь нечего, сети в
+    наборе нет.
+
+    Returns:
+        None
+    """
+    from funora._client import ChatsService, OrdersService
+
+    assert OrdersService.list.__annotations__["return"] == "OrdersPage"
+    assert ChatsService.list.__annotations__["return"] == "ChatsPage"
+    assert ChatsService.thread.__annotations__["return"] == "Thread"
+
+    for cls in (OrdersPage, ChatsPage, Thread):
+        assert hasattr(cls, "completeness")
+
+
+def test_readme_names_the_same_operations_in_both_languages() -> None:
+    """Проверяет, что русская и английская версии обещают одно и то же.
+
+    Разошедшиеся переводы - обычное дело, и обычно расходятся они как раз в
+    перечне того, что работает.
+
+    Returns:
+        None
+    """
+    calls = re.compile(r"client\.\w+\.\w+\(")
+
+    ru = set(calls.findall((ROOT / "README.md").read_text(encoding="utf-8")))
+    en = set(calls.findall((ROOT / "README.en.md").read_text(encoding="utf-8")))
+
+    assert ru == en, f"версии README обещают разное: только в одной {ru ^ en}"
+
+
+def test_readme_does_not_promise_payment_confirmation() -> None:
+    """Проверяет, что README не обещает ответа на вопрос об оплате.
+
+    Обещание в документации опаснее метода в коде: метод найдут при ревью,
+    обещание - нет, а поверят ему раньше.
+
+    Returns:
+        None
+    """
+    for name in ("README.md", "README.en.md"):
+        text = (ROOT / name).read_text(encoding="utf-8").lower()
+        for phrase in ("is_paid", "ispaid", "payment_confirmed", "оплата подтверждена"):
+            assert phrase not in text, f"{name} обещает {phrase}"
