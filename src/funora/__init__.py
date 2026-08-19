@@ -20,8 +20,9 @@
 from __future__ import annotations
 
 from ._budget import Budget, Reservation
+from ._chats import ChatListEntry, ChatsPage, parse_chats_page
 from ._classify import DEFAULT_IDENTITY_CSS, ResponseClass, Signature, Verdict, classify
-from ._client import Client, OrdersService
+from ._client import ChatsService, Client, OrdersService
 from ._gate import check_capability
 from ._observed import Confidence, Observed, Presence
 from ._orders import (
@@ -54,6 +55,7 @@ __all__ = [
     # клиент
     "Client",
     "OrdersService",
+    "ChatsService",
     "Budget",
     "Reservation",
     # секреты
@@ -93,6 +95,10 @@ __all__ = [
     "Completeness",
     "Defect",
     "Severity",
+    # список диалогов
+    "parse_chats_page",
+    "ChatsPage",
+    "ChatListEntry",
     # возможности
     "Capability",
     "CapabilityState",
