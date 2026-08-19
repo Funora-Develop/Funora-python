@@ -382,3 +382,99 @@ def test_numbering_does_not_cross_documents() -> None:
     second = skeletonize('<html><body><a href="/orders/222/">a</a></body></html>')
     assert "/orders/{n1}/" in first
     assert "/orders/{n1}/" in second, "номер отсчитывается заново в каждом документе"
+
+
+def test_dialogs_are_distinguishable_by_query() -> None:
+    """Проверяет, что диалоги различимы, хотя идентификатор лежит в запросе.
+
+    Ради этого формат поднят до v5. В v4 нумеровался только путь, а у диалога
+    путь один на всех - ``/chat/`` - и весь идентификатор сидит в строке
+    запроса. Пятьдесят диалогов снимка были неразличимы полностью, и проверки
+    курсора по ним проходили впустую, выглядя пройденными.
+
+    Returns:
+        None
+    """
+    sk = skeletonize(
+        "<html><body>"
+        '<a href="/chat/?node=281916231">a</a>'
+        '<a href="/chat/?node=999000111">b</a>'
+        '<a href="/chat/?node=281916231">c</a>'
+        "</body></html>"
+    )
+    assert sk.count("/chat/?{q1}") == 2
+    assert sk.count("/chat/?{q2}") == 1
+
+
+def test_attribute_signature_keeps_its_shape_and_gains_a_number() -> None:
+    """Проверяет, что номер добавляется к подписи, а не заменяет её.
+
+    Длина и состав нужны: именно на них строились выводы о позициях сообщений -
+    девять знаков против десяти. Заменить подпись номером значило бы выиграть
+    различимость ценой того, ради чего формат затевался.
+
+    Returns:
+        None
+    """
+    sk = skeletonize(
+        "<html><body>"
+        '<i data-id="281916231" data-node-msg="1234567890">a</i>'
+        '<i data-id="999000111" data-node-msg="1234567890">b</i>'
+        "</body></html>"
+    )
+    assert 'data-id="T9:d#1"' in sk
+    assert 'data-id="T9:d#2"' in sk
+    # Одинаковая позиция у обоих - один номер, и подпись по-прежнему T10.
+    assert sk.count('data-node-msg="T10:d#1"') == 2
+
+
+def test_numbering_is_separate_per_attribute() -> None:
+    """Проверяет, что разряды нумерации не пересекаются.
+
+    Совпадение номера пути с номером атрибута ничего не значило бы и только
+    вводило бы в заблуждение: это разные пространства значений.
+
+    Returns:
+        None
+    """
+    sk = skeletonize(
+        '<html><body><a data-id="111" data-node-msg="222" href="/orders/333/">a</a></body></html>'
+    )
+    assert 'data-id="T3:d#1"' in sk
+    assert 'data-node-msg="T3:d#1"' in sk
+    assert "/orders/{n1}/" in sk
+
+
+def test_foreign_query_is_not_numbered() -> None:
+    """Проверяет, что строка запроса чужого адреса остаётся неразличимой.
+
+    По той же причине, что и путь: там совпадение само по себе сведение о
+    третьем лице, а никакой проверке оно не нужно.
+
+    Returns:
+        None
+    """
+    sk = skeletonize(
+        "<html><body>"
+        '<a href="https://t.me/ivan?ref=1">a</a>'
+        '<a href="https://t.me/other?ref=2">b</a>'
+        "</body></html>"
+    )
+    assert sk.count('href="https://t.me/{t}?{q}"') == 2
+    assert "{q1}" not in sk
+
+
+def test_text_nodes_are_not_numbered() -> None:
+    """Проверяет, что содержимое равенством не выдаётся.
+
+    Граница проведена по различию «разметка против содержимого». Атрибут -
+    разметка, и равенство двух его значений нужно проверкам. Текст -
+    содержимое, и равенство двух сообщений переписки никакой проверке не нужно,
+    а сведением о переписке является.
+
+    Returns:
+        None
+    """
+    sk = skeletonize("<html><body><p>одно и то же</p><p>одно и то же</p></body></html>")
+    assert sk.count("T12:cs") == 2
+    assert "#1" not in sk
