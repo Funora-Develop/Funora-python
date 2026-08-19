@@ -102,6 +102,7 @@ markup, with text and attribute values replaced by signatures.
 
 - [docs/observations.md](docs/observations.md) - what is established and how to
   verify it.
+- [docs/limits.md](docs/limits.md) - what Funora cannot do, and why code will not fix it.
 - [docs/protocol-questions.md](docs/protocol-questions.md) - what remains open.
 - [tests/fixtures/pages/README.md](tests/fixtures/pages/README.md) - the snapshot
   format and why publishing it is safe.

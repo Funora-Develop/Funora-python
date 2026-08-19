@@ -301,3 +301,95 @@ def test_page_length_is_available_without_acknowledgement() -> None:
     page = _parse(broken)
     assert page.completeness is not Completeness.COMPLETE
     assert len(page) == 3
+
+
+def test_offline_marker_is_read_as_absence() -> None:
+    """Проверяет, что наблюдённый маркер отсутствия читается значением False.
+
+    Returns:
+        None
+    """
+    entries = _parse().rows()
+    assert all(e.counterparty_online.value is False for e in entries)
+
+
+def test_absent_offline_marker_does_not_mean_online() -> None:
+    """Проверяет, что снятый маркер отсутствия не превращается в присутствие.
+
+    Вывод по отрицанию опирался бы на имя класса, которого мы не выбирали.
+    Площадка помечает отсутствие, но положительного маркера присутствия не
+    наблюдалось ни в одном снимке, и «раз не offline, значит online» - догадка,
+    а не наблюдение.
+
+    Returns:
+        None
+    """
+    page = _parse(_fixture().replace("media media-user offline", "media media-user"))
+    entry = page.rows()[0]
+    assert entry.counterparty_online.presence is Presence.NOT_OBSERVED
+    assert entry.counterparty_online.reason == "presence_positive_marker_not_observed"
+    with pytest.raises(UnobservedFieldError):
+        _ = entry.counterparty_online.value
+
+
+def test_renamed_offline_class_does_not_invent_presence() -> None:
+    """Проверяет, что переименование класса не делает всех присутствующими.
+
+    Это и есть цена вывода по отрицанию: переименуй площадка offline в
+    is-offline, и каждый контрагент молча стал бы присутствующим - без
+    повреждения, без исключения, без строки в журнале.
+
+    Returns:
+        None
+    """
+    page = _parse(_fixture().replace("media-user offline", "media-user is-offline"))
+    assert all(e.counterparty_online.presence is Presence.NOT_OBSERVED for e in page.rows())
+
+
+def test_unobserved_presence_is_not_a_defect() -> None:
+    """Проверяет, что присутствующий контрагент не считается повреждением.
+
+    Ненаблюдённость присутствия - граница наблюдений, а не поломка разметки.
+    Считать её повреждением значило бы помечать негодной каждую строку, где
+    контрагент на месте.
+
+    Returns:
+        None
+    """
+    page = _parse(_fixture().replace("media media-user offline", "media media-user"))
+    assert page.completeness is Completeness.COMPLETE
+    assert not [d for d in page.defects if d.field_name == "counterparty_online"]
+
+
+def test_counterparty_link_comes_from_the_user_cell() -> None:
+    """Проверяет, что ссылка на профиль берётся из ячейки контрагента.
+
+    Раньше брался первый ``[data-href]`` строки. В снимке их два, и оба ведут на
+    одного человека, поэтому ошибки не было видно. Появись такой атрибут в
+    описании лота - и контрагентом молча стал бы адрес товара.
+
+    Returns:
+        None
+    """
+    html = _fixture().replace(
+        '<div class="order-desc">',
+        '<div class="order-desc" data-href="ловушка">',
+        1,
+    )
+    page = _parse(html)
+    assert "ловушка" not in page.rows()[0].counterparty_href.value
+
+
+def test_missing_user_cell_is_still_a_defect() -> None:
+    """Проверяет, что пропажа ячейки контрагента остаётся заметной.
+
+    Смягчение вывода о присутствии не должно заодно скрыть настоящую поломку:
+    исчезнувшая ячейка - это изменение разметки, и о нём нужно узнать.
+
+    Returns:
+        None
+    """
+    page = _parse(_fixture().replace("tc-user", "tc-user-renamed"))
+    codes = {(d.field_name, d.code) for d in page.defects}
+    assert ("counterparty_href", "field_not_observed") in codes
+    assert ("counterparty_name", "field_not_observed") in codes

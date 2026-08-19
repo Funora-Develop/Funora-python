@@ -16,6 +16,12 @@
 класса строки нечем. Это сознательно неудобно и станет полнотой COMPLETE в тот
 день, когда снимок появится, - расширением наблюдений, а не догадкой.
 
+Присутствие контрагента читается в одну сторону. Отсутствие помечено классом
+offline, положительного маркера присутствия не наблюдалось, и вывод по
+отрицанию опирался бы на имя чужого класса: переименуй площадка его - и каждый
+контрагент молча стал бы присутствующим. Поэтому «не offline» даёт
+ненаблюдённое значение.
+
 Статус заказа не читается вовсе. Соответствия классов статусам не наблюдалось,
 и spec/extraction/orders.yaml прямо требует выдавать поле ненаблюдённым, а не
 значением unknown: второе означало бы, что статус прочитан и не опознан, тогда
@@ -208,6 +214,36 @@ def _carrier(node: Node | None) -> Observed[str]:
     return Observed.present(" ".join(classes)) if classes else Observed.empty("")
 
 
+def _presence(media: Node | None) -> Observed[bool]:
+    """Читает признак присутствия контрагента.
+
+    Присутствие выдаётся значением только в одну сторону. Площадка помечает
+    отсутствие классом ``offline``; положительного маркера присутствия не
+    наблюдалось ни в одном снимке. Вывод «раз не offline, значит online» опирался
+    бы на имя класса, которого мы не выбирали: стоило бы переименовать его в
+    ``is-offline``, и каждый контрагент молча стал бы присутствующим - без
+    повреждения, без исключения, без строки в журнале. Это ровно тот
+    правдоподобный неверный ответ, о неверности которого узнать неоткуда.
+
+    Поэтому отсутствие ``offline`` даёт ненаблюдённое значение, а не True.
+    Ограничение снимется снимком строки с присутствующим контрагентом.
+
+    Args:
+        media (Node | None): Узел карточки пользователя внутри ячейки
+            контрагента либо None, если селектор не нашёл её.
+
+    Returns:
+        Observed[bool]: False, если наблюдён маркер отсутствия; иначе
+        ненаблюдённое значение с указанием причины.
+    """
+    if media is None:
+        return Observed.missing("selector_no_match:counterparty_online")
+    classes = (media.attributes or {}).get("class") or ""
+    if "offline" in classes.split():
+        return Observed.present(False, Confidence.OBSERVED)
+    return Observed.missing("presence_positive_marker_not_observed")
+
+
 def _parse_row(row: Node, index: int) -> tuple[OrderListEntry | None, list[Defect]]:
     """Разбирает одну строку заказа.
 
@@ -238,13 +274,13 @@ def _parse_row(row: Node, index: int) -> tuple[OrderListEntry | None, list[Defec
         )
         return None, defects
 
-    user_link = row.css_first("[data-href]")
-    media = row.css_first(".media-user")
-    if media is None:
-        online: Observed[bool] = Observed.missing("selector_no_match:counterparty_online")
-    else:
-        classes = (media.attributes.get("class") or "").split()
-        online = Observed.present("offline" not in classes, Confidence.INFERRED)
+    # Селектор ссылки на профиль ограничен ячейкой контрагента. Раньше брался
+    # первый [data-href] строки; в снимке их два, и оба ведут на одного человека,
+    # поэтому ошибки не было видно. Появись data-href в описании лота - и первым
+    # оказался бы он, а контрагентом молча стал бы адрес товара.
+    user_link = row.css_first(".tc-user [data-href]")
+    media = row.css_first(".tc-user .media-user")
+    online = _presence(media)
 
     entry = OrderListEntry(
         order_id=match.group(1),
@@ -274,7 +310,10 @@ def _parse_row(row: Node, index: int) -> tuple[OrderListEntry | None, list[Defec
         "description_text",
         "counterparty_name",
         "counterparty_href",
-        "counterparty_online",
+        # counterparty_online сюда не входит по той же причине, что и статус:
+        # его ненаблюдённость - решение о границе наблюдений, а не поломка
+        # разметки. Считать её повреждением значило бы отмечать повреждением
+        # каждого присутствующего контрагента.
         "amount_text",
         "time_text",
     ):
