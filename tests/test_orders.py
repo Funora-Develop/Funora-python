@@ -55,6 +55,22 @@ def _parse(html: str | None = None):  # type: ignore[no-untyped-def]
     return parse_orders_page(html if html is not None else _fixture(), observed_at=WHEN)
 
 
+def _without_status_cells() -> str:
+    """Убирает ячейку статуса во всех строках снимка.
+
+    Убрать её только у части строк недостаточно: повреждение повышается до
+    уровня страницы лишь тогда, когда поле пропало везде, и порча половины
+    проверяла бы совсем другое правило.
+
+    Returns:
+        str: Разметка без единой ячейки статуса.
+    """
+    html = _fixture()
+    for carrier in ("text-primary", "text-success"):
+        html = html.replace('<div class="tc-status ' + carrier + '">', '<div class="tc-gone">')
+    return html
+
+
 def test_intact_page_is_complete() -> None:
     """Проверяет разбор неизменённой страницы.
 
@@ -64,11 +80,14 @@ def test_intact_page_is_complete() -> None:
     page = _parse()
     assert page.completeness is Completeness.COMPLETE
     assert page.reason == "all_rows_parsed"
-    assert page.rows_total == 3
-    assert page.rows_accepted == 3
+    # Числа не прибиваются: снимок пересматривается, и прибитое число ломается
+    # при каждой пересъёмке, ничего при этом не проверяя. Проверяются связи -
+    # принято столько же, сколько нашлось, и ни одна строка не отброшена.
+    assert page.rows_total == page.rows_accepted
     assert page.rows_rejected == 0
     assert not page.defects
-    assert len(page.rows()) == 3
+    assert len(page.rows()) == page.rows_total
+    assert page.rows_total >= 2, "снимок обязан содержать хотя бы две строки"
 
 
 def test_renamed_row_class_is_loud_not_empty() -> None:
@@ -83,8 +102,11 @@ def test_renamed_row_class_is_loud_not_empty() -> None:
     Returns:
         None
     """
-    broken = _fixture().replace('class="tc-item info"', 'class="tc-row info"')
-    assert 'class="tc-row info"' in broken, "порча не применилась, проверка бессмысленна"
+    # Заменяется именно tc-item, а не tc-item info: модификатор стоит не у всех
+    # строк, и порча половины оставила бы остальные на месте - проверка прошла
+    # бы, ничего не сломав.
+    broken = _fixture().replace('class="tc-item', 'class="tc-row')
+    assert "tc-item" not in broken, "порча не применилась, проверка бессмысленна"
 
     with pytest.raises(ProtocolChangedError) as exc:
         _parse(broken)
@@ -122,14 +144,13 @@ def test_incomplete_result_requires_acknowledgement() -> None:
     Returns:
         None
     """
-    broken = _fixture().replace('<div class="tc-status text-primary">', '<div class="tc-gone">')
-    page = _parse(broken)
+    page = _parse(_without_status_cells())
     assert page.completeness is Completeness.PARTIAL
 
     with pytest.raises(IncompleteResultError):
         page.rows()
 
-    assert len(page.rows(accept_incomplete=True)) == 3
+    assert len(page.rows(accept_incomplete=True)) == _parse().rows_total
 
 
 def test_field_missing_in_all_rows_is_page_level() -> None:
@@ -142,8 +163,7 @@ def test_field_missing_in_all_rows_is_page_level() -> None:
     Returns:
         None
     """
-    broken = _fixture().replace('<div class="tc-status text-primary">', '<div class="tc-gone">')
-    page = _parse(broken)
+    page = _parse(_without_status_cells())
 
     page_defects = [d for d in page.defects if d.severity is Severity.PAGE]
     assert any(d.code == "field_missing_in_all_rows" for d in page_defects)
@@ -161,9 +181,7 @@ def test_unmapped_carrier_is_not_unknown_status() -> None:
     Returns:
         None
     """
-    html = _fixture("orders-trade.states.logged.ru").replace(
-        "tc-status text-success", "tc-status text-danger"
-    )
+    html = _fixture().replace("tc-status text-success", "tc-status text-danger")
     entry = _parse(html).rows(accept_incomplete=True)[1]
 
     assert entry.status.presence is Presence.NOT_OBSERVED
@@ -187,7 +205,7 @@ def test_status_is_read_from_both_carriers() -> None:
     Returns:
         None
     """
-    page = _parse(_fixture("orders-trade.states.logged.ru"))
+    page = _parse(_fixture())
     assert page.completeness is Completeness.COMPLETE
     assert not page.defects
 
@@ -216,9 +234,7 @@ def test_disagreeing_carriers_are_loud() -> None:
     """
     # Модификатор строки снят у оплаченного заказа, ячейка не тронута. Так
     # выглядело бы переименование info в что-нибудь другое.
-    html = _fixture("orders-trade.states.logged.ru").replace(
-        '<a class="tc-item info"', '<a class="tc-item"', 1
-    )
+    html = _fixture().replace('<a class="tc-item info"', '<a class="tc-item"', 1)
     page = _parse(html)
 
     entry = page.rows(accept_incomplete=True)[0]
@@ -237,7 +253,7 @@ def test_renamed_status_class_does_not_change_the_answer_quietly() -> None:
     Returns:
         None
     """
-    html = _fixture("orders-trade.states.logged.ru").replace("text-primary", "text-blue")
+    html = _fixture().replace("text-primary", "text-blue")
     page = _parse(html)
 
     for entry in page.rows(accept_incomplete=True):
@@ -302,16 +318,17 @@ def test_row_without_href_is_rejected_page_survives() -> None:
         None
     """
     html = _fixture()
+    total = _parse(html).rows_total
     first = html.index('<a class="tc-item info" href=')
     end = html.index(">", first)
     broken = html[:first] + '<a class="tc-item info"' + html[end:]
 
     page = _parse(broken)
-    assert page.rows_accepted == 2
+    assert page.rows_accepted == total - 1
     assert page.rows_rejected == 1
     assert page.completeness is Completeness.PARTIAL
     assert any(d.code == "order_id_not_extractable" for d in page.defects)
-    assert len(page.rows(accept_incomplete=True)) == 2
+    assert len(page.rows(accept_incomplete=True)) == total - 1
 
 
 def test_counters_add_up() -> None:
@@ -355,9 +372,9 @@ def test_fields_are_scoped_to_the_row() -> None:
     Returns:
         None
     """
-    rows = _parse().rows()
-    amounts = [r.amount_text.or_none() for r in rows]
-    assert len(amounts) == 3
+    page = _parse()
+    amounts = [r.amount_text.or_none() for r in page.rows()]
+    assert len(amounts) == page.rows_total
     assert all(a is not None for a in amounts)
 
 
@@ -371,42 +388,35 @@ def test_page_length_is_available_without_acknowledgement() -> None:
     Returns:
         None
     """
-    broken = _fixture().replace('<div class="tc-status text-primary">', '<div class="tc-gone">')
-    page = _parse(broken)
+    page = _parse(_without_status_cells())
     assert page.completeness is not Completeness.COMPLETE
-    assert len(page) == 3
+    assert len(page) == _parse().rows_total
 
 
-def test_offline_marker_is_read_as_absence() -> None:
-    """Проверяет, что наблюдённый маркер отсутствия читается значением False.
+def test_presence_matches_the_markup_row_by_row() -> None:
+    """Проверяет, что присутствие читается из класса, а не откуда-нибудь ещё.
 
-    Returns:
-        None
-    """
-    entries = _parse().rows()
-    assert all(e.counterparty_online.value is False for e in entries)
-
-
-def test_presence_is_read_in_both_directions() -> None:
-    """Проверяет чтение присутствия на снимке, где есть оба класса.
-
-    Снимок сделан в момент, когда трое покупателей были в сети. До него
-    наблюдался только offline, и признак был односторонним.
+    Ожидание берётся из самой разметки, а не записывается списком: список
+    пришлось бы переписывать при каждой пересъёмке, и переписывался бы он под
+    то, что выдал разбор, - то есть проверка подгонялась бы под ответ.
 
     Returns:
         None
     """
-    page = _parse(_fixture("orders-trade.states.logged.ru"))
-    assert [e.counterparty_online.value for e in page.rows()] == [
-        False,
-        False,
-        False,
-        False,
-        False,
-        True,
-        True,
-        True,
-    ]
+    from selectolax.parser import HTMLParser
+
+    tree = HTMLParser(_fixture())
+    expected = []
+    for row in tree.css("a.tc-item"):
+        media = row.css_first(".tc-user .media-user")
+        classes = (media.attributes.get("class") or "").split() if media is not None else []
+        expected.append("online" in classes)
+
+    actual = [e.counterparty_online.value for e in _parse().rows()]
+    assert actual == expected
+    assert set(actual) == {True, False}, (
+        "в снимке нет обоих состояний, и проверка ничего не проверяет"
+    )
 
 
 def test_absent_marker_does_not_mean_online() -> None:
@@ -453,7 +463,15 @@ def test_renamed_offline_class_does_not_invent_presence() -> None:
     Returns:
         None
     """
-    page = _parse(_fixture().replace("media-user offline", "media-user is-offline"))
+    # Переименовываются оба класса: снимок содержит и тот и другой, и порча
+    # одного оставила бы вторую половину строк читаемой - проверка прошла бы,
+    # ничего не проверив.
+    renamed = (
+        _fixture()
+        .replace("media-user offline", "media-user is-offline")
+        .replace("media-user online", "media-user is-online")
+    )
+    page = _parse(renamed)
     assert all(e.counterparty_online.presence is Presence.NOT_OBSERVED for e in page.rows())
 
 
@@ -518,7 +536,7 @@ def test_cosmetic_class_does_not_break_status() -> None:
     Returns:
         None
     """
-    intact = _fixture("orders-trade.states.logged.ru")
+    intact = _fixture()
     for spoiled in (
         intact.replace('"tc-status text-primary"', '"tc-status text-primary hidden-xs"'),
         intact.replace('"tc-item info"', '"tc-item info hover"'),
@@ -539,7 +557,7 @@ def test_renamed_cell_class_is_loud_when_the_row_still_marks_it() -> None:
     Returns:
         None
     """
-    page = _parse(_fixture("orders-trade.states.logged.ru").replace("text-primary", "text-blue"))
+    page = _parse(_fixture().replace("text-primary", "text-blue"))
     assert page.completeness is Completeness.PARTIAL
     assert any(d.code == "status_carriers_disagree" for d in page.defects)
 
@@ -554,11 +572,7 @@ def test_a_new_state_is_quiet() -> None:
     Returns:
         None
     """
-    page = _parse(
-        _fixture("orders-trade.states.logged.ru").replace(
-            '"tc-status text-success"', '"tc-status text-danger"'
-        )
-    )
+    page = _parse(_fixture().replace('"tc-status text-success"', '"tc-status text-danger"'))
     assert page.completeness is Completeness.COMPLETE
     assert not page.defects
     unread = [e for e in page.rows() if not e.status.is_observed]
@@ -578,7 +592,7 @@ def test_no_readable_status_at_all_is_a_page_defect() -> None:
         None
     """
     all_closed = (
-        _fixture("orders-trade.states.logged.ru")
+        _fixture()
         .replace('"tc-item info"', '"tc-item"')
         .replace("text-primary", "text-success")
         .replace("text-success", "text-green")
@@ -598,7 +612,7 @@ def test_description_and_category_are_separate() -> None:
     Returns:
         None
     """
-    entry = _parse(_fixture("orders-trade.states.logged.ru")).rows()[0]
+    entry = _parse(_fixture()).rows()[0]
     assert entry.description_text.is_observed
     assert entry.category_text.is_observed
     assert entry.description_text.value != entry.category_text.value
@@ -615,7 +629,7 @@ def test_currency_symbol_and_time_ago_are_read() -> None:
     Returns:
         None
     """
-    page = _parse(_fixture("orders-trade.states.logged.ru"))
+    page = _parse(_fixture())
     for entry in page.rows():
         assert entry.currency_symbol_text.is_observed
         assert entry.time_ago_text.is_observed
@@ -634,7 +648,7 @@ def test_blank_attribute_is_empty_not_a_link() -> None:
     """
     import re as _re
 
-    blank = _re.sub(r'data-href="[^"]*"', 'data-href=""', _fixture("orders-trade.states.logged.ru"))
+    blank = _re.sub(r'data-href="[^"]*"', 'data-href=""', _fixture())
     entry = _parse(blank).rows(accept_incomplete=True)[0]
     assert entry.counterparty_href.presence is Presence.EMPTY
     assert entry.counterparty_href.presence is not Presence.PRESENT

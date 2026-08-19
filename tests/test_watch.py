@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -352,6 +353,29 @@ def test_second_pass_without_changes_is_silent(no_sleep: list[float]) -> None:
     assert transport.calls == 4
 
 
+def _renamed_first_order(html: str) -> str:
+    """Меняет идентификатор первого заказа на заведомо новый.
+
+    Для наблюдения это неотличимо от появления заказа: в курсоре такого
+    идентификатора нет. Именно так и проверяется весь путь события - от разбора
+    до обработчика.
+
+    Идентификатор ищется в разметке, а не пишется здесь: формат снимка нумерует
+    их, и записанное руками значение разъезжается с ним молча - подстановка
+    тогда не срабатывает, событие не возникает, и проверка падает не там, где
+    сломалось.
+
+    Args:
+        html (str): Разметка снимка списка заказов.
+
+    Returns:
+        str: Та же разметка с переименованным первым заказом.
+    """
+    found = re.search(r'href="https://funpay\.com/orders/([^/"]+)/"', html)
+    assert found is not None, "в снимке не нашлось ни одной ссылки на заказ"
+    return html.replace(found.group(0), 'href="https://funpay.com/orders/777/"', 1)
+
+
 def test_new_order_reaches_the_handler(no_sleep: list[float]) -> None:
     """Проверяет сквозной путь события до обработчика.
 
@@ -363,11 +387,7 @@ def test_new_order_reaches_the_handler(no_sleep: list[float]) -> None:
     """
     orders = _page("orders-trade.logged.ru")
     chats = _page("chat.logged.ru")
-    grown = orders.replace(
-        'href="https://funpay.com/orders/{n}/"',
-        'href="https://funpay.com/orders/777/"',
-        1,
-    )
+    grown = _renamed_first_order(orders)
 
     router = Router()
     seen: list[str] = []
@@ -396,11 +416,7 @@ def test_failed_handler_makes_the_event_come_again(no_sleep: list[float]) -> Non
     """
     orders = _page("orders-trade.logged.ru")
     chats = _page("chat.logged.ru")
-    grown = orders.replace(
-        'href="https://funpay.com/orders/{n}/"',
-        'href="https://funpay.com/orders/777/"',
-        1,
-    )
+    grown = _renamed_first_order(orders)
 
     router = Router()
     attempts: list[str] = []
@@ -450,11 +466,7 @@ def test_watch_survives_a_restart(no_sleep: list[float], tmp_path: Path) -> None
     """
     orders = _page("orders-trade.logged.ru")
     chats = _page("chat.logged.ru")
-    grown = orders.replace(
-        'href="https://funpay.com/orders/{n}/"',
-        'href="https://funpay.com/orders/777/"',
-        1,
-    )
+    grown = _renamed_first_order(orders)
     state_path = tmp_path / "state.json"
 
     seen: list[str] = []
@@ -506,21 +518,32 @@ def test_watch_refuses_foreign_state(no_sleep: list[float], tmp_path: Path) -> N
 def _orders_with(ids: list[str]) -> str:
     """Готовит страницу заказов с заданными идентификаторами.
 
-    В снимке все заказы несут один и тот же замаскированный идентификатор.
-    Без разведения любая проверка на появление нового заказа проходит по
-    случайной причине и ничего не проверяет.
+    Формат снимка нумерует идентификаторы, и заказы в нём уже различимы. Замена
+    нужна не ради этого, а ради управляемости: проверке нужно знать заранее,
+    какой заказ она объявит новым, а нумерация зависит от порядка обхода и от
+    состава страницы.
+
+    Заменяются ровно первые len(ids) строк; остальные остаются как были.
 
     Args:
         ids (list[str]): Идентификаторы, по одному на строку снимка.
 
     Returns:
         str: Разметка страницы.
+
+    Raises:
+        AssertionError: Если строк в снимке меньше, чем запрошено.
     """
     page = _page("orders-trade.logged.ru")
     for number in ids:
+        # Поиск привязан к классу строки. Без привязки первым совпадением
+        # оказывалась ссылка меню на /orders/trade, и заменялась она, а не
+        # заказ: проверка проходила, ничего не подставив.
+        found = re.search(r'class="tc-item[^"]*" href="[^"]*/orders/(?!\d+/")[^"]+"', page)
+        assert found is not None, "в снимке кончились незаменённые строки"
         page = page.replace(
-            'href="https://funpay.com/orders/{n}/"',
-            f'href="https://funpay.com/orders/{number}/"',
+            found.group(0),
+            found.group(0).split(" href=")[0] + f' href="https://funpay.com/orders/{number}/"',
             1,
         )
     return page

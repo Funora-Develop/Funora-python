@@ -1,65 +1,64 @@
-<html lang="T2:a">
+<html lang="T2:a#1">
   <head>
-    <meta charset="T5:adp"/>
+    <meta charset="T5:adp#1"/>
     <title>
       T12:acps
     </title>
-    <link href="https://funpay.com/{n}/css/main.css" media="T3:a" rel="T10:a"/>
-    <script></script>
-    <meta content="T35:adps" name="T8:a"/>
-    <link href="https://funpay.com/chat/" hreflang="T2:a" rel="T9:a"/>
-    <link href="https://funpay.com/chat/" hreflang="T2:a" rel="T9:a"/>
-    <link href="https://funpay.com/en/chat/" hreflang="T2:a" rel="T9:a"/>
-    <link href="https://funpay.com/en/chat/" hreflang="T9:ap" rel="T9:a"/>
-    <script></script>
-    <link as="T4:a" crossorigin href="/{n}/fonts/{n}" rel="T7:a" type="T10:adp"/>
-    <link as="T4:a" crossorigin href="/{n}/fonts/{n}" rel="T7:a" type="T10:adp"/>
-    <link href="/manifest.json" rel="T8:a"/>
+    <link href="https://funpay.com/{n1}/css/main.css" media="T3:a#1" rel="T10:a#1"/>
+    <script src="https://funpay.com/{n2}/js/app.bundle.js"></script>
+    <meta content="T35:adps#1" name="T8:a#1"/>
+    <link href="https://funpay.com/chat/" hreflang="T2:a#1" rel="T9:a#2"/>
+    <link href="https://funpay.com/chat/" hreflang="T2:a#2" rel="T9:a#2"/>
+    <link href="https://funpay.com/en/chat/" hreflang="T2:a#3" rel="T9:a#2"/>
+    <link href="https://funpay.com/en/chat/" hreflang="T9:ap#4" rel="T9:a#2"/>
+    <script type="T19:ap#1"></script>
+    <link as="T4:a#1" crossorigin href="/{n1}/fonts/{n3}" rel="T7:a#3" type="T10:adp#2"/>
+    <link as="T4:a#1" crossorigin href="/{n1}/fonts/{n4}" rel="T7:a#3" type="T10:adp#2"/>
+    <link href="/manifest.json" rel="T8:a#4"/>
   </head>
-  <body class="bg-light-color" data-app-data="T151:adp">
+  <body class="bg-light-color" data-app-data="T151:adp#1">
     <script></script>
-    <script></script>
-    <noscript></noscript>
+    <script type="T15:ap#3"></script>
     <div class="wrapper">
       <div class="wrapper-content">
-        <header id="T6:a">
+        <header id="T6:a#1">
           <div class="container">
-            <div id="T13:ap"></div>
+            <div id="T13:ap#2"></div>
             <nav class="navbar navbar-default">
               <div class="hide-navbar"></div>
               <div class="container-fluid">
                 <div class="navbar-header">
-                  <button aria-expanded="T5:a" class="collapsed navbar-toggle navbar-toggle-logged" data-target="T7:ap" data-toggle="T8:a" type="T6:a">
+                  <button aria-expanded="T5:a#1" class="collapsed navbar-toggle navbar-toggle-logged" data-target="T7:ap#1" data-toggle="T8:a#1" type="T6:a#4">
                     <span class="user-link-photo">
                       <img alt src="https://sfunpay.com/{t}/{t}/{t}/{t}/{t}"/>
                     </span>
                     <span class="caret"></span>
                   </button>
                   <a class="navbar-xs-icon icon-chat" href="https://funpay.com/chat/">
-                    <svg viewBox="T9:ds">
-                      <circle cx="T2:d" cy="T2:d" r="T2:d"></circle>
-                      <polygon points="T19:dps"></polygon>
+                    <svg viewBox="T9:ds#1">
+                      <circle cx="T2:d#1" cy="T2:d#1" r="T2:d#1"></circle>
+                      <polygon points="T19:dps#1"></polygon>
                     </svg>
                     <span></span>
                   </a>
                   <a class="navbar-brand" href="https://funpay.com/">
-                    <img alt="T6:a" class="logo-color" src="/img/layout/logo-funpay.svg"/>
+                    <img alt="T6:a#1" class="logo-color" src="/img/layout/logo-funpay.svg"/>
                   </a>
-                  <form action="https://funpay.com/games/promoFilter" class="navbar-form navbar-left dropdown promo-games-filter" method="T4:a">
+                  <form action="https://funpay.com/games/promoFilter" class="navbar-form navbar-left dropdown promo-games-filter" method="T4:a#1">
                     <div class="form-group">
-                      <input autocomplete="T3:a" class="form-control dropdown-toggle" data-toggle="T8:a" name="T5:a" placeholder="T18:cds" role="T9:a" type="T4:a"/>
+                      <input autocomplete="T3:a#1" class="form-control dropdown-toggle" data-toggle="T8:a#2" name="T5:a#2" placeholder="T18:cds#1" role="T9:a#1" type="T4:a#5"/>
                       <div class="dropdown-menu dropdown-autocomplete hidden"></div>
                     </div>
-                    <button class="btn btn-link" type="T6:a">
+                    <button class="btn btn-link" type="T6:a#6">
                       <i class="fa fa-search"></i>
                     </button>
                   </form>
                 </div>
                 <div class="nav-container">
-                  <div class="collapse navbar-collapse no-transition" id="T6:a">
+                  <div class="collapse navbar-collapse no-transition" id="T6:a#3">
                     <ul class="nav navbar-nav">
                       <li class="visible-xs visible-sm">
-                        <a class="user-link-dropdown" href="https://funpay.com/users/{n}/">
+                        <a class="user-link-dropdown" href="https://funpay.com/users/{n5}/">
                           <div class="user-link-name">
                             T8:a
                           </div>
@@ -69,7 +68,7 @@
                         </a>
                       </li>
                       <li class="dropdown">
-                        <a aria-expanded="T5:a" aria-haspopup="T4:a" class="menu-item-info dropdown-toggle" data-toggle="T8:a" href="https://funpay.com/" role="T6:a">
+                        <a aria-expanded="T5:a#1" aria-haspopup="T4:a#1" class="menu-item-info dropdown-toggle" data-toggle="T8:a#2" href="https://funpay.com/" role="T6:a#2">
                           T6:c
                           <span class="caret"></span>
                         </a>
@@ -80,17 +79,17 @@
                             </a>
                           </li>
                           <li>
-                            <a class="menu-item-support" href="https://support.funpay.com/" target="T6:ap">
+                            <a class="menu-item-support" href="https://support.funpay.com/" target="T6:ap#1">
                               T12:cs
                             </a>
                           </li>
                           <li>
-                            <a class="menu-item-request" href="https://support.funpay.com/tickets/new" target="T6:ap">
+                            <a class="menu-item-request" href="https://support.funpay.com/tickets/new" target="T6:ap#1">
                               T16:cs
                             </a>
                           </li>
                           <li>
-                            <a class="menu-item-requests" href="https://support.funpay.com/tickets" target="T6:ap">
+                            <a class="menu-item-requests" href="https://support.funpay.com/tickets" target="T6:ap#1">
                               T11:cs
                             </a>
                           </li>
@@ -130,10 +129,13 @@
                       <li>
                         <a class="menu-item-balance" href="https://funpay.com/account/balance">
                           T7:c
+                          <span class="badge badge-balance">
+                            T3:dos
+                          </span>
                         </a>
                       </li>
                       <li class="dropdown hidden-sm hidden-xs">
-                        <a aria-expanded="T5:a" aria-haspopup="T4:a" class="dropdown-toggle user-link" data-toggle="T8:a" href="{n}" role="T6:a">
+                        <a aria-expanded="T5:a#1" aria-haspopup="T4:a#1" class="dropdown-toggle user-link" data-toggle="T8:a#2" href="{n6}" role="T6:a#2">
                           <div class="user-link-photo">
                             <img alt src="https://sfunpay.com/{t}/{t}/{t}/{t}/{t}"/>
                           </div>
@@ -141,7 +143,7 @@
                         </a>
                         <ul class="dropdown-menu">
                           <li>
-                            <a class="user-link-dropdown" href="https://funpay.com/users/{n}/">
+                            <a class="user-link-dropdown" href="https://funpay.com/users/{n5}/">
                               <div class="user-link-name">
                                 T8:a
                               </div>
@@ -156,14 +158,14 @@
                             </a>
                           </li>
                           <li class="dropdown">
-                            <a class="dropdown-toggle menu-item-langs" data-toggle="T8:a" href="{n}">
+                            <a class="dropdown-toggle menu-item-langs" data-toggle="T8:a#2" href="{n6}">
                               T9:cp
                               <i class="menu-icon menu-icon-lang-ru"></i>
                               <span class="caret"></span>
                             </a>
                             <ul class="dropdown-menu">
                               <li>
-                                <a class="menu-item-lang" href="https://funpay.com/chat/?{q}">
+                                <a class="menu-item-lang" href="https://funpay.com/chat/?{q1}">
                                   T7:a
                                   <i class="menu-icon menu-icon-lang-en"></i>
                                 </a>
@@ -171,25 +173,25 @@
                             </ul>
                           </li>
                           <li class="dropdown">
-                            <a class="dropdown-toggle menu-item-currencies" data-toggle="T8:a" href="{n}">
+                            <a class="dropdown-toggle menu-item-currencies" data-toggle="T8:a#2" href="{n6}">
                               T5:c
                               <span class="caret"></span>
                             </a>
                             <ul class="dropdown-menu">
                               <li>
-                                <a class="user-cy-switcher menu-item-currency" data-cy="T3:a" href="{n}">
+                                <a class="user-cy-switcher menu-item-currency" data-cy="T3:a#1" href="{n6}">
                                   T7:c
                                 </a>
                               </li>
                               <li>
-                                <a class="user-cy-switcher menu-item-currency" data-cy="T3:a" href="{n}">
+                                <a class="user-cy-switcher menu-item-currency" data-cy="T3:a#2" href="{n6}">
                                   T4:c
                                 </a>
                               </li>
                             </ul>
                           </li>
                           <li>
-                            <a class="menu-item-logout" href="https://funpay.com/account/logout?{q}">
+                            <a class="menu-item-logout" href="https://funpay.com/account/logout?{q2}">
                               T5:c
                             </a>
                           </li>
@@ -201,14 +203,14 @@
                         </a>
                       </li>
                       <li class="visible-xs visible-sm dropdown">
-                        <a class="dropdown-toggle menu-item-langs" data-toggle="T8:a" href="{n}">
+                        <a class="dropdown-toggle menu-item-langs" data-toggle="T8:a#2" href="{n6}">
                           T9:cp
                           <i class="menu-icon menu-icon-lang-ru"></i>
                           <span class="caret"></span>
                         </a>
                         <ul class="dropdown-menu">
                           <li>
-                            <a class="menu-item-lang" href="https://funpay.com/chat/?{q}">
+                            <a class="menu-item-lang" href="https://funpay.com/chat/?{q1}">
                               T7:a
                               <i class="menu-icon menu-icon-lang-en"></i>
                             </a>
@@ -216,25 +218,25 @@
                         </ul>
                       </li>
                       <li class="visible-xs visible-sm dropdown">
-                        <a class="dropdown-toggle menu-item-currencies" data-toggle="T8:a" href="{n}">
+                        <a class="dropdown-toggle menu-item-currencies" data-toggle="T8:a#2" href="{n6}">
                           T5:c
                           <span class="caret"></span>
                         </a>
                         <ul class="dropdown-menu">
                           <li>
-                            <a class="user-cy-switcher menu-item-currency" data-cy="T3:a" href="{n}">
+                            <a class="user-cy-switcher menu-item-currency" data-cy="T3:a#1" href="{n6}">
                               T7:c
                             </a>
                           </li>
                           <li>
-                            <a class="user-cy-switcher menu-item-currency" data-cy="T3:a" href="{n}">
+                            <a class="user-cy-switcher menu-item-currency" data-cy="T3:a#2" href="{n6}">
                               T4:c
                             </a>
                           </li>
                         </ul>
                       </li>
                       <li class="visible-xs visible-sm">
-                        <a class="menu-item-logout" href="https://funpay.com/account/logout?{q}">
+                        <a class="menu-item-logout" href="https://funpay.com/account/logout?{q2}">
                           T5:c
                         </a>
                       </li>
@@ -243,20 +245,20 @@
                 </div>
               </div>
             </nav>
-            <div class="hidden" data-message="T1:d" id="T17:ap">
+            <div class="hidden" data-message="T1:d#1" id="T17:ap#4">
               <audio class="loud">
-                <source src="/audio/{n}" type="T10:ap"/>
+                <source src="/audio/{n7}" type="T10:ap#7"/>
               </audio>
               <audio class="quiet">
-                <source src="/audio/{n}" type="T10:ap"/>
+                <source src="/audio/{n8}" type="T10:ap#7"/>
               </audio>
             </div>
-            <div class="hidden" data-chat data-orders="T8:ad" id="T13:ap"></div>
+            <div class="hidden" data-chat data-orders="T8:ad#1" id="T13:ap#5"></div>
           </div>
         </header>
-        <section id="T12:ap">
+        <section id="T12:ap#6">
           <div class="search-fade"></div>
-          <div class="content-chat content-chat-index" id="T7:a">
+          <div class="content-chat content-chat-index" id="T7:a#7">
             <div class="chat-full-container">
               <div class="container">
                 <div class="chat-full chat-bookmarks-nonempty">
@@ -267,40 +269,26 @@
                       </h1>
                     </div>
                     <div class="contact-list custom-scroll">
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#1" data-node-msg="T10:d#1" data-user-msg="T10:d#1" href="https://funpay.com/chat/?{q3}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T46:aps#1"></div>
                         </div>
                         <div class="media-user-name">
-                          T5:ad
+                          T7:ad
                         </div>
                         <div class="contact-item-message">
-                          T56:cops
+                          T60:cops
                         </div>
                         <div class="contact-item-time">
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#2" data-node-msg="T10:d#2" data-user-msg="T10:d#2" href="https://funpay.com/chat/?{q4}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T46:aps"></div>
+                          <div class="avatar-photo" style="T83:adps#2"></div>
                         </div>
                         <div class="media-user-name">
                           T7:a
-                        </div>
-                        <div class="contact-item-message">
-                          T136:acdops
-                        </div>
-                        <div class="contact-item-time">
-                          T5:dp
-                        </div>
-                      </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
-                        <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T46:aps"></div>
-                        </div>
-                        <div class="media-user-name">
-                          T13:ad
                         </div>
                         <div class="contact-item-message">
                           T249:acops
@@ -309,23 +297,135 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#3" data-node-msg="T10:d#3" data-user-msg="T10:d#3" href="https://funpay.com/chat/?{q5}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T46:aps"></div>
+                          <div class="avatar-photo" style="T46:aps#1"></div>
                         </div>
                         <div class="media-user-name">
-                          T8:ad
+                          T9:ad
                         </div>
                         <div class="contact-item-message">
-                          T24:cs
+                          T1:p
                         </div>
                         <div class="contact-item-time">
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#4" data-node-msg="T10:d#4" data-user-msg="T10:d#4" href="https://funpay.com/chat/?{q6}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T46:aps"></div>
+                          <div class="avatar-photo" style="T83:adps#3"></div>
+                        </div>
+                        <div class="media-user-name">
+                          T13:ad
+                        </div>
+                        <div class="contact-item-message">
+                          T1:o
+                        </div>
+                        <div class="contact-item-time">
+                          T5:dp
+                        </div>
+                      </a>
+                      <a class="contact-item" data-id="T9:d#5" data-node-msg="T10:d#5" data-user-msg="T10:d#5" href="https://funpay.com/chat/?{q7}">
+                        <div class="contact-item-photo">
+                          <div class="avatar-photo" style="T83:adps#4"></div>
+                        </div>
+                        <div class="media-user-name">
+                          T7:a
+                        </div>
+                        <div class="contact-item-message">
+                          T249:acops
+                        </div>
+                        <div class="contact-item-time">
+                          T5:dp
+                        </div>
+                      </a>
+                      <a class="contact-item" data-id="T9:d#6" data-node-msg="T10:d#6" data-user-msg="T10:d#6" href="https://funpay.com/chat/?{q8}">
+                        <div class="contact-item-photo">
+                          <div class="avatar-photo" style="T83:adps#5"></div>
+                        </div>
+                        <div class="media-user-name">
+                          T10:ad
+                        </div>
+                        <div class="contact-item-message">
+                          T20:cops
+                        </div>
+                        <div class="contact-item-time">
+                          T5:dp
+                        </div>
+                      </a>
+                      <a class="contact-item" data-id="T9:d#7" data-node-msg="T10:d#7" data-user-msg="T10:d#7" href="https://funpay.com/chat/?{q9}">
+                        <div class="contact-item-photo">
+                          <div class="avatar-photo" style="T46:aps#1"></div>
+                        </div>
+                        <div class="media-user-name">
+                          T8:ad
+                        </div>
+                        <div class="contact-item-message">
+                          T36:cs
+                        </div>
+                        <div class="contact-item-time">
+                          T5:c
+                        </div>
+                      </a>
+                      <a class="contact-item" data-id="T9:d#8" data-node-msg="T10:d#8" data-user-msg="T10:d#8" href="https://funpay.com/chat/?{q10}">
+                        <div class="contact-item-photo">
+                          <div class="avatar-photo" style="T46:aps#1"></div>
+                        </div>
+                        <div class="media-user-name">
+                          T13:ad
+                        </div>
+                        <div class="contact-item-message">
+                          T10:cp
+                        </div>
+                        <div class="contact-item-time">
+                          T5:c
+                        </div>
+                      </a>
+                      <a class="contact-item" data-id="T9:d#9" data-node-msg="T10:d#9" data-user-msg="T10:d#9" href="https://funpay.com/chat/?{q11}">
+                        <div class="contact-item-photo">
+                          <div class="avatar-photo" style="T46:aps#1"></div>
+                        </div>
+                        <div class="media-user-name">
+                          T8:ad
+                        </div>
+                        <div class="contact-item-message">
+                          T53:acdps
+                        </div>
+                        <div class="contact-item-time">
+                          T5:c
+                        </div>
+                      </a>
+                      <a class="contact-item" data-id="T9:d#10" data-node-msg="T10:d#10" data-user-msg="T10:d#10" href="https://funpay.com/chat/?{q12}">
+                        <div class="contact-item-photo">
+                          <div class="avatar-photo" style="T83:adps#6"></div>
+                        </div>
+                        <div class="media-user-name">
+                          T5:ad
+                        </div>
+                        <div class="contact-item-message">
+                          T56:cops
+                        </div>
+                        <div class="contact-item-time">
+                          T5:c
+                        </div>
+                      </a>
+                      <a class="contact-item" data-id="T9:d#11" data-node-msg="T10:d#11" data-user-msg="T10:d#11" href="https://funpay.com/chat/?{q13}">
+                        <div class="contact-item-photo">
+                          <div class="avatar-photo" style="T46:aps#1"></div>
+                        </div>
+                        <div class="media-user-name">
+                          T7:a
+                        </div>
+                        <div class="contact-item-message">
+                          T17:cps
+                        </div>
+                        <div class="contact-item-time">
+                          T5:c
+                        </div>
+                      </a>
+                      <a class="contact-item" data-id="T9:d#12" data-node-msg="T10:d#12" data-user-msg="T10:d#12" href="https://funpay.com/chat/?{q14}">
+                        <div class="contact-item-photo">
+                          <div class="avatar-photo" style="T46:aps#1"></div>
                         </div>
                         <div class="media-user-name">
                           T6:a
@@ -337,9 +437,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#13" data-node-msg="T10:d#13" data-user-msg="T10:d#13" href="https://funpay.com/chat/?{q15}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#7"></div>
                         </div>
                         <div class="media-user-name">
                           T6:a
@@ -351,9 +451,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#14" data-node-msg="T10:d#14" data-user-msg="T10:d#14" href="https://funpay.com/chat/?{q16}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#8"></div>
                         </div>
                         <div class="media-user-name">
                           T7:ad
@@ -365,9 +465,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#15" data-node-msg="T10:d#15" data-user-msg="T10:d#15" href="https://funpay.com/chat/?{q17}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#9"></div>
                         </div>
                         <div class="media-user-name">
                           T10:a
@@ -379,9 +479,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#16" data-node-msg="T10:d#16" data-user-msg="T10:d#16" href="https://funpay.com/chat/?{q18}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#10"></div>
                         </div>
                         <div class="media-user-name">
                           T7:a
@@ -393,9 +493,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#17" data-node-msg="T10:d#17" data-user-msg="T10:d#17" href="https://funpay.com/chat/?{q19}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#11"></div>
                         </div>
                         <div class="media-user-name">
                           T10:ad
@@ -407,9 +507,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#18" data-node-msg="T10:d#18" data-user-msg="T10:d#18" href="https://funpay.com/chat/?{q20}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#12"></div>
                         </div>
                         <div class="media-user-name">
                           T9:a
@@ -421,9 +521,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#19" data-node-msg="T10:d#19" data-user-msg="T10:d#19" href="https://funpay.com/chat/?{q21}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#13"></div>
                         </div>
                         <div class="media-user-name">
                           T8:a
@@ -435,9 +535,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#20" data-node-msg="T10:d#20" data-user-msg="T10:d#20" href="https://funpay.com/chat/?{q22}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#14"></div>
                         </div>
                         <div class="media-user-name">
                           T8:ad
@@ -449,9 +549,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#21" data-node-msg="T10:d#21" data-user-msg="T10:d#21" href="https://funpay.com/chat/?{q23}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#15"></div>
                         </div>
                         <div class="media-user-name">
                           T7:a
@@ -463,9 +563,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#22" data-node-msg="T10:d#22" data-user-msg="T10:d#22" href="https://funpay.com/chat/?{q24}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#16"></div>
                         </div>
                         <div class="media-user-name">
                           T6:a
@@ -477,9 +577,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#23" data-node-msg="T10:d#23" data-user-msg="T10:d#23" href="https://funpay.com/chat/?{q25}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#17"></div>
                         </div>
                         <div class="media-user-name">
                           T8:a
@@ -491,9 +591,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#24" data-node-msg="T10:d#24" data-user-msg="T10:d#24" href="https://funpay.com/chat/?{q26}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#18"></div>
                         </div>
                         <div class="media-user-name">
                           T13:a
@@ -505,9 +605,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#25" data-node-msg="T10:d#25" data-user-msg="T10:d#25" href="https://funpay.com/chat/?{q27}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#19"></div>
                         </div>
                         <div class="media-user-name">
                           T7:a
@@ -519,9 +619,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#26" data-node-msg="T10:d#26" data-user-msg="T10:d#26" href="https://funpay.com/chat/?{q28}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#20"></div>
                         </div>
                         <div class="media-user-name">
                           T6:a
@@ -533,9 +633,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#27" data-node-msg="T10:d#27" data-user-msg="T10:d#27" href="https://funpay.com/chat/?{q29}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#21"></div>
                         </div>
                         <div class="media-user-name">
                           T9:a
@@ -547,9 +647,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#28" data-node-msg="T10:d#28" data-user-msg="T10:d#28" href="https://funpay.com/chat/?{q30}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#22"></div>
                         </div>
                         <div class="media-user-name">
                           T5:a
@@ -561,9 +661,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#29" data-node-msg="T10:d#29" data-user-msg="T10:d#29" href="https://funpay.com/chat/?{q31}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#23"></div>
                         </div>
                         <div class="media-user-name">
                           T9:ad
@@ -575,9 +675,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#30" data-node-msg="T10:d#30" data-user-msg="T10:d#30" href="https://funpay.com/chat/?{q32}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#24"></div>
                         </div>
                         <div class="media-user-name">
                           T8:ad
@@ -589,9 +689,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#31" data-node-msg="T10:d#31" data-user-msg="T10:d#31" href="https://funpay.com/chat/?{q33}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#25"></div>
                         </div>
                         <div class="media-user-name">
                           T13:ad
@@ -603,9 +703,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#32" data-node-msg="T10:d#32" data-user-msg="T10:d#32" href="https://funpay.com/chat/?{q34}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#26"></div>
                         </div>
                         <div class="media-user-name">
                           T6:a
@@ -617,9 +717,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#33" data-node-msg="T10:d#33" data-user-msg="T10:d#33" href="https://funpay.com/chat/?{q35}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#27"></div>
                         </div>
                         <div class="media-user-name">
                           T13:ad
@@ -631,9 +731,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#34" data-node-msg="T10:d#34" data-user-msg="T10:d#34" href="https://funpay.com/chat/?{q36}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#28"></div>
                         </div>
                         <div class="media-user-name">
                           T7:a
@@ -645,9 +745,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#35" data-node-msg="T10:d#35" data-user-msg="T10:d#35" href="https://funpay.com/chat/?{q37}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#29"></div>
                         </div>
                         <div class="media-user-name">
                           T8:a
@@ -659,9 +759,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#36" data-node-msg="T10:d#36" data-user-msg="T10:d#36" href="https://funpay.com/chat/?{q38}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#30"></div>
                         </div>
                         <div class="media-user-name">
                           T11:ad
@@ -673,9 +773,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#37" data-node-msg="T10:d#37" data-user-msg="T10:d#37" href="https://funpay.com/chat/?{q39}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#31"></div>
                         </div>
                         <div class="media-user-name">
                           T8:a
@@ -687,9 +787,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#38" data-node-msg="T10:d#38" data-user-msg="T10:d#38" href="https://funpay.com/chat/?{q40}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#32"></div>
                         </div>
                         <div class="media-user-name">
                           T10:a
@@ -701,9 +801,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#39" data-node-msg="T10:d#39" data-user-msg="T10:d#39" href="https://funpay.com/chat/?{q41}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#33"></div>
                         </div>
                         <div class="media-user-name">
                           T8:ad
@@ -715,9 +815,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#40" data-node-msg="T10:d#40" data-user-msg="T10:d#40" href="https://funpay.com/chat/?{q42}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#34"></div>
                         </div>
                         <div class="media-user-name">
                           T12:a
@@ -729,9 +829,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#41" data-node-msg="T10:d#41" data-user-msg="T10:d#41" href="https://funpay.com/chat/?{q43}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#35"></div>
                         </div>
                         <div class="media-user-name">
                           T7:ad
@@ -743,9 +843,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#42" data-node-msg="T10:d#42" data-user-msg="T10:d#42" href="https://funpay.com/chat/?{q44}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#36"></div>
                         </div>
                         <div class="media-user-name">
                           T6:ad
@@ -757,9 +857,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#43" data-node-msg="T10:d#43" data-user-msg="T10:d#43" href="https://funpay.com/chat/?{q45}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#37"></div>
                         </div>
                         <div class="media-user-name">
                           T10:a
@@ -771,9 +871,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#44" data-node-msg="T10:d#44" data-user-msg="T10:d#44" href="https://funpay.com/chat/?{q46}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#38"></div>
                         </div>
                         <div class="media-user-name">
                           T10:a
@@ -785,9 +885,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#45" data-node-msg="T10:d#45" data-user-msg="T10:d#45" href="https://funpay.com/chat/?{q47}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#39"></div>
                         </div>
                         <div class="media-user-name">
                           T11:a
@@ -799,9 +899,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#46" data-node-msg="T10:d#46" data-user-msg="T10:d#46" href="https://funpay.com/chat/?{q48}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#40"></div>
                         </div>
                         <div class="media-user-name">
                           T6:a
@@ -813,9 +913,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#47" data-node-msg="T10:d#47" data-user-msg="T10:d#47" href="https://funpay.com/chat/?{q49}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#41"></div>
                         </div>
                         <div class="media-user-name">
                           T11:a
@@ -827,9 +927,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#48" data-node-msg="T10:d#48" data-user-msg="T10:d#48" href="https://funpay.com/chat/?{q50}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#42"></div>
                         </div>
                         <div class="media-user-name">
                           T7:ad
@@ -841,9 +941,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#49" data-node-msg="T10:d#49" data-user-msg="T10:d#49" href="https://funpay.com/chat/?{q51}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#43"></div>
                         </div>
                         <div class="media-user-name">
                           T10:a
@@ -855,9 +955,9 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
+                      <a class="contact-item" data-id="T9:d#50" data-node-msg="T10:d#50" data-user-msg="T10:d#50" href="https://funpay.com/chat/?{q52}">
                         <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
+                          <div class="avatar-photo" style="T83:adps#44"></div>
                         </div>
                         <div class="media-user-name">
                           T10:a
@@ -869,66 +969,10 @@
                           T5:dp
                         </div>
                       </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
-                        <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
-                        </div>
-                        <div class="media-user-name">
-                          T13:a
-                        </div>
-                        <div class="contact-item-message">
-                          T10:cps
-                        </div>
-                        <div class="contact-item-time">
-                          T5:dp
-                        </div>
-                      </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
-                        <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
-                        </div>
-                        <div class="media-user-name">
-                          T10:a
-                        </div>
-                        <div class="contact-item-message">
-                          T12:cs
-                        </div>
-                        <div class="contact-item-time">
-                          T5:dp
-                        </div>
-                      </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
-                        <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
-                        </div>
-                        <div class="media-user-name">
-                          T8:ad
-                        </div>
-                        <div class="contact-item-message">
-                          T21:cds
-                        </div>
-                        <div class="contact-item-time">
-                          T5:dp
-                        </div>
-                      </a>
-                      <a class="contact-item" data-id="T9:d" data-node-msg="T10:d" data-user-msg="T10:d" href="https://funpay.com/chat/?{q}">
-                        <div class="contact-item-photo">
-                          <div class="avatar-photo" style="T83:adps"></div>
-                        </div>
-                        <div class="media-user-name">
-                          T11:ad
-                        </div>
-                        <div class="contact-item-message">
-                          T11:cds
-                        </div>
-                        <div class="contact-item-time">
-                          T5:dp
-                        </div>
-                      </a>
                     </div>
                   </div>
                   <div class="js-chat-top"></div>
-                  <div class="chat chat-float chat-not-selected" data-bookmarks-tag="T8:ad" data-user="T8:d">
+                  <div class="chat chat-float chat-not-selected" data-bookmarks-tag="T8:ad#1" data-user="T8:d#1">
                     <div class="chat-header">
                       <div class="media-user-name h2">
                         <a href="https://funpay.com/">
@@ -936,7 +980,7 @@
                         </a>
                       </div>
                       <div class="chat-header-controls">
-                        <a class="btn btn-info-icon btn-info-sm btn-gray chat-control" href="https://support.funpay.com/tickets/new" target="T6:ap" title="T12:c">
+                        <a class="btn btn-info-icon btn-info-sm btn-gray chat-control" href="https://support.funpay.com/tickets/new" target="T6:ap#1" title="T12:c#1">
                           <i class="fa fa-exclamation-triangle icon"></i>
                         </a>
                       </div>
@@ -962,14 +1006,14 @@
                       </div>
                     </div>
                     <div class="chat-form">
-                      <form action="https://funpay.com/chat/message" method="T4:a">
+                      <form action="https://funpay.com/chat/message" method="T4:a#1">
                         <div class="chat-form-input">
-                          <div class="form-group" id="T8:a">
-                            <textarea autofocus class="form-control" cols="T2:d" name="T7:a" placeholder="T11:cp" rows="T1:d"></textarea>
+                          <div class="form-group" id="T8:a#8">
+                            <textarea autofocus class="form-control" cols="T2:d#1" name="T7:a#3" placeholder="T11:cp#2" rows="T1:d#1"></textarea>
                           </div>
                         </div>
                         <div class="chat-form-btn">
-                          <button class="btn btn-gray btn-round" type="T6:a">
+                          <button class="btn btn-gray btn-round" type="T6:a#6">
                             <i class="fa fa-arrow-right"></i>
                           </button>
                         </div>
@@ -985,6 +1029,141 @@
             </div>
           </div>
         </section>
+      </div>
+    </div>
+    <div class="container">
+      <div class="banner-cookie-consent">
+        <div class="cc-text">
+          T296:acps
+          <a href="https://funpay.com/pages/cookiePolicy" target="T6:ap#1">
+            T16:acs
+          </a>
+          T1:p
+        </div>
+        <div class="cc-buttons">
+          <button class="btn btn-primary btn-block-mobile cc-accept-all" type="T6:a#4">
+            T11:cs
+          </button>
+          <button class="btn btn-gray btn-block-mobile cc-options" type="T6:a#4">
+            T9:c
+          </button>
+        </div>
+      </div>
+    </div>
+    <div aria-hidden="T4:a#1" class="modal fade modal-cookie-consent" role="T6:a#3" tabindex="T2:dp#1">
+      <div class="modal-dialog">
+        <button aria-label="T5:a#1" class="close" data-dismiss="T5:a#1" type="T6:a#4">
+          <i class="fas fa-times"></i>
+        </button>
+        <div class="modal-content">
+          <div class="modal-header">
+            <h4 class="h1 modal-title">
+              T23:acs
+            </h4>
+          </div>
+          <div class="modal-body">
+            <p>
+              T575:acps
+            </p>
+            <p>
+              T130:acps
+              <a href="https://funpay.com/pages/cookiePolicy" target="T6:ap#1">
+                T15:acs
+              </a>
+              T1:c
+              <a href="https://funpay.com/pages/privacyPolicy" target="T6:ap#1">
+                T27:cs
+              </a>
+              T77:cps
+              <a href="https://funpay.com/pages/dsar" target="T6:ap#1">
+                T55:cs
+              </a>
+              T1:p
+            </p>
+            <hr/>
+            <div class="checkbox">
+              <label>
+                <input checked disabled name="T19:ap#4" type="T8:a#8"/>
+                <i></i>
+                <strong>
+                  T25:acs
+                </strong>
+              </label>
+            </div>
+            <div class="checkbox-indent">
+              <p>
+                T213:acps
+              </p>
+              <div class="panel panel-default">
+                <div class="panel-heading">
+                  <h4 class="panel-title">
+                    <a data-toggle="T8:a#1" href="#cookie-details-essential" role="T6:a#2">
+                      T33:cps
+                    </a>
+                  </h4>
+                </div>
+                <div class="panel-collapse collapse" id="T24:ap#9">
+                  <div class="panel-body">
+                    <p>
+                      T1:o
+                      <strong>
+                        T9:a
+                      </strong>
+                      T348:acops
+                    </p>
+                    <p>
+                      T1:o
+                      <strong>
+                        T10:ap
+                      </strong>
+                      T211:acdops
+                    </p>
+                    <p>
+                      T1:o
+                      <strong>
+                        T6:a
+                      </strong>
+                      T5:cos
+                      <strong>
+                        T2:a
+                      </strong>
+                      T195:acdops
+                    </p>
+                    <p>
+                      T1:o
+                      <strong>
+                        T12:ap
+                      </strong>
+                      T142:acdops
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="checkbox">
+              <label>
+                <input name="T19:ap#5" type="T8:a#8"/>
+                <i></i>
+                <strong>
+                  T38:acs
+                </strong>
+              </label>
+            </div>
+            <div class="checkbox-indent">
+              <p class="mb0">
+                T508:acps
+              </p>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-gray cc-save" data-dismiss="T5:a#1" type="T6:a#4">
+              T9:c
+            </button>
+            <button class="btn btn-primary cc-accept-all" data-dismiss="T5:a#1" type="T6:a#4">
+              T11:cs
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   </body>

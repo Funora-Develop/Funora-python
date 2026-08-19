@@ -19,7 +19,7 @@ import pytest
 from selectolax.parser import HTMLParser
 
 from funora._classify import ResponseClass, classify
-from funora._skeleton import SUPPORTED_SKELETON_FORMATS, _self_check
+from funora._skeleton import SKELETON_FORMAT, SUPPORTED_SKELETON_FORMATS, _self_check
 
 #: Каталог с фикстурами страниц.
 PAGES = Path(__file__).parent / "fixtures" / "pages"
@@ -27,7 +27,6 @@ PAGES = Path(__file__).parent / "fixtures" / "pages"
 #: Ожидаемый вердикт для каждой фикстуры.
 EXPECTED = {
     "orders-trade.logged.ru": ResponseClass.OK,
-    "orders-trade.states.logged.ru": ResponseClass.OK,
     "chat.logged.ru": ResponseClass.OK,
     "chat-thread.logged.ru": ResponseClass.OK,
     "orders-trade.guest.ru": ResponseClass.LOGIN_REQUIRED,
@@ -143,14 +142,17 @@ def test_system_message_is_recognized_structurally() -> None:
     """
     tree = HTMLParser(_read("chat-thread.logged.ru"))
     messages = tree.css(".chat-msg-item")
-    assert len(messages) == 10, "снимок содержит десять сообщений"
 
     system, human = [], []
     for node in messages:
         (system if node.css_first("a.chat-msg-author-link") is None else human).append(node)
 
-    assert len(system) == 6
-    assert len(human) == 4
+    # Числами здесь не проверяется ничего: точный состав снимка меняется при
+    # каждой пересъёмке и сам по себе ни о чём не говорит. Проверяется другое -
+    # что оба вида сообщений в снимке есть, иначе согласованность признаков
+    # ниже подтвердилась бы на пустом множестве.
+    assert system, "в снимке нет системных сообщений, проверять признак не на чем"
+    assert human, "в снимке нет сообщений пользователя, сравнивать не с чем"
 
     for node in system:
         assert node.css_first(".chat-msg-body .alert") is not None, (
@@ -259,3 +261,38 @@ def test_provenance_says_whether_the_file_was_converted() -> None:
         assert data["converted"] is (data["captured_format"] != data["format"]), (
             f"{snapshot.name}: пометка преобразования расходится с форматами"
         )
+
+
+def test_rows_are_distinguishable_in_current_format() -> None:
+    """Проверяет, что строки снимка отличимы друг от друга.
+
+    Ради этого формат и поднимался дважды. Пока идентификаторы схлопывались в
+    одну подпись, всякая проверка курсора, гашения и порождения событий
+    проходила впустую - и выглядела при этом пройденной. Дважды на это
+    наступали.
+
+    Проверка идёт по снимкам текущего формата: снятые прежними версиями
+    различимость восстановить не могут, и требовать её от них нечестно.
+
+    Returns:
+        None
+    """
+    checked = 0
+    for name in sorted(EXPECTED):
+        data = json.loads((PAGES / f"{name}.provenance.json").read_text(encoding="utf-8"))
+        if data["format"] != SKELETON_FORMAT:
+            continue
+
+        tree = HTMLParser(_read(name))
+        for selector, attribute in (("a.tc-item", "href"), (".contact-item", "href")):
+            rows = tree.css(selector)
+            if len(rows) < 2:
+                continue
+            values = [(r.attributes.get(attribute) or "") for r in rows]
+            assert len(set(values)) == len(values), (
+                f"{name}: {len(rows)} строк {selector}, "
+                f"а различимых значений {attribute} только {len(set(values))}"
+            )
+            checked += 1
+
+    assert checked, "ни одного снимка текущего формата со строками - проверять нечего"

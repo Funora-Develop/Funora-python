@@ -63,14 +63,15 @@ def test_origins_split_without_overlap() -> None:
         None
     """
     messages = _parse().messages()
-    assert len(messages) == 10
 
     system = [m for m in messages if m.origin is Origin.SYSTEM]
     human = [m for m in messages if m.origin is Origin.HUMAN]
     unknown = [m for m in messages if m.origin is Origin.UNKNOWN]
 
-    assert len(system) == 6
-    assert len(human) == 4
+    # Точный состав снимка меняется при пересъёмке и сам по себе ни о чём не
+    # говорит. Проверяется, что оба вида в снимке есть: иначе согласованность
+    # признаков подтверждалась бы на пустом множестве.
+    assert system and human
     assert not unknown
 
 
@@ -165,7 +166,8 @@ def test_removed_wrapper_degrades_instead_of_lying() -> None:
     assert page.completeness is Completeness.PARTIAL
     messages = page.messages(accept_incomplete=True)
     assert sum(1 for m in messages if m.origin is Origin.SYSTEM) == 0
-    assert sum(1 for m in messages if m.origin is Origin.UNKNOWN) == 6
+    unknown = sum(1 for m in messages if m.origin is Origin.UNKNOWN)
+    assert 0 < unknown < len(messages)
     assert any(d.code == "origin_indeterminate" for d in page.defects)
 
 
@@ -252,7 +254,7 @@ def test_incomplete_thread_requires_acknowledgement() -> None:
     page = _parse(broken)
     with pytest.raises(IncompleteResultError):
         page.messages()
-    assert len(page.messages(accept_incomplete=True)) == 10
+    assert len(page.messages(accept_incomplete=True)) == page.rows_total
 
 
 def test_message_ids_are_observed() -> None:
