@@ -27,6 +27,7 @@ PAGES = Path(__file__).parent / "fixtures" / "pages"
 #: Ожидаемый вердикт для каждой фикстуры.
 EXPECTED = {
     "orders-trade.logged.ru": ResponseClass.OK,
+    "orders-trade.states.logged.ru": ResponseClass.OK,
     "chat.logged.ru": ResponseClass.OK,
     "chat-thread.logged.ru": ResponseClass.OK,
     "orders-trade.guest.ru": ResponseClass.LOGIN_REQUIRED,
@@ -202,3 +203,38 @@ def test_message_text_may_contain_foreign_links() -> None:
         a for a in links if not (a.attributes.get("href") or "").startswith("https://funpay.com")
     ]
     assert external, "в снимке есть сообщение со ссылкой на сторонний сайт"
+
+
+def test_every_snapshot_is_registered() -> None:
+    """Проверяет, что ни один снимок не лежит в каталоге без проверок.
+
+    Перечень EXPECTED заполняется руками, и это его слабое место: снимок,
+    положенный рядом и забытый, не проверяется ни на утечку текста, ни на
+    вердикт классификатора, ни на формат. Он при этом лежит в открытом
+    репозитории и выглядит проверенным - как и все соседние файлы.
+
+    Проверка идёт по каталогу, а не по перечню: только так она замечает то,
+    чего в перечне нет.
+
+    Returns:
+        None
+    """
+    on_disk = {p.name.removesuffix(".skeleton.txt") for p in PAGES.glob("*.skeleton.txt")}
+    assert on_disk == set(EXPECTED), (
+        f"снимки без проверок: {sorted(on_disk - set(EXPECTED))}; "
+        f"проверки без снимков: {sorted(set(EXPECTED) - on_disk)}"
+    )
+
+
+def test_every_snapshot_has_provenance() -> None:
+    """Проверяет, что у каждого снимка есть описание захвата.
+
+    Без описания снимок нельзя ни повторить, ни датировать, ни объяснить: он
+    превращается в разметку неизвестного происхождения, которой почему-то верят.
+
+    Returns:
+        None
+    """
+    for snapshot in sorted(PAGES.glob("*.skeleton.txt")):
+        beside = snapshot.with_name(snapshot.name.replace(".skeleton.txt", ".provenance.json"))
+        assert beside.exists(), f"{snapshot.name}: рядом нет provenance"

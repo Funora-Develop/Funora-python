@@ -1,0 +1,15 @@
+{
+  "captured_at": "2026-08-19T11:46:00+00:00",
+  "classification": "ok",
+  "classification_provisional": false,
+  "classification_reason": "identity_confirmed",
+  "content_length": 36543,
+  "elapsed_ms": 248,
+  "final_url": "https://funpay.com/orders/trade",
+  "format": "structural-skeleton-v3",
+  "http_status": 200,
+  "locale": "ru",
+  "note": "Структурный скелет: текст заменён подписями, сегменты путей с идентификаторами обезличены. Сырой HTML не сохраняется.",
+  "path": "/orders/trade",
+  "redirects": 0
+}
