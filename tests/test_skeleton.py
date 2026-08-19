@@ -61,7 +61,7 @@ def test_structure_survives() -> None:
 def test_url_shape_survives_but_id_does_not() -> None:
     """Проверяет, что форма ссылки видна, а идентификатор в ней - нет."""
     sk = skeletonize(SAMPLE)
-    assert "/orders/{n}" in sk, "по форме пути должно быть видно, что это ссылка на заказ"
+    assert "/orders/{n1}" in sk, "по форме пути должно быть видно, что это ссылка на заказ"
     assert "/orders/98765" not in sk
 
 
@@ -81,7 +81,7 @@ def test_opaque_tags_keep_attributes() -> None:
     """
     sk = skeletonize('<html><body><script src="/js/runner-12.js">var x=1;</script></body></html>')
     assert "<script " in sk
-    assert 'src="/js/{n}"' in sk
+    assert 'src="/js/{n1}"' in sk
     assert "var x" not in sk
 
 
@@ -95,7 +95,7 @@ def test_path_segment_is_masked_whole() -> None:
     """
     sk = skeletonize('<html><body><a href="/u/ivan123">t</a></body></html>')
     assert "ivan" not in sk
-    assert "/u/{n}" in sk
+    assert "/u/{n1}" in sk
 
 
 def test_class_attribute_is_verbatim() -> None:
@@ -256,7 +256,7 @@ def test_own_path_keeps_its_shape() -> None:
         None
     """
     sk = skeletonize('<html><body><a href="https://funpay.com/orders/12345/">з</a></body></html>')
-    assert "/orders/{n}/" in sk
+    assert "/orders/{n1}/" in sk
     assert "12345" not in sk
 
 
@@ -284,6 +284,101 @@ def test_no_foreign_login_survives_in_the_fixtures() -> None:
             for segment in path.split("/"):
                 if not segment or segment.startswith("?"):
                     continue
-                assert segment in ("{t}", "{n}", ""), (
+                assert segment == "{t}" or _re.fullmatch(r"\{n\d*\}", segment) or not segment, (
                     f"{snapshot.name}: сегмент {segment!r} чужого адреса не замаскирован"
                 )
+
+
+def test_distinct_ids_stay_distinct() -> None:
+    """Проверяет, что разные идентификаторы получают разные номера.
+
+    Ради этого формат и поднят до v4. Без номеров восемь заказов на странице
+    несут один и тот же адрес, и всякая проверка, опирающаяся на различимость,
+    проходит впустую - выглядя при этом пройденной. На это уже наступали.
+
+    Returns:
+        None
+    """
+    sk = skeletonize(
+        "<html><body>"
+        '<a href="https://funpay.com/orders/QN2CW7HY/">a</a>'
+        '<a href="https://funpay.com/orders/Q7YXFYJV/">b</a>'
+        "</body></html>"
+    )
+    assert "/orders/{n1}/" in sk
+    assert "/orders/{n2}/" in sk
+
+
+def test_the_same_id_gets_the_same_number() -> None:
+    """Проверяет, что одно значение всюду получает один номер.
+
+    Иначе номера были бы просто счётчиком вхождений и о совпадении не говорили
+    бы ничего.
+
+    Returns:
+        None
+    """
+    sk = skeletonize(
+        "<html><body>"
+        '<a data-href="https://funpay.com/users/777/">a</a>'
+        '<a data-href="https://funpay.com/users/888/">b</a>'
+        '<a data-href="https://funpay.com/users/777/">c</a>'
+        "</body></html>"
+    )
+    assert sk.count("/users/{n1}/") == 2
+    assert sk.count("/users/{n2}/") == 1
+
+
+def test_numbering_does_not_reach_foreign_hosts() -> None:
+    """Проверяет, что чужие адреса остаются неразличимыми.
+
+    Номер говорит, совпадают ли два значения. Для заказов это нужно и безобидно.
+    Для ссылок, написанных людьми в переписке, - нет: там совпадение само по
+    себе сведение о третьем лице, а никакой проверке оно не нужно.
+
+    Returns:
+        None
+    """
+    sk = skeletonize(
+        "<html><body>"
+        '<a href="https://t.me/ivanpetrov">a</a>'
+        '<a href="https://t.me/otherguy">b</a>'
+        '<a href="https://t.me/ivanpetrov">c</a>'
+        "</body></html>"
+    )
+    assert sk.count('href="https://t.me/{t}"') == 3
+    assert "{t1}" not in sk
+
+
+def test_numbering_is_repeatable() -> None:
+    """Проверяет, что нумерация не зависит от запуска.
+
+    Недетерминированная нумерация сделала бы бесполезным сравнение фикстур:
+    любой повторный захват давал бы ложное изменение во всех ссылках сразу.
+
+    Returns:
+        None
+    """
+    doc = (
+        "<html><body>"
+        '<a href="https://funpay.com/orders/AAA1/">a</a>'
+        '<a href="https://funpay.com/orders/BBB2/">b</a>'
+        "</body></html>"
+    )
+    assert skeletonize(doc) == skeletonize(doc)
+
+
+def test_numbering_does_not_cross_documents() -> None:
+    """Проверяет, что номера в разных документах между собой не связаны.
+
+    Это ловушка, которую вводит сам формат, и назвать её надо вслух: один и тот
+    же заказ получает разные номера в двух снимках, а разные заказы - одинаковые.
+    Сравнивать снимки по номерам нельзя.
+
+    Returns:
+        None
+    """
+    first = skeletonize('<html><body><a href="/orders/111/">a</a></body></html>')
+    second = skeletonize('<html><body><a href="/orders/222/">a</a></body></html>')
+    assert "/orders/{n1}/" in first
+    assert "/orders/{n1}/" in second, "номер отсчитывается заново в каждом документе"
