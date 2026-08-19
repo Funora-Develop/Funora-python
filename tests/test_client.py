@@ -21,6 +21,7 @@ from funora._budget import Budget
 from funora._chats import ChatsPage
 from funora._client import Client
 from funora._orders import Completeness
+from funora._thread import Origin, Thread
 from funora._transport import Observation
 from funora.capabilities import Capability, CapabilityState
 from funora.errors import (
@@ -31,6 +32,7 @@ from funora.errors import (
     RateLimitedError,
     SessionExpiredError,
     UnsupportedCapabilityError,
+    ValidationError,
 )
 
 #: Каталог со снимками страниц.
@@ -453,3 +455,55 @@ def test_capabilities_are_tracked_separately() -> None:
         client.chats.list()
         assert client.capability(Capability.CHATS_LIST) is CapabilityState.SUPPORTED
         assert client.capability(Capability.ORDERS_LIST) is CapabilityState.DEGRADED
+
+
+def test_thread_reads_messages() -> None:
+    """Проверяет чтение переписки через клиент.
+
+    Returns:
+        None
+    """
+    with _client([_observation(_page("chat-thread.logged.ru"))]) as client:
+        thread = client.chats.thread("281916231")
+        assert isinstance(thread, Thread)
+        messages = thread.messages()
+        assert len(messages) == 10
+        assert sum(1 for m in messages if m.origin is Origin.SYSTEM) == 6
+
+
+@pytest.mark.parametrize("bad", ["", "   ", "../orders/trade", "1 2", "281916231&x=1"])
+def test_thread_rejects_bad_node_id_before_the_network(bad: str) -> None:
+    """Проверяет проверку идентификатора до обращения к сети.
+
+    Идентификатор подставляется в адрес. Мусор в нём отправил бы запрос
+    неизвестно куда, и узнать об этом можно было бы только по ответу.
+
+    Args:
+        bad (str): Непригодный идентификатор.
+
+    Returns:
+        None
+    """
+    fetcher = _FakeFetcher([_observation(_page("chat-thread.logged.ru"))])
+    with Client(transport=fetcher) as client:  # type: ignore[arg-type]
+        with pytest.raises(ValidationError):
+            client.chats.thread(bad)
+        assert fetcher.calls == 0, "запрос ушёл с непригодным идентификатором"
+
+
+def test_thread_uses_its_own_capability() -> None:
+    """Проверяет, что переписка ходит под своей возможностью.
+
+    Список диалогов и история сообщений - разные возможности: список может
+    читаться, а история нет.
+
+    Returns:
+        None
+    """
+    with _client([]) as client:
+        client._state.capabilities[Capability.CHATS_HISTORY] = CapabilityState.UNSUPPORTED
+        with pytest.raises(UnsupportedCapabilityError):
+            client.chats.thread("1")
+        assert client._fetcher.calls == 0  # type: ignore[attr-defined]
+
+        assert client.capability(Capability.CHATS_LIST) is not CapabilityState.UNSUPPORTED

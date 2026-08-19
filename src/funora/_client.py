@@ -31,6 +31,7 @@ from ._gate import check_capability
 from ._orders import Completeness, OrdersPage, parse_orders_page
 from ._retry import Safety, plan_attempt
 from ._secret import Secret, SecretProvider
+from ._thread import Thread, parse_thread
 from ._transport import Fetcher, Observation, TransportSettings
 from ._verdicts import error_for
 from .capabilities import CAPABILITY_INITIAL, Capability, CapabilityState
@@ -39,6 +40,7 @@ from .errors import (
     ConfigurationError,
     FunoraError,
     NetworkError,
+    ValidationError,
 )
 
 __all__ = ["Client", "OrdersService", "ChatsService"]
@@ -50,6 +52,9 @@ _ORDERS_PATH: Final[str] = "/orders/trade"
 
 #: Путь страницы списка диалогов.
 _CHATS_PATH: Final[str] = "/chat/"
+
+#: Путь страницы отдельной переписки.
+_THREAD_PATH: Final[str] = "/chat/?node={node_id}"
 
 
 @dataclass
@@ -161,6 +166,31 @@ class ChatsService:
             FunoraError: Любая ошибка из иерархии Funora.
         """
         return self._client._read_chats()
+
+    def thread(self, node_id: str) -> Thread:
+        """Читает переписку целиком.
+
+        Происхождение каждого сообщения определяется разметкой, а не текстом, и
+        при расхождении признаков объявляется неизвестным. Но даже верно
+        опознанное сообщение площадки не является подтверждением оплаты: оно
+        могло относиться к другому заказу, устареть, прийти по отменённому
+        платежу. Площадка предупреждает об этом сама, первым сообщением в каждом
+        диалоге.
+
+        Args:
+            node_id (str): Идентификатор диалога, он же поле node_id записи
+                списка.
+
+        Returns:
+            Thread: Сообщения вместе с полнотой и перечнем повреждений.
+
+        Raises:
+            ValidationError: Если идентификатор пуст или содержит посторонние
+                знаки. Проверка идёт до сети: подставленный в адрес мусор
+                отправил бы запрос неизвестно куда.
+            FunoraError: Любая ошибка из иерархии Funora.
+        """
+        return self._client._read_thread(node_id)
 
 
 class Client:
@@ -351,6 +381,37 @@ class Client:
         self._note_success(Capability.CHATS_LIST, page.completeness, page)
         return page
 
+    def _read_thread(self, node_id: str) -> Thread:
+        """Выполняет чтение переписки по тому же порядку шагов.
+
+        Args:
+            node_id (str): Идентификатор диалога.
+
+        Returns:
+            Thread: Разобранная переписка.
+
+        Raises:
+            ValidationError: Если идентификатор непригоден для подстановки.
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        cleaned = node_id.strip()
+        if not cleaned or not cleaned.isalnum():
+            raise ValidationError(
+                "идентификатор диалога обязан состоять из букв и цифр, получено "
+                f"{len(cleaned)} знаков иного вида. Проверка идёт до сети: "
+                "подставленный в адрес мусор отправил бы запрос неизвестно куда"
+            )
+
+        capability = Capability.CHATS_HISTORY
+        observation = self._fetch_ok(capability, _THREAD_PATH.format(node_id=cleaned))
+        thread = parse_thread(
+            observation.html,
+            observed_at=datetime.now(UTC),
+            host=self._settings.base_url.split("//", 1)[-1].split("/", 1)[0],
+        )
+        self._note_success(capability, thread.completeness, thread)
+        return thread
+
     def _spend_budget(self) -> None:
         """Занимает бюджет под один отправляемый запрос.
 
@@ -393,14 +454,14 @@ class Client:
         self,
         capability: Capability,
         completeness: Completeness,
-        page: OrdersPage | ChatsPage,
+        page: OrdersPage | ChatsPage | Thread,
     ) -> None:
         """Записывает состояние возможности по успешному чтению.
 
         Args:
             capability (Capability): Возможность.
             completeness (Completeness): Полнота прочитанного.
-            page (OrdersPage | ChatsPage): Прочитанная страница. Нужна только
+            page (OrdersPage | ChatsPage | Thread): Прочитанная страница. Нужна только
                 для подробностей в журнале.
 
         Returns:
