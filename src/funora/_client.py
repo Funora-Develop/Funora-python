@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from time import monotonic, sleep
 from typing import Final
 
@@ -33,6 +34,7 @@ from ._orders import Completeness, OrdersPage, parse_orders_page
 from ._poll import Deduplicator, Schedule
 from ._retry import Safety, plan_attempt
 from ._secret import Secret, SecretProvider
+from ._state import StateFile
 from ._thread import Thread, parse_thread
 from ._transport import Fetcher, Observation, TransportSettings
 from ._verdicts import error_for
@@ -422,6 +424,7 @@ class Client:
         account_id: str = "self",
         max_iterations: int | None = None,
         schedule: Schedule | None = None,
+        state_path: Path | None = None,
     ) -> None:
         """Ведёт наблюдение: опрашивает площадку и раздаёт события обработчикам.
 
@@ -445,6 +448,10 @@ class Client:
                 бесконечно; ограничение нужно проверкам и разовым прогонам.
             schedule (Schedule | None): Расписание опроса. По умолчанию из
                 спецификации.
+            state_path (Path | None): Файл, в котором состояние гашения повторов
+                переживает перезапуск. Без него кэш живёт только в памяти, и
+                после любого перезапуска повторно приходит всё, что успело
+                прийти до него.
 
         Returns:
             None
@@ -454,6 +461,13 @@ class Client:
         """
         plan = schedule or Schedule()
         dedup = Deduplicator()
+        state = StateFile(state_path) if state_path is not None else None
+
+        if state is not None:
+            restored = dedup.restore(state.load().get("dedup", {}), monotonic())
+            if restored:
+                _log.info("восстановлено записей гашения: %d", restored)
+
         orders_base: OrdersPage | None = None
         chats_base: ChatsPage | None = None
         step = 0
@@ -489,6 +503,13 @@ class Client:
                     "база не сдвинута: обработчик не принял %d событий, они придут снова",
                     len(result.failed),
                 )
+
+            if state is not None:
+                # Сохранение идёт после обработчиков, вместе с фиксацией
+                # доставленного. Сохрани мы раньше - перезапуск между записью и
+                # обработчиком потерял бы событие: файл говорил бы, что оно
+                # доставлено, а обработчик его не видел.
+                state.save({"dedup": dedup.snapshot()})
 
             sleep(plan.note(fresh, now) / 1000)
 
