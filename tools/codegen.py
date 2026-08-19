@@ -382,10 +382,80 @@ def render_capabilities(spec: Path) -> str:
     return "".join(out)
 
 
+def render_response_classes(spec: Path) -> str:
+    """Порождает таблицу соответствия вердиктов ошибкам.
+
+    Args:
+        spec (Path): Корень рабочей копии Funora-spec.
+
+    Returns:
+        str: Содержимое модуля.
+    """
+    doc = _load(spec, "spec/protocol/response-classes.yaml")
+    errors: dict[str, Any] = _load(spec, "spec/errors/errors.yaml")["errors"]
+    by_stable = {entry["stable_id"]: name for name, entry in errors.items()}
+    table: dict[str, Any] = doc["verdict_errors"]
+
+    if doc.get("pipeline", {}).get("order_is_normative") is not True:
+        raise ValueError(
+            "spec/protocol/response-classes.yaml: порядок шагов обязан быть объявлен нормативным"
+        )
+
+    extra = (
+        "Ключ - пара из класса ответа и машиночитаемой причины. Значение - класс\n"
+        "ошибки либо None, если ответ пригоден для разбора.\n"
+        "\n"
+        "Таблица порождается, а не пишется, потому что от неё зависит, повторит\n"
+        "клиент запрос или остановится навсегда. Шесть реализаций, составивших её\n"
+        "порознь, разойдутся именно на негативных ветках - там, где расхождение\n"
+        "дороже всего и заметно позже всего.\n"
+    )
+
+    out = [
+        HEADER.format(
+            title="Соответствие вердиктов классификатора ошибкам.",
+            source="spec/protocol/response-classes.yaml",
+            extra=extra,
+        ).replace(
+            "from typing import ClassVar, Final",
+            "from typing import Final\n\nfrom .errors import (\n"
+            + "".join(
+                f"    {name},\n"
+                for name in sorted(
+                    {by_stable[sid] for rows in table.values() for sid in rows.values() if sid}
+                )
+            )
+            + ")",
+        )
+    ]
+
+    out.append('__all__ = ["VERDICT_ERRORS", "RESPONSE_CLASSES"]\n')
+
+    out.append("\n#: Классы ответа, объявленные спецификацией.\n")
+    out.append("#:\n")
+    out.append("#: Перечень нужен, чтобы проверить полноту таблицы: класс без единой\n")
+    out.append("#: записи означает, что реализации выберут ошибку сами.\n")
+    out.append("RESPONSE_CLASSES: Final[frozenset[str]] = frozenset(\n    {\n")
+    for name in doc["classes"]:
+        out.append(f'        "{name}",\n')
+    out.append("    }\n)\n")
+
+    out.append("\n#: Пара «класс ответа, причина» и ошибка, которую она означает.\n")
+    out.append("VERDICT_ERRORS: Final[dict[tuple[str, str], type[Exception] | None]] = {\n")
+    for cls, rows in table.items():
+        for reason, stable_id in rows.items():
+            value = by_stable[stable_id] if stable_id else "None"
+            out.append(f'    ("{cls}", "{reason}"): {value},\n')
+    out.append("}\n")
+
+    return "".join(out)
+
+
 #: Что порождается: имя файла в пакете и функция, которая его строит.
 TARGETS: Final[dict[str, Callable[[Path], str]]] = {
     "errors.py": render_errors,
     "capabilities.py": render_capabilities,
+    "response_classes.py": render_response_classes,
 }
 
 

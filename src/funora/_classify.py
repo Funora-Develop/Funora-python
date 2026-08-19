@@ -50,12 +50,19 @@ class ResponseClass(StrEnum):
 
     Значения намеренно различают состояния доступа и поломку разметки: это разные
     проблемы с разным лечением, а внешне они выглядят одинаково.
+
+    Превышение частоты отделено от блокировки по той же причине. Блокировка
+    трактуется как отказ с закрытым замком, и попади код 429 в неё, первое же
+    попадание в ограничение остановило бы опрос навсегда, а политика повторов
+    для этого случая осталась бы недостижимым кодом. «Слишком быстро» и «вам
+    сюда нельзя» - разные ответы.
     """
 
     OK = "ok"
     LOGIN_REQUIRED = "login_required"
     CHALLENGE = "challenge"
     BLOCKED = "blocked"
+    RATE_LIMITED = "rate_limited"
     MAINTENANCE = "maintenance"
     WRONG_IDENTITY = "wrong_identity"
     TRANSPORT_ERROR = "transport_error"
@@ -178,7 +185,7 @@ DEFAULT_SIGNATURES: Final[tuple[Signature, ...]] = (
 _HARD_STATUS: Final[dict[int, tuple[ResponseClass, str]]] = {
     401: (ResponseClass.LOGIN_REQUIRED, "http_401"),
     403: (ResponseClass.BLOCKED, "http_403"),
-    429: (ResponseClass.BLOCKED, "http_429"),
+    429: (ResponseClass.RATE_LIMITED, "http_429"),
     503: (ResponseClass.MAINTENANCE, "http_503"),
 }
 
