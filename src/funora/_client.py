@@ -214,6 +214,7 @@ class Client:
         max_iterations: int | None = None,
         schedule: Schedule | None = None,
         state_path: Path | None = None,
+        max_threads_per_step: int = 5,
     ) -> None:
         """Ведёт наблюдение: опрашивает площадку и раздаёт события обработчикам.
 
@@ -229,6 +230,11 @@ class Client:
                 спецификации.
             state_path (Path | None): Файл, в котором состояние гашения повторов
                 переживает перезапуск.
+            max_threads_per_step (int): Сколько переписок дочитывать за один
+                шаг. Изменившийся диалог говорит, что в нём что-то произошло, но
+                само сообщение видно только на странице переписки. Предел нужен:
+                изменись разом полсотни диалогов, шаг превратился бы в полсотни
+                запросов. Непрочитанные не теряются - они ждут в очереди.
 
         Returns:
             None
@@ -243,6 +249,7 @@ class Client:
                 max_iterations=max_iterations,
                 schedule=schedule,
                 state_path=state_path,
+                max_threads_per_step=max_threads_per_step,
             ),
             router=router,
         )

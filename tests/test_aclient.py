@@ -407,3 +407,92 @@ async def test_sync_handler_works_in_an_async_client(no_sleep: list[float]) -> N
         await client.watch(router, max_iterations=1, schedule=Schedule())
 
     assert seen == [EventType.WATCH_PRIMED]
+
+
+class _AsyncByPath:
+    """Адресный подставной транспорт для асинхронного клиента.
+
+    Args:
+        orders (str): Страница заказов.
+        chats (list[str]): Страницы списка диалогов по обращениям.
+        threads (list[str]): Страницы переписки по обращениям.
+    """
+
+    def __init__(self, orders: str, chats: list[str], threads: list[str]) -> None:
+        self._orders = orders
+        self._chats = chats
+        self._threads = threads
+        self.paths: list[str] = []
+        self._chat_calls = 0
+        self._thread_calls = 0
+
+    async def fetch(self, path: str):  # type: ignore[no-untyped-def]
+        """Отдаёт страницу, отвечающую адресу.
+
+        Args:
+            path (str): Запрошенный путь.
+
+        Returns:
+            Observation: Наблюдение.
+        """
+        self.paths.append(path)
+        if path.startswith("/orders"):
+            body = self._orders
+        elif "node=" in path:
+            body = self._threads[min(self._thread_calls, len(self._threads) - 1)]
+            self._thread_calls += 1
+        else:
+            body = self._chats[min(self._chat_calls, len(self._chats) - 1)]
+            self._chat_calls += 1
+        return _observation(body)
+
+    async def close(self) -> None:
+        """Закрывает подставной транспорт.
+
+        Returns:
+            None
+        """
+
+
+async def test_thread_following_works_through_the_async_driver(no_sleep: list[float]) -> None:
+    """Проверяет, что дочитывание переписок работает и в асинхронном клиенте.
+
+    Проверка не дублирует синхронную. Дочитывание устроено вложенной
+    сопрограммой: ядро делегирует чтение переписки другой сопрограмме через
+    yield from, и драйвер обязан прокрутить эту вложенность. Сломайся
+    делегирование - синхронный клиент прошёл бы, а асинхронный нет.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз.
+
+    Returns:
+        None
+    """
+    import re
+
+    dialogs = re.sub(
+        r'data-id="[^"]*"',
+        lambda _m: f'data-id="{1000 + len(_m.string[: _m.start()]) % 7}"',
+        _page("chat.logged.ru"),
+    )
+    node_id = re.search(r'data-id="(\d+)"', dialogs).group(1)
+    moved = dialogs.replace('data-node-msg="T10:d#1"', 'data-node-msg="T10:d#777"', 1)
+    again = dialogs.replace('data-node-msg="T10:d#1"', 'data-node-msg="T10:d#888"', 1)
+
+    before = _page("chat-thread.logged.ru")
+    after = before.replace('id="T18:adp#10"', 'id="message-fresh"', 1)
+
+    seen: list[Event] = []
+    router = Router()
+    router.on()(seen.append)
+
+    transport = _AsyncByPath(
+        _page("orders-trade.logged.ru"), [dialogs, moved, again], [before, after, after]
+    )
+    async with AsyncClient(transport=transport, budget=Budget()) as client:  # type: ignore[arg-type]
+        await client.watch(router, max_iterations=3)
+
+    assert [p for p in transport.paths if "node=" in p], "переписка не читалась вовсе"
+    fresh = [e for e in seen if e.type is EventType.MESSAGE_CREATED]
+    assert len(fresh) == 1
+    assert fresh[0].ordering_key == f"chat:{node_id}"
