@@ -31,6 +31,7 @@ from typing import Final
 
 from selectolax.parser import HTMLParser, Node
 
+from ._host import same_host
 from ._observed import Observed
 from ._orders import Completeness, Defect, Severity
 from .errors import IncompleteResultError, ProtocolChangedError
@@ -217,7 +218,13 @@ def _external_links(message: Node, host: str) -> tuple[str, ...]:
     found: list[str] = []
     for link in message.css(".chat-msg-text a[href]"):
         href = ((link.attributes or {}).get("href") or "").strip()
-        if href and f"//{host}" not in href:
+        if not href:
+            continue
+        # Сравнение подстрокой здесь стояло раньше и выглядело работающим.
+        # Адрес funpay.com.evil.example содержит имя площадки и проходил такую
+        # проверку - то есть ссылка на подставной сайт числилась своей и в
+        # перечень внешних не попадала.
+        if not same_host(href, host):
             found.append(href)
     return tuple(found)
 

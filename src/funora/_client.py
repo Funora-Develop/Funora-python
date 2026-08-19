@@ -30,6 +30,7 @@ from ._chats import ChatsPage, parse_chats_page
 from ._classify import DEFAULT_IDENTITY_CSS, classify
 from ._diff import diff_chats, diff_orders
 from ._gate import check_capability
+from ._host import host_of
 from ._orders import Completeness, OrdersPage, parse_orders_page
 from ._poll import Deduplicator, Schedule
 from ._retry import Safety, plan_attempt
@@ -326,7 +327,7 @@ class Client:
             opted_in=capability in self._state.opted_in,
         )
 
-        host = self._settings.base_url.split("//", 1)[-1].split("/", 1)[0]
+        host = host_of(self._settings.base_url)
         attempt = 0
         while True:
             attempt += 1
@@ -412,7 +413,7 @@ class Client:
         thread = parse_thread(
             observation.html,
             observed_at=datetime.now(UTC),
-            host=self._settings.base_url.split("//", 1)[-1].split("/", 1)[0],
+            host=host_of(self._settings.base_url),
         )
         self._note_success(capability, thread.completeness, thread)
         return thread
