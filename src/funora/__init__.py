@@ -43,6 +43,7 @@ from ._secret import (
     SecretProvider,
 )
 from ._skeleton import SkeletonError, skeletonize
+from ._thread import Message, Origin, Thread, parse_thread
 from ._transport import Fetcher, Observation, TransportSettings
 from ._verdicts import error_for
 from .capabilities import CAPABILITY_INITIAL, Capability, CapabilityState
@@ -99,6 +100,11 @@ __all__ = [
     "parse_chats_page",
     "ChatsPage",
     "ChatListEntry",
+    # переписка
+    "parse_thread",
+    "Thread",
+    "Message",
+    "Origin",
     # возможности
     "Capability",
     "CapabilityState",
