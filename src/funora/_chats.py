@@ -33,7 +33,7 @@ from typing import Final
 from selectolax.parser import HTMLParser, Node
 
 from ._observed import Confidence, Observed
-from ._orders import Completeness, Defect, Severity
+from ._result import Completeness, Defect, Severity, collect_rows
 from .errors import IncompleteResultError, ProtocolChangedError
 
 __all__ = ["ChatListEntry", "ChatsPage", "parse_chats_page"]
@@ -281,37 +281,25 @@ def parse_chats_page(html: str, *, observed_at: datetime) -> ChatsPage:
             "вернуть нельзя: он неотличим от отсутствия диалогов"
         )
 
-    container = tree.css_first(_ROWS_CONTAINER)
-    if container is None:
+    if tree.css_first(_ROWS_CONTAINER) is None:
         raise ProtocolChangedError(
             f"на странице нет контейнера строк ({_ROWS_CONTAINER}). Без него "
             "нельзя проверить, что строки найдены все"
         )
 
-    rows = container.css(_ROW)
-    children = [node for node in container.iter() if node.tag != "-text"]
-
-    if len(rows) != len(children):
-        defects.append(
-            Defect(
-                severity=Severity.PAGE,
-                code="row_selector_undercount",
-                detail=(
-                    f"селектор строки нашёл {len(rows)}, а прямых детей контейнера {len(children)}"
-                ),
-            )
-        )
+    found = collect_rows(tree, _ROWS_CONTAINER, _ROW)
+    defects.extend(found.defects)
 
     entries: list[ChatListEntry] = []
-    for index, row in enumerate(rows):
+    for index, row in enumerate(found.rows):
         entry, row_defects = _parse_row(row, index)
         defects.extend(row_defects)
         if entry is not None:
             entries.append(entry)
 
-    rows_total = max(len(rows), len(children))
+    rows_total = max(len(found.rows), found.children, len(tree.css(_ROW)))
     rows_accepted = len(entries)
-    rows_rejected = len(rows) - rows_accepted
+    rows_rejected = len(found.rows) - rows_accepted
 
     if rows_total and not rows_accepted:
         raise ProtocolChangedError(

@@ -28,12 +28,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import StrEnum
 from typing import Final
 
 from selectolax.parser import HTMLParser, Node
 
 from ._observed import Confidence, Observed
+from ._result import Completeness, Defect, Severity, collect_rows
 from .errors import IncompleteResultError, ProtocolChangedError
 
 __all__ = [
@@ -62,59 +62,6 @@ _ROW: Final[str] = "a.tc-item"
 
 #: Идентификатор заказа в адресе строки.
 _ID_IN_HREF: Final[re.Pattern[str]] = re.compile(r"/orders/([^/?#]+)")
-
-
-class Severity(StrEnum):
-    """Уровень, на котором обнаружено повреждение разбора.
-
-    Уровни различают, что именно потеряно, потому что решения по ним разные.
-    """
-
-    #: Пострадала страница целиком. Записям доверять нельзя.
-    PAGE = "page"
-
-    #: Пострадала одна строка. Она отброшена, остальные целы.
-    ROW = "row"
-
-    #: Пострадало одно поле одной строки. Строка сохранена.
-    FIELD = "field"
-
-
-class Completeness(StrEnum):
-    """Полнота прочитанного списка.
-
-    Словарь взят из спецификации и не расширяется реализацией: значение уходит
-    в решение вызывающего, и лишнее значение здесь означает, что шесть SDK
-    ответят на один вопрос по-разному.
-    """
-
-    #: Все строки разобраны, повреждений нет.
-    COMPLETE = "complete"
-
-    #: Часть данных потеряна. Что именно - в перечне повреждений.
-    PARTIAL = "partial"
-
-    #: Полноту установить не удалось.
-    UNKNOWN = "unknown"
-
-
-@dataclass(frozen=True, slots=True)
-class Defect:
-    """Повреждение, обнаруженное при разборе.
-
-    Attributes:
-        severity (Severity): Уровень, на котором обнаружено.
-        code (str): Машиночитаемый код, например ``row_selector_undercount``.
-        detail (str): Пояснение для человека. Содержимого страницы не содержит.
-        row_index (int | None): Номер строки при severity ROW и FIELD.
-        field_name (str | None): Имя поля при severity FIELD.
-    """
-
-    severity: Severity
-    code: str
-    detail: str
-    row_index: int | None = None
-    field_name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -361,8 +308,7 @@ def parse_orders_page(html: str, *, observed_at: datetime) -> OrdersPage:
             "Пустой список вернуть нельзя: он неотличим от отсутствия заказов"
         )
 
-    container = tree.css_first(_ROWS_CONTAINER)
-    if container is None:
+    if tree.css_first(_ROWS_CONTAINER) is None:
         raise ProtocolChangedError(
             f"на странице нет контейнера строк ({_ROWS_CONTAINER}). "
             "Без него нельзя проверить, что строки найдены все"
@@ -377,33 +323,19 @@ def parse_orders_page(html: str, *, observed_at: datetime) -> OrdersPage:
             )
         )
 
-    rows = container.css(_ROW)
-    children = [node for node in container.iter() if node.tag != "-text"]
-
-    # Два независимых счётчика. Переименование класса строки при живом
-    # контейнере - самый вероятный вид изменения разметки, и без второго
-    # счётчика оно даёт пустой список, неотличимый от «заказов нет».
-    if len(rows) != len(children):
-        defects.append(
-            Defect(
-                severity=Severity.PAGE,
-                code="row_selector_undercount",
-                detail=(
-                    f"селектор строки нашёл {len(rows)}, а прямых детей контейнера {len(children)}"
-                ),
-            )
-        )
+    found = collect_rows(tree, _ROWS_CONTAINER, _ROW)
+    defects.extend(found.defects)
 
     entries: list[OrderListEntry] = []
-    for index, row in enumerate(rows):
+    for index, row in enumerate(found.rows):
         entry, row_defects = _parse_row(row, index)
         defects.extend(row_defects)
         if entry is not None:
             entries.append(entry)
 
-    rows_total = max(len(rows), len(children))
+    rows_total = max(len(found.rows), found.children, len(tree.css(_ROW)))
     rows_accepted = len(entries)
-    rows_rejected = len(rows) - rows_accepted
+    rows_rejected = len(found.rows) - rows_accepted
 
     if rows_total and not rows_accepted:
         raise ProtocolChangedError(
