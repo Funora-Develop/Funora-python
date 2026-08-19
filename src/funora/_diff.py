@@ -377,7 +377,14 @@ def diff_thread(
                     # system не является подтверждением оплаты - об этом сказано
                     # в spec/extraction/chats.yaml и в docstring разбора.
                     "origin": str(message.origin),
-                    "external_links": len(message.external_links),
+                    # Число, а не адреса: адреса пишет собеседник, и класть
+                    # чужой ввод в нагрузку события незачем. Ненаблюдённое поле
+                    # даёт None, а не ноль: ноль означал бы «ссылок не было».
+                    "external_links": (
+                        len(message.external_links.value)
+                        if message.external_links.is_observed
+                        else None
+                    ),
                 },
             )
         )
