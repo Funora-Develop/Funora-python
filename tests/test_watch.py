@@ -22,7 +22,7 @@ from funora._diff import Event
 from funora._poll import Schedule
 from funora._transport import Observation
 from funora._watch import Router, dispatch
-from funora.errors import FunoraError, HandlerError
+from funora.errors import FunoraError, HandlerError, StateSchemaIncompatibleError
 from funora.events import EventType
 
 #: Каталог со снимками страниц.
@@ -379,3 +379,72 @@ def test_interval_grows_while_nothing_happens(no_sleep: list[float]) -> None:
 
     assert no_sleep == sorted(no_sleep)
     assert no_sleep[0] < no_sleep[-1]
+
+
+def test_watch_survives_a_restart(no_sleep: list[float], tmp_path: Path) -> None:
+    """Проверяет, что событие не приходит повторно после перезапуска.
+
+    Кэш только в памяти означает, что после любого перезапуска повторно приходит
+    всё, что успело прийти до него. Для обработчика, выдающего товар, это
+    выданный дважды товар при каждом перезапуске процесса.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+        tmp_path (Path): Временный каталог для файла состояния.
+
+    Returns:
+        None
+    """
+    orders = _page("orders-trade.logged.ru")
+    chats = _page("chat.logged.ru")
+    grown = orders.replace(
+        'href="https://funpay.com/orders/{n}/"',
+        'href="https://funpay.com/orders/777/"',
+        1,
+    )
+    state_path = tmp_path / "state.json"
+
+    seen: list[str] = []
+    router = Router()
+
+    @router.on(EventType.ORDER_CREATED)
+    def handle(event: Event) -> None:
+        seen.append(event.entity_id)
+
+    with Client(transport=_Cycle([orders, chats, grown, chats])) as client:  # type: ignore[arg-type]
+        client.watch(router, max_iterations=2, state_path=state_path)
+
+    assert seen == ["777"]
+    assert state_path.is_file(), "состояние обязано сохраниться"
+
+    # Второй процесс: тот же заказ уже есть на первой же странице, поэтому
+    # холодный старт его не заметит. Но если бы заметил, гашение обязано
+    # отработать по восстановленному состоянию.
+    with Client(transport=_Cycle([grown, chats, grown, chats])) as client:  # type: ignore[arg-type]
+        client.watch(router, max_iterations=2, state_path=state_path)
+
+    assert seen == ["777"], "после перезапуска событие пришло повторно"
+
+
+def test_watch_refuses_foreign_state(no_sleep: list[float], tmp_path: Path) -> None:
+    """Проверяет отказ на файле состояния чужого формата.
+
+    Молчаливый старт с нуля неотличим от штатной работы и приводит к повторной
+    обработке всего, что уже обработано.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+        tmp_path (Path): Временный каталог.
+
+    Returns:
+        None
+    """
+    state_path = tmp_path / "state.json"
+    state_path.write_text('{"format": "чужой", "payload": {}}', encoding="utf-8")
+
+    orders, chats = _page("orders-trade.logged.ru"), _page("chat.logged.ru")
+    with (
+        Client(transport=_Cycle([orders, chats])) as client,  # type: ignore[arg-type]
+        pytest.raises(StateSchemaIncompatibleError),
+    ):
+        client.watch(Router(), max_iterations=1, state_path=state_path)

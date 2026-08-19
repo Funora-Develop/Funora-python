@@ -230,6 +230,46 @@ class Deduplicator:
             while len(bucket) > self._entries_per_key:
                 bucket.popitem(last=False)
 
+    def snapshot(self) -> dict[str, dict[str, float]]:
+        """Отдаёт состояние гашения в виде обычных значений.
+
+        Нужно для сохранения между запусками. Спецификация требует, чтобы кэш
+        переживал перезапуск: кэш только в памяти означает, что после любого
+        перезапуска повторно приходит всё, что успело прийти до него.
+
+        Returns:
+            dict[str, dict[str, float]]: Ключ упорядочивания, идентификатор
+            события и момент его доставки.
+        """
+        return {key: dict(bucket) for key, bucket in self._seen.items() if bucket}
+
+    def restore(self, state: dict[str, dict[str, float]], now: float) -> int:
+        """Восстанавливает состояние гашения из сохранённого.
+
+        Записи с истёкшим сроком отбрасываются здесь же. Иначе после длинной
+        паузы восстановился бы кэш, который всё равно нельзя использовать, и
+        память тратилась бы на записи, гасящие уже ничего.
+
+        Args:
+            state (dict[str, dict[str, float]]): Сохранённое состояние.
+            now (float): Текущий момент, монотонные секунды.
+
+        Returns:
+            int: Сколько записей восстановлено.
+        """
+        restored = 0
+        for key, bucket in state.items():
+            target: OrderedDict[str, float] = OrderedDict()
+            for event_id, stamp in bucket.items():
+                target[event_id] = stamp
+            self._evict(target, now)
+            while len(target) > self._entries_per_key:
+                target.popitem(last=False)
+            if target:
+                self._seen[key] = target
+                restored += len(target)
+        return restored
+
     def _evict(self, bucket: OrderedDict[str, float], now: float) -> None:
         """Убирает записи, у которых вышел срок.
 

@@ -45,6 +45,7 @@ from ._secret import (
     SecretProvider,
 )
 from ._skeleton import SkeletonError, skeletonize
+from ._state import StateFile
 from ._thread import Message, Origin, Thread, parse_thread
 from ._transport import Fetcher, Observation, TransportSettings
 from ._verdicts import error_for
@@ -120,6 +121,7 @@ __all__ = [
     "Router",
     "StepResult",
     "dispatch",
+    "StateFile",
     # возможности
     "Capability",
     "CapabilityState",
