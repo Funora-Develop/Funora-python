@@ -129,3 +129,50 @@ def test_host_of_extracts_without_port() -> None:
     """
     assert host_of("https://FunPay.com:8443/x") == "funpay.com"
     assert host_of("не адрес") == ""
+
+
+def test_backslash_cannot_pretend_to_be_our_host() -> None:
+    """Проверяет, что обратная косая черта не делает чужой адрес своим.
+
+    Питон разбирает адрес по RFC 3986, браузер - по правилам WHATWG, и здесь они
+    расходятся. Для питона у ``https://evil.example\\.funpay.com/`` хост
+    ``evil.example\\.funpay.com``, и правило «оканчивается на .funpay.com» его
+    принимало. Браузер по тому же адресу идёт на ``evil.example``.
+
+    Расхождение стоило дорого дважды: ссылка в переписке числилась своей, а путь
+    такой ссылки сохранялся в снимке дословно - вместе с написанным там именем.
+
+    Returns:
+        None
+    """
+    hostile = "https://evil.example\\.funpay.com/ivanpetrov"
+
+    assert host_of(hostile) == "", "имя с обратной косой чертой не является именем хоста"
+    assert not same_host(hostile, "funpay.com")
+    assert not is_safe_hop("https://funpay.com/", hostile, "funpay.com")
+
+
+def test_hostname_shape_is_checked() -> None:
+    """Проверяет отбор имён, недопустимых в DNS.
+
+    Направление отказа безопасное во всех трёх местах, где правило применяется:
+    секрет не уходит, ссылка считается чужой, путь маскируется целиком.
+
+    Returns:
+        None
+    """
+    for bad in (
+        "https://evil.example\\.funpay.com/",
+        "https://funpay.com_evil.example/",
+        "https://-funpay.com/",
+        "https://funpay.com-/",
+        "https://пример.рф/",
+    ):
+        assert host_of(bad) == "", f"{bad} принято за имя хоста"
+
+    for good in (
+        "https://funpay.com/",
+        "https://support.funpay.com/",
+        "https://xn--e1afmkfd.xn--p1ai/",
+    ):
+        assert host_of(good), f"{good} отвергнуто, хотя допустимо"

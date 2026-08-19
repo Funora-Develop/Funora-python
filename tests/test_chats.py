@@ -199,3 +199,19 @@ def test_parse_is_deterministic() -> None:
         None
     """
     assert _parse().rows() == _parse().rows()
+
+
+def test_lost_preview_is_loud() -> None:
+    """Проверяет, что потеря превью у всех диалогов заметна.
+
+    Превью стояло вне обоих перечней контроля без единого слова о причине.
+    Соседнее время в них было, и порча его давала partial и полсотни
+    повреждений, а та же порча превью - complete и ноль: разбор объявлял
+    страницу целой, потеряв поле у всех пятидесяти строк.
+
+    Returns:
+        None
+    """
+    page = _parse(_fixture().replace("contact-item-message", "contact-item-preview"))
+    assert page.completeness is not Completeness.COMPLETE
+    assert any(d.field_name == "preview_text" for d in page.defects)

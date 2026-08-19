@@ -234,7 +234,13 @@ def _parse_row(row: Node, index: int) -> tuple[ChatListEntry | None, list[Defect
         time_text=_text(row.css_first(".contact-item-time"), "time_text"),
     )
 
-    for name in ("last_message_position", "own_position", "counterparty_name", "time_text"):
+    for name in (
+        "last_message_position",
+        "own_position",
+        "counterparty_name",
+        "preview_text",
+        "time_text",
+    ):
         if not getattr(entry, name).is_observed:
             defects.append(
                 Defect(
@@ -254,6 +260,11 @@ _PAGE_LEVEL_FIELDS: Final[tuple[str, ...]] = (
     "last_message_position",
     "own_position",
     "counterparty_name",
+    # Превью стояло вне обоих перечней без единого слова о причине. Соседнее
+    # время в них было, и порча его давала partial и полсотни повреждений, а та
+    # же порча превью - complete и ноль: разбор объявлял страницу целой, потеряв
+    # поле у всех пятидесяти строк.
+    "preview_text",
     "time_text",
 )
 
