@@ -22,6 +22,7 @@ import pytest
 from funora._observed import Presence
 from funora._orders import Completeness, Severity, parse_orders_page
 from funora.errors import IncompleteResultError, ProtocolChangedError, UnobservedFieldError
+from funora.extraction import OrderStatus
 
 #: Каталог со снимками страниц.
 FIXTURES = Path(__file__).parent / "fixtures" / "pages"
@@ -149,28 +150,101 @@ def test_field_missing_in_all_rows_is_page_level() -> None:
     assert page.reason == "page_defects"
 
 
-def test_status_is_unobserved_and_reading_it_raises() -> None:
-    """Проверяет честность поля статуса.
+def test_unmapped_carrier_is_not_unknown_status() -> None:
+    """Проверяет честность поля статуса на состоянии, которого нет в таблице.
 
-    Соответствия классов статусам не наблюдалось, поэтому поле обязано быть
-    ненаблюдённым, а не значением unknown. Разница решает, соврёт реализация или
-    нет: unknown означает «прочитали и не опознали», тогда как мы не прочитали.
-
-    Практическое следствие проверяется здесь же: сегодня список заказов не
-    отвечает на вопрос, оплачен ли заказ.
+    Наблюдались два состояния из скольких-то. Носитель, которого в таблице нет,
+    обязан дать ненаблюдённое значение, а не unknown. Разница решает, соврёт
+    реализация или нет: unknown означает «прочитали и не опознали», тогда как мы
+    не прочитали вовсе.
 
     Returns:
         None
     """
-    entry = _parse().rows()[0]
-    assert entry.status.presence is Presence.NOT_OBSERVED
-    assert entry.status.reason == "status_mapping_not_observed"
+    html = _fixture("orders-trade.states.logged.ru").replace(
+        "tc-status text-success", "tc-status text-danger"
+    )
+    entry = _parse(html).rows(accept_incomplete=True)[1]
 
+    assert entry.status.presence is Presence.NOT_OBSERVED
+    assert entry.status.reason == "status_carrier_not_mapped"
     with pytest.raises(UnobservedFieldError):
         _ = entry.status.value
-
     assert entry.status.get("не знаю") == "не знаю"
-    assert "не наблюдалось" in str(entry.status)
+
+    # Носитель при этом сохраняется: по нему и узнают, как выглядит состояние,
+    # которого в таблице ещё нет.
+    assert entry.status_carrier.value == "text-danger"
+
+
+def test_status_is_read_from_both_carriers() -> None:
+    """Проверяет чтение состояния заказа на снимке с двумя состояниями.
+
+    Ожидаемая последовательность взята не из кода, а из страницы: человек
+    прочитал её и назвал слова вместе с цветом, и пять «Оплачен» стоят там же,
+    где голубая подсветка строки.
+
+    Returns:
+        None
+    """
+    page = _parse(_fixture("orders-trade.states.logged.ru"))
+    assert page.completeness is Completeness.COMPLETE
+    assert not page.defects
+
+    assert [e.status.value for e in page.rows()] == [
+        OrderStatus.PAID,
+        OrderStatus.CLOSED,
+        OrderStatus.CLOSED,
+        OrderStatus.PAID,
+        OrderStatus.CLOSED,
+        OrderStatus.PAID,
+        OrderStatus.PAID,
+        OrderStatus.PAID,
+    ]
+
+
+def test_disagreeing_carriers_are_loud() -> None:
+    """Проверяет, что расхождение носителей не сводится к одному из ответов.
+
+    Главная проверка набора. Ради неё носителей и читается два: переименуй
+    площадка любой из них - и второй не согласится. Молча выбрать один значило
+    бы угадывать там, где ответ - «оплачен ли заказ», то есть решение бота
+    выдавать товар.
+
+    Returns:
+        None
+    """
+    # Модификатор строки снят у оплаченного заказа, ячейка не тронута. Так
+    # выглядело бы переименование info в что-нибудь другое.
+    html = _fixture("orders-trade.states.logged.ru").replace(
+        '<a class="tc-item info"', '<a class="tc-item"', 1
+    )
+    page = _parse(html)
+
+    entry = page.rows(accept_incomplete=True)[0]
+    assert entry.status.presence is Presence.NOT_OBSERVED
+    assert entry.status.reason == "status_carriers_disagree"
+
+    codes = {(d.field_name, d.code) for d in page.defects}
+    assert ("status", "status_carriers_disagree") in codes
+
+
+def test_renamed_status_class_does_not_change_the_answer_quietly() -> None:
+    """Проверяет, что переименование цветового класса не меняет ответ молча.
+
+    Обратная сторона предыдущей проверки: ломается второй носитель, а не первый.
+
+    Returns:
+        None
+    """
+    html = _fixture("orders-trade.states.logged.ru").replace("text-primary", "text-blue")
+    page = _parse(html)
+
+    for entry in page.rows(accept_incomplete=True):
+        if entry.status_carrier.value == "text-blue":
+            assert entry.status.presence is Presence.NOT_OBSERVED, (
+                "переименованный класс дал значение вместо отказа"
+            )
 
 
 def test_status_carrier_is_the_class_not_the_text() -> None:
@@ -313,13 +387,35 @@ def test_offline_marker_is_read_as_absence() -> None:
     assert all(e.counterparty_online.value is False for e in entries)
 
 
-def test_absent_offline_marker_does_not_mean_online() -> None:
-    """Проверяет, что снятый маркер отсутствия не превращается в присутствие.
+def test_presence_is_read_in_both_directions() -> None:
+    """Проверяет чтение присутствия на снимке, где есть оба класса.
 
-    Вывод по отрицанию опирался бы на имя класса, которого мы не выбирали.
-    Площадка помечает отсутствие, но положительного маркера присутствия не
-    наблюдалось ни в одном снимке, и «раз не offline, значит online» - догадка,
-    а не наблюдение.
+    Снимок сделан в момент, когда трое покупателей были в сети. До него
+    наблюдался только offline, и признак был односторонним.
+
+    Returns:
+        None
+    """
+    page = _parse(_fixture("orders-trade.states.logged.ru"))
+    assert [e.counterparty_online.value for e in page.rows()] == [
+        False,
+        False,
+        False,
+        False,
+        False,
+        True,
+        True,
+        True,
+    ]
+
+
+def test_absent_marker_does_not_mean_online() -> None:
+    """Проверяет, что снятый маркер не превращается в присутствие.
+
+    Словарь классов закрыт по наблюдению, но не по умолчанию. Правило «нет
+    offline, значит online» выглядело бы работающим ровно до переименования
+    класса: стань он is-offline - и каждый контрагент молча оказался бы
+    присутствующим.
 
     Returns:
         None
@@ -327,9 +423,24 @@ def test_absent_offline_marker_does_not_mean_online() -> None:
     page = _parse(_fixture().replace("media media-user offline", "media media-user"))
     entry = page.rows()[0]
     assert entry.counterparty_online.presence is Presence.NOT_OBSERVED
-    assert entry.counterparty_online.reason == "presence_positive_marker_not_observed"
+    assert entry.counterparty_online.reason == "presence_marker_not_recognised"
     with pytest.raises(UnobservedFieldError):
         _ = entry.counterparty_online.value
+
+
+def test_two_presence_markers_at_once_are_not_observed() -> None:
+    """Проверяет, что противоречивая разметка не даёт ответа.
+
+    Разметка, объявляющая пользователя одновременно в сети и не в сети, ответа
+    не содержит, и выбрать один из двух классов было бы выдумкой.
+
+    Returns:
+        None
+    """
+    page = _parse(_fixture().replace("media media-user offline", "media media-user offline online"))
+    entry = page.rows()[0]
+    assert entry.counterparty_online.presence is Presence.NOT_OBSERVED
+    assert entry.counterparty_online.reason == "presence_marker_not_recognised"
 
 
 def test_renamed_offline_class_does_not_invent_presence() -> None:

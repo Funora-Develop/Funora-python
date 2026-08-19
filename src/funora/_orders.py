@@ -16,17 +16,23 @@
 класса строки нечем. Это сознательно неудобно и станет полнотой COMPLETE в тот
 день, когда снимок появится, - расширением наблюдений, а не догадкой.
 
-Присутствие контрагента читается в одну сторону. Отсутствие помечено классом
-offline, положительного маркера присутствия не наблюдалось, и вывод по
-отрицанию опирался бы на имя чужого класса: переименуй площадка его - и каждый
-контрагент молча стал бы присутствующим. Поэтому «не offline» даёт
-ненаблюдённое значение.
+Присутствие контрагента читается по словарю классов, а не по отрицанию.
+Площадка помечает оба состояния явно - online и offline, - и снимок, сделанный
+в момент, когда трое покупателей были в сети, дал оба класса разом. Правило
+«нет offline, значит online» осталось запрещённым: оно выглядело бы работающим
+ровно до переименования класса, а неузнанный класс честнее объявить
+ненаблюдённым.
 
-Статус заказа не читается вовсе. Соответствия классов статусам не наблюдалось,
-и spec/extraction/orders.yaml прямо требует выдавать поле ненаблюдённым, а не
-значением unknown: второе означало бы, что статус прочитан и не опознан, тогда
-как он не прочитан. Практическое следствие называется прямо - сегодня список
-заказов не отвечает на вопрос, оплачен ли заказ.
+Состояние заказа читается по двум независимым носителям сразу: цветовому классу
+ячейки и модификатору строки. Оба структурные, оба локализации не подвержены, и
+в наблюдении они совпали во всех восьми строках. Совпадение используется как
+проверка, а не выбрасывается: переименуй площадка любой из носителей - и второй
+не согласится, а разбор скажет об этом вслух вместо того, чтобы молча поменять
+ответ. Ответ здесь - «оплачен ли заказ», то есть решение бота выдавать товар.
+
+Наблюдались два состояния из скольких-то. Носитель, которого нет в таблице,
+даёт ненаблюдённое значение, а не unknown: второе означало бы, что состояние
+прочитано и не опознано, тогда как оно не прочитано вовсе.
 """
 
 from __future__ import annotations
@@ -41,6 +47,12 @@ from selectolax.parser import HTMLParser, Node
 from ._observed import Confidence, Observed
 from ._result import Completeness, Defect, Severity, collect_rows
 from .errors import IncompleteResultError, ProtocolChangedError
+from .extraction import (
+    PRESENCE_BY_CLASS,
+    STATUS_BY_CELL_CLASS,
+    STATUS_BY_ROW_CLASS,
+    OrderStatus,
+)
 
 __all__ = [
     "Severity",
@@ -83,11 +95,15 @@ class OrderListEntry:
         order_id (str): Идентификатор заказа из адреса строки.
         href (str): Адрес страницы заказа.
         row_index (int): Порядковый номер строки на странице, с нуля.
-        status (Observed[str]): Статус заказа. Сегодня всегда ненаблюдаем:
-            соответствия классов статусам не наблюдалось.
-        status_carrier (Observed[str]): Цветовой класс ячейки статуса. Читается
-            класс, а не текст: текст локализован, и составить по нему
-            соответствие статусам нельзя.
+        status (Observed[OrderStatus]): Состояние заказа. Читается по двум
+            независимым структурным носителям сразу; расходятся - значение
+            ненаблюдённое и повреждение уровня поля. Наблюдались два состояния
+            из скольких-то, и носитель вне таблицы тоже даёт ненаблюдённое
+            значение, а не unknown.
+        status_carrier (Observed[str]): Цветовой класс ячейки статуса как он
+            есть. Читается класс, а не текст: текст локализован. Поле остаётся
+            и после того, как соответствие установлено, - по нему узнают, как
+            выглядит состояние, которого в таблице ещё нет.
         order_number_text (Observed[str]): Видимый номер заказа, текст.
         description_text (Observed[str]): Описание заказа, текст.
         counterparty_name (Observed[str]): Имя контрагента, текст.
@@ -102,7 +118,7 @@ class OrderListEntry:
     order_id: str
     href: str
     row_index: int
-    status: Observed[str]
+    status: Observed[OrderStatus]
     status_carrier: Observed[str]
     order_number_text: Observed[str]
     description_text: Observed[str]
@@ -193,6 +209,23 @@ def _text(node: Node | None, name: str) -> Observed[str]:
     return Observed.present(value) if value else Observed.empty("")
 
 
+def _classes(node: Node | None, *, without: str) -> frozenset[str]:
+    """Возвращает классы узла без общего, по которому он найден.
+
+    Args:
+        node (Node | None): Узел либо None.
+        without (str): Класс, который нужно отбросить: он одинаков у всех и
+            ничего не различает.
+
+    Returns:
+        frozenset[str]: Оставшиеся классы. Пустое множество, если узла нет.
+    """
+    if node is None:
+        return frozenset()
+    raw = (node.attributes or {}).get("class") or ""
+    return frozenset(raw.split()) - {without}
+
+
 def _carrier(node: Node | None) -> Observed[str]:
     """Извлекает класс-носитель статуса.
 
@@ -204,44 +237,100 @@ def _carrier(node: Node | None) -> Observed[str]:
     Args:
         node (Node | None): Узел ячейки статуса.
 
+    Поле остаётся и после того, как соответствие носителей состояниям
+    установлено. Наблюдались два состояния из скольких-то, и когда встретится
+    третье, узнать, как оно выглядит, можно будет только отсюда: само поле
+    статуса на нём окажется ненаблюдённым.
+
+    Args:
+        node (Node | None): Узел ячейки статуса.
+
     Returns:
         Observed[str]: Цветовой класс ячейки без общего класса tc-status.
     """
     if node is None:
         return Observed.missing("selector_no_match:status_carrier")
-    raw = (node.attributes or {}).get("class") or ""
-    classes = [c for c in raw.split() if c != "tc-status"]
+    classes = sorted(_classes(node, without="tc-status"))
     return Observed.present(" ".join(classes)) if classes else Observed.empty("")
 
 
 def _presence(media: Node | None) -> Observed[bool]:
     """Читает признак присутствия контрагента.
 
-    Присутствие выдаётся значением только в одну сторону. Площадка помечает
-    отсутствие классом ``offline``; положительного маркера присутствия не
-    наблюдалось ни в одном снимке. Вывод «раз не offline, значит online» опирался
-    бы на имя класса, которого мы не выбирали: стоило бы переименовать его в
-    ``is-offline``, и каждый контрагент молча стал бы присутствующим - без
-    повреждения, без исключения, без строки в журнале. Это ровно тот
-    правдоподобный неверный ответ, о неверности которого узнать неоткуда.
+    Словарь классов закрыт по наблюдению, но не по умолчанию. Площадка помечает
+    оба состояния явно: ``online`` и ``offline``, - и снимок, сделанный в момент,
+    когда трое покупателей были в сети, дал оба класса разом.
 
-    Поэтому отсутствие ``offline`` даёт ненаблюдённое значение, а не True.
-    Ограничение снимется снимком строки с присутствующим контрагентом.
+    Вывод по отрицанию при этом остаётся запрещённым. Правило «нет offline,
+    значит online» выглядело бы работающим ровно до переименования класса:
+    стань он ``is-offline``, и каждый контрагент молча оказался бы
+    присутствующим - без повреждения, без исключения, без строки в журнале.
+    Поэтому неузнанный класс даёт ненаблюдённое значение, а не догадку.
+
+    Два маркера сразу - тоже неузнанное состояние: разметка, объявляющая
+    пользователя одновременно в сети и не в сети, не даёт ответа, и выбирать
+    один из двух было бы выдумкой.
 
     Args:
         media (Node | None): Узел карточки пользователя внутри ячейки
             контрагента либо None, если селектор не нашёл её.
 
     Returns:
-        Observed[bool]: False, если наблюдён маркер отсутствия; иначе
-        ненаблюдённое значение с указанием причины.
+        Observed[bool]: True либо False по наблюдённому классу; ненаблюдённое
+        значение, если класс не узнан либо узнаны сразу два.
     """
     if media is None:
         return Observed.missing("selector_no_match:counterparty_online")
-    classes = (media.attributes or {}).get("class") or ""
-    if "offline" in classes.split():
-        return Observed.present(False, Confidence.OBSERVED)
-    return Observed.missing("presence_positive_marker_not_observed")
+    hits = {name for name in _classes(media, without="media-user") if name in PRESENCE_BY_CLASS}
+    if len(hits) != 1:
+        return Observed.missing("presence_marker_not_recognised")
+    return Observed.present(PRESENCE_BY_CLASS[hits.pop()], Confidence.OBSERVED)
+
+
+def _status(row: Node) -> tuple[Observed[OrderStatus], str | None]:
+    """Читает состояние заказа по двум независимым носителям.
+
+    Носителя два, и оба структурные: цветовой класс ячейки статуса и модификатор
+    самой строки. Читаются оба. В наблюдении они совпали во всех восьми строках,
+    и это свойство используется как проверка, а не выбрасывается: переименуй
+    площадка любой из них - и второй не согласится.
+
+    Читать один носитель было бы дешевле и хуже. Смена вёрстки поменяла бы
+    ответ молча, а ответ здесь - это «оплачен ли заказ», то есть решение бота
+    выдавать товар.
+
+    Носители несимметричны, и это стоит знать. Класс ячейки положителен в обе
+    стороны: ``text-primary`` и ``text-success`` оба присутствуют в разметке.
+    Модификатор строки положителен только для оплаченного (``info``), а
+    закрытый узнаётся по его отсутствию. Само по себе такое чтение было бы
+    догадкой - но как второй голос оно годится: расхождение здесь громкое, а не
+    молчаливое.
+
+    Args:
+        row (Node): Узел строки заказа.
+
+    Returns:
+        tuple[Observed[OrderStatus], str | None]: Состояние и причина
+        повреждения, если носители разошлись между собой.
+    """
+    cell = row.css_first(".tc-status")
+    if cell is None:
+        return Observed.missing("selector_no_match:status"), None
+
+    by_cell = STATUS_BY_CELL_CLASS.get(" ".join(sorted(_classes(cell, without="tc-status"))))
+    by_row = STATUS_BY_ROW_CLASS.get(" ".join(sorted(_classes(row, without="tc-item"))))
+
+    if by_cell is None or by_row is None:
+        # Состояние на странице есть, но в наблюдённой таблице его нет. Это не
+        # unknown: unknown означал бы, что состояние прочитано и не опознано,
+        # тогда как оно не прочитано вовсе. Носитель при этом сохраняется в
+        # status_carrier - по нему и узнают, как выглядит новое состояние.
+        return Observed.missing("status_carrier_not_mapped"), None
+
+    if by_cell is not by_row:
+        return Observed.missing("status_carriers_disagree"), "status_carriers_disagree"
+
+    return Observed.present(by_cell, Confidence.OBSERVED), None
 
 
 def _parse_row(row: Node, index: int) -> tuple[OrderListEntry | None, list[Defect]]:
@@ -281,15 +370,27 @@ def _parse_row(row: Node, index: int) -> tuple[OrderListEntry | None, list[Defec
     user_link = row.css_first(".tc-user [data-href]")
     media = row.css_first(".tc-user .media-user")
     online = _presence(media)
+    status, disagreement = _status(row)
+    if disagreement is not None:
+        # Расхождение носителей - не мелочь и не косметика. Оно означает, что
+        # разметка изменилась, и любой из двух ответов может быть неверным.
+        # Выбрать один значило бы угадывать там, где угадывать нельзя: ответ
+        # здесь - это «оплачен ли заказ».
+        defects.append(
+            Defect(
+                severity=Severity.FIELD,
+                code=disagreement,
+                detail="цветовой класс ячейки и модификатор строки говорят о разном",
+                row_index=index,
+                field_name="status",
+            )
+        )
 
     entry = OrderListEntry(
         order_id=match.group(1),
         href=href,
         row_index=index,
-        # Статус не читается принципиально: соответствия классов статусам не
-        # наблюдалось. Выдать здесь unknown значило бы утверждать, что статус
-        # прочитан и не опознан, тогда как он не прочитан вовсе.
-        status=Observed.missing("status_mapping_not_observed"),
+        status=status,
         status_carrier=_carrier(row.css_first(".tc-status")),
         order_number_text=_text(row.css_first(".tc-order"), "order_number_text"),
         description_text=_text(row.css_first(".order-desc"), "description_text"),

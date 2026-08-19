@@ -762,6 +762,118 @@ def render_events(spec: Path) -> str:
     return "".join(out)
 
 
+def render_extraction(spec: Path) -> str:
+    """Порождает словари извлечения: статусы заказа и присутствие контрагента.
+
+    Оба словаря - контракт, а не деталь реализации. Шесть SDK обязаны
+    согласиться в том, что класс text-primary означает оплаченный заказ, а класс
+    online - присутствующего собеседника. Разойдись они здесь - и один бот
+    выдавал бы товар там, где другой ждал бы оплаты.
+
+    Args:
+        spec (Path): Корень рабочей копии Funora-spec.
+
+    Returns:
+        str: Содержимое модуля.
+
+    Raises:
+        ValueError: Если спецификация закрыла перечисление статусов либо
+            соответствие носителей статусам пусто.
+    """
+    doc = _load(spec, "spec/extraction/orders.yaml")
+    mapping = doc["status_mapping"]
+    entries: list[dict[str, Any]] = mapping["entries"]
+    presence: dict[str, bool] = doc["fields"]["counterparty_online"]["vocabulary"]
+
+    if not mapping.get("enum_is_open"):
+        raise ValueError(
+            "spec/extraction/orders.yaml: перечисление статусов обязано остаться "
+            "открытым - наблюдались не все состояния, и закрытое перечисление "
+            "отвергало бы остальные как ошибочные"
+        )
+    if not entries:
+        raise ValueError("spec/extraction/orders.yaml: соответствие носителей статусам пусто")
+    if not presence:
+        raise ValueError("spec/extraction/orders.yaml: словарь присутствия пуст")
+
+    extra = (
+        "Носителей статуса два, и оба структурные: цветовой класс ячейки и\n"
+        "модификатор строки. Читать надо ОБА. В наблюдении они совпали во всех\n"
+        "восьми строках, и это свойство здесь используется как проверка: два\n"
+        "независимых носителя ловят переименование любого из них, а один -\n"
+        "меняет ответ молча.\n"
+        "\n"
+        "Перечисления открытые. Носитель, которого нет в словаре, даёт\n"
+        "ненаблюдённое значение, а не unknown: unknown означал бы, что состояние\n"
+        "прочитано и не опознано, тогда как оно не прочитано вовсе.\n"
+    )
+
+    out = [
+        HEADER.format(
+            title="Словари извлечения: статусы заказа и присутствие контрагента.",
+            source="spec/extraction/orders.yaml",
+            extra=extra,
+        ).replace(
+            "from typing import ClassVar, Final",
+            "from enum import StrEnum\nfrom typing import Final",
+        )
+    ]
+
+    out.append("__all__ = [\n")
+    for name in ("OrderStatus", "STATUS_BY_CELL_CLASS", "STATUS_BY_ROW_CLASS", "PRESENCE_BY_CLASS"):
+        out.append('    "' + name + '",\n')
+    out.append("]\n")
+
+    out.append("\n\nclass OrderStatus(StrEnum):\n")
+    out.append('    """Состояние заказа, каким его показывает список продаж.\n\n')
+    out.append("    Значение совпадает с именем состояния в спецификации: оно уходит в\n")
+    out.append("    событие и в журнал, где обязано совпадать между всеми реализациями.\n")
+    out.append('    """\n\n')
+    for entry in entries:
+        out.append("    " + _const(entry["status"]) + ' = "' + entry["status"] + '"\n')
+
+    out.append("\n\n#: Статус по цветовому классу ячейки.\n")
+    out.append("STATUS_BY_CELL_CLASS: Final[dict[str, OrderStatus]] = {\n")
+    for entry in entries:
+        out.append(
+            '    "'
+            + entry["cell_class"]
+            + '": OrderStatus.'
+            + _const(entry["status"])
+            + ",  # "
+            + entry["display_ru"]
+            + "\n"
+        )
+    out.append("}\n")
+
+    out.append("\n#: Статус по модификатору строки. Пустая строка - строка без модификатора.\n")
+    out.append("STATUS_BY_ROW_CLASS: Final[dict[str, OrderStatus]] = {\n")
+    for entry in entries:
+        out.append(
+            '    "'
+            + entry["row_class"]
+            + '": OrderStatus.'
+            + _const(entry["status"])
+            + ",  # "
+            + entry["display_ru"]
+            + "\n"
+        )
+    out.append("}\n")
+
+    out.append("\n#: Присутствие контрагента по классу карточки пользователя.\n")
+    out.append("#:\n")
+    out.append("#: Словарь закрыт по наблюдению, но не по умолчанию: класса, которого\n")
+    out.append("#: здесь нет, достаточно, чтобы признак стал ненаблюдённым. Правило\n")
+    out.append("#: «нет offline, значит online» запрещено - переименуй площадка класс, и\n")
+    out.append("#: каждый контрагент молча стал бы присутствующим.\n")
+    out.append("PRESENCE_BY_CLASS: Final[dict[str, bool]] = {\n")
+    for name, value in presence.items():
+        out.append('    "' + name + '": ' + str(bool(value)) + ",\n")
+    out.append("}\n")
+
+    return "".join(out)
+
+
 #: Что порождается: имя файла в пакете и функция, которая его строит.
 TARGETS: Final[dict[str, Callable[[Path], str]]] = {
     "errors.py": render_errors,
@@ -770,6 +882,7 @@ TARGETS: Final[dict[str, Callable[[Path], str]]] = {
     "retry.py": render_retry,
     "budget.py": render_budget,
     "events.py": render_events,
+    "extraction.py": render_extraction,
 }
 
 

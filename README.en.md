@@ -70,10 +70,21 @@ Write operations are not implemented. This is a read-only SDK for now.
 Sections like this are usually buried. It sits in plain view because everything
 listed affects whether this library is worth taking today.
 
-**It does not answer whether an order is paid.** We have not observed how markup
-classes map to statuses, so the status field is reported as unobserved rather
-than as `unknown`. The latter would claim we read the status and failed to
-recognise it, when in fact we did not read it at all.
+**It tells apart two order states out of however many exist.** It reads `paid`
+and `closed`; refunds, disputes and rejections exist but never made it into a
+snapshot, and we have seen no carriers for them. An order in a third state yields
+an unobserved value - not the nearest match and not `unknown`. The latter would
+claim we read the status and failed to recognise it, when in fact we did not read
+it at all.
+
+The practical consequence: a handler shaped like «if not `closed`, we owe
+delivery» will behave on such an order in a way its author did not intend. Ask
+about a specific state, and handle separately the case where the state was not
+read.
+
+And `paid` itself is not financial confirmation. It means the marketplace shows
+the paid state in the sales section; it can be reversed after the fact, and it
+does not replace your own check where the cost of being wrong is high.
 
 **It gives neither a numeric amount nor an exact time.** There is no
 machine-readable time on the orders page at all, and no currency was observed.
@@ -147,7 +158,7 @@ Read [CONTRIBUTING.md](https://github.com/Funora-Develop/.github/blob/main/CONTR
 
 Three things help most right now.
 
-Snapshots of pages in states we do not have: orders in different statuses, an
+Snapshots of pages in states we do not have: an order in refund or dispute, an
 unread dialog, a long list with pagination. Each one closes an item in
 [docs/protocol-questions.md](docs/protocol-questions.md).
 

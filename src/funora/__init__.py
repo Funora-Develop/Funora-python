@@ -70,6 +70,12 @@ from ._watch import Router, StepResult, adispatch, dispatch
 from .capabilities import CAPABILITY_INITIAL, Capability, CapabilityState
 from .errors import ERROR_BY_ABI_CODE, ERROR_BY_STABLE_ID, FunoraError
 from .events import EventType
+from .extraction import (
+    PRESENCE_BY_CLASS,
+    STATUS_BY_CELL_CLASS,
+    STATUS_BY_ROW_CLASS,
+    OrderStatus,
+)
 
 __version__ = "0.0.1.dev0"
 
@@ -122,6 +128,14 @@ __all__ = [
     # список заказов
     "parse_orders_page",
     "OrdersPage",
+    "OrderStatus",
+    "STATUS_BY_CELL_CLASS",
+    "STATUS_BY_ROW_CLASS",
+    "PRESENCE_BY_CLASS",
+    "OrderStatus",
+    "STATUS_BY_CELL_CLASS",
+    "STATUS_BY_ROW_CLASS",
+    "PRESENCE_BY_CLASS",
     "OrderListEntry",
     "Completeness",
     "Defect",
