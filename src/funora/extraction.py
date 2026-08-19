@@ -23,7 +23,7 @@ from typing import Final
 __all__ = [
     "OrderStatus",
     "STATUS_BY_CELL_CLASS",
-    "STATUS_BY_ROW_CLASS",
+    "ROW_MARKER_BY_STATUS",
     "PRESENCE_BY_CLASS",
 ]
 
@@ -45,10 +45,15 @@ STATUS_BY_CELL_CLASS: Final[dict[str, OrderStatus]] = {
     "text-success": OrderStatus.CLOSED,  # Закрыт
 }
 
-#: Статус по модификатору строки. Пустая строка - строка без модификатора.
-STATUS_BY_ROW_CLASS: Final[dict[str, OrderStatus]] = {
-    "info": OrderStatus.PAID,  # Оплачен
-    "": OrderStatus.CLOSED,  # Закрыт
+#: Модификатор строки для состояний, у которых он наблюдался.
+#:
+#: Носитель односторонний. Модификатор стоит у оплаченного заказа, а
+#: закрытый узнаётся по его отсутствию - и отсутствие само по себе не
+#: свидетельство: под ним с равным успехом лежит переименование класса.
+#: Поэтому модификатор служит проверкой в одну сторону, а состояние
+#: берётся из класса ячейки.
+ROW_MARKER_BY_STATUS: Final[dict[OrderStatus, str]] = {
+    OrderStatus.PAID: "info",  # Оплачен
 }
 
 #: Присутствие контрагента по классу карточки пользователя.

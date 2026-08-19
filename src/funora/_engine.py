@@ -40,7 +40,14 @@ from typing import Final
 from ._budget import Budget
 from ._chats import ChatsPage, parse_chats_page
 from ._classify import DEFAULT_IDENTITY_CSS, classify
-from ._diff import Event, chats_cursor, diff_chats, diff_orders, orders_cursor
+from ._diff import (
+    UNREAD_STATUS,
+    Event,
+    chats_cursor,
+    diff_chats,
+    diff_orders,
+    orders_cursor,
+)
 from ._gate import check_capability
 from ._host import host_of
 from ._orders import Completeness, OrdersPage, parse_orders_page
@@ -438,7 +445,7 @@ class Engine:
         dedup = Deduplicator()
         state = StateFile(state_path) if state_path is not None else None
 
-        known_orders: frozenset[str] | None = None
+        known_orders: dict[str, str] | None = None
         known_chats: dict[str, str] | None = None
 
         if state is not None:
@@ -452,8 +459,15 @@ class Engine:
             # простой: заказ, оплаченный между остановкой и стартом, не порождал
             # события никогда - ни исключения, ни строки в журнале.
             cursor = stored.get("cursor") or {}
-            if cursor.get("orders") is not None:
-                known_orders = frozenset(cursor["orders"])
+            saved_orders = cursor.get("orders")
+            if isinstance(saved_orders, dict):
+                known_orders = dict(saved_orders)
+            elif saved_orders is not None:
+                # Курсор прежней редакции - список идентификаторов без состояний.
+                # Читается как «заказы известны, состояния нет»: так перезапуск
+                # не порождает лавину событий о создании, а событие об изменении
+                # не выдумывается из непрочитанного состояния.
+                known_orders = dict.fromkeys(saved_orders, UNREAD_STATUS)
             if cursor.get("chats") is not None:
                 known_chats = dict(cursor["chats"])
             if known_orders is not None or known_chats is not None:
@@ -518,7 +532,7 @@ class Engine:
                     {
                         "dedup": dedup.snapshot(),
                         "cursor": {
-                            "orders": sorted(known_orders) if known_orders is not None else None,
+                            "orders": known_orders,
                             "chats": known_chats,
                         },
                     }

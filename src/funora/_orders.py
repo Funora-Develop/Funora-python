@@ -23,12 +23,21 @@
 ровно до переименования класса, а неузнанный класс честнее объявить
 ненаблюдённым.
 
-Состояние заказа читается по двум независимым носителям сразу: цветовому классу
-ячейки и модификатору строки. Оба структурные, оба локализации не подвержены, и
-в наблюдении они совпали во всех восьми строках. Совпадение используется как
-проверка, а не выбрасывается: переименуй площадка любой из носителей - и второй
-не согласится, а разбор скажет об этом вслух вместо того, чтобы молча поменять
-ответ. Ответ здесь - «оплачен ли заказ», то есть решение бота выдавать товар.
+Состояние заказа читается по двум структурным носителям, но роли у них разные.
+Класс ячейки положителен в обе стороны и служит источником; модификатор строки
+положителен только для оплаченного и служит проверкой в одну сторону. Закрытый
+заказ узнаётся по отсутствию модификатора, а отсутствие само по себе не
+свидетельство: под ним с равным успехом лежит переименование класса.
+
+Расхождение носителей громкое. Переименуй площадка ту половину разметки, что
+несёт положительный признак, - и второй носитель не согласится, а разбор скажет
+об этом вслух вместо того, чтобы молча поменять ответ. Ответ здесь - «оплачен ли
+заказ», то есть решение бота выдавать товар.
+
+Опознаются классы пересечением с наблюдённым перечнем, а не сравнением строки
+классов целиком. Разница не косметическая: при точном сравнении добавленный
+площадкой hidden-xs делал бы состояние нечитаемым на всех строках сразу, при
+полноте complete и нуле повреждений.
 
 Наблюдались два состояния из скольких-то. Носитель, которого нет в таблице,
 даёт ненаблюдённое значение, а не unknown: второе означало бы, что состояние
@@ -49,8 +58,8 @@ from ._result import Completeness, Defect, Severity, collect_rows
 from .errors import IncompleteResultError, ProtocolChangedError
 from .extraction import (
     PRESENCE_BY_CLASS,
+    ROW_MARKER_BY_STATUS,
     STATUS_BY_CELL_CLASS,
-    STATUS_BY_ROW_CLASS,
     OrderStatus,
 )
 
@@ -87,9 +96,11 @@ class OrderListEntry:
     """Сокращённая запись заказа, прочитанная из списка.
 
     Не Order и намеренно отличается от него типом. Полную запись из списка
-    собрать нельзя: страница не даёт ни валюты, ни машиночитаемого времени,
-    ни ролей сторон. Поля, которых там нет структурно, в этом типе отсутствуют,
-    а не лежат в нём как None - прочитать их нельзя даже по ошибке.
+    собрать нельзя: страница не даёт ни кода валюты, ни машиночитаемого
+    времени, ни ролей сторон. Символ валюты есть, но символ и код не в
+    однозначном соответствии, а тип money требует именно кода. Поля, которых
+    там нет структурно, в этом типе отсутствуют, а не лежат в нём как None -
+    прочитать их нельзя даже по ошибке.
 
     Attributes:
         order_id (str): Идентификатор заказа из адреса строки.
@@ -105,14 +116,23 @@ class OrderListEntry:
             и после того, как соответствие установлено, - по нему узнают, как
             выглядит состояние, которого в таблице ещё нет.
         order_number_text (Observed[str]): Видимый номер заказа, текст.
-        description_text (Observed[str]): Описание заказа, текст.
+        description_text (Observed[str]): Название лота, текст. Только первый
+            узел описания: текст контейнера целиком склеивал бы название с
+            разделом, и граница между ними ничем не помечена.
+        category_text (Observed[str]): Раздел лота, текст.
         counterparty_name (Observed[str]): Имя контрагента, текст.
         counterparty_href (Observed[str]): Адрес профиля контрагента.
         counterparty_online (Observed[bool]): Признак присутствия контрагента.
         amount_text (Observed[str]): Сумма, текст. Числом не разбирается:
-            валюты на странице нет.
-        time_text (Observed[str]): Время заказа, текст. Точного момента
-            страница не даёт вовсе.
+            символ валюты есть, а кода по стандарту - нет, и собрать money
+            из символа нельзя.
+        currency_symbol_text (Observed[str]): Символ валюты, текст. Лежит в
+            отдельном узле ячейки цены.
+        time_text (Observed[str]): Время заказа, текст. Наблюдались
+            относительные метки вида «сегодня, 13:56»: точного момента страница
+            не даёт вовсе.
+        time_ago_text (Observed[str]): Давность заказа, текст. Именно давность,
+            а не остаток срока, хотя имя класса подсказывает второе.
     """
 
     order_id: str
@@ -122,11 +142,14 @@ class OrderListEntry:
     status_carrier: Observed[str]
     order_number_text: Observed[str]
     description_text: Observed[str]
+    category_text: Observed[str]
     counterparty_name: Observed[str]
     counterparty_href: Observed[str]
     counterparty_online: Observed[bool]
     amount_text: Observed[str]
+    currency_symbol_text: Observed[str]
     time_text: Observed[str]
+    time_ago_text: Observed[str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,6 +229,29 @@ def _text(node: Node | None, name: str) -> Observed[str]:
     if node is None:
         return Observed.missing(f"selector_no_match:{name}")
     value = " ".join((node.text() or "").split())
+    return Observed.present(value) if value else Observed.empty("")
+
+
+def _attribute(node: Node | None, name: str, field_name: str) -> Observed[str]:
+    """Извлекает значение атрибута как наблюдаемое значение.
+
+    Пустой атрибут даёт пустое значение, а не наблюдение. Разница здесь та же,
+    что и всюду в этом модуле, но цена у неё выше обычной: пустая строка,
+    выданная как наблюдённый адрес, подставится в запрос и уведёт его неизвестно
+    куда.
+
+    Args:
+        node (Node | None): Узел либо None, если селектор не нашёл ничего.
+        name (str): Имя атрибута.
+        field_name (str): Имя поля для причины отсутствия.
+
+    Returns:
+        Observed[str]: Наблюдение. Отсутствие узла, отсутствие атрибута и пустое
+        значение различаются.
+    """
+    if node is None:
+        return Observed.missing(f"selector_no_match:{field_name}")
+    value = ((node.attributes or {}).get(name) or "").strip()
     return Observed.present(value) if value else Observed.empty("")
 
 
@@ -299,12 +345,25 @@ def _status(row: Node) -> tuple[Observed[OrderStatus], str | None]:
     ответ молча, а ответ здесь - это «оплачен ли заказ», то есть решение бота
     выдавать товар.
 
-    Носители несимметричны, и это стоит знать. Класс ячейки положителен в обе
-    стороны: ``text-primary`` и ``text-success`` оба присутствуют в разметке.
-    Модификатор строки положителен только для оплаченного (``info``), а
-    закрытый узнаётся по его отсутствию. Само по себе такое чтение было бы
-    догадкой - но как второй голос оно годится: расхождение здесь громкое, а не
-    молчаливое.
+    Роли у носителей разные, и разница существенна.
+
+    Класс ячейки положителен в обе стороны: и оплаченный, и закрытый заказ несут
+    свой класс. Это основной носитель, и состояние берётся из него. Опознаётся
+    он пересечением классов узла с наблюдённым перечнем, а не сравнением строки
+    классов целиком: ячейка вправе нести и косметические классы, и требование
+    точного совпадения делало бы состояние нечитаемым от добавления
+    ``hidden-xs`` - на всех строках сразу и без единого повреждения.
+
+    Модификатор строки положителен только для оплаченного. Закрытый узнаётся по
+    отсутствию ``info``, а отсутствие само по себе не свидетельство: под ним с
+    равным успехом лежит переименование класса. Поэтому модификатор служит
+    проверкой в одну сторону - ``info`` обязан стоять там и только там, где
+    ячейка говорит ``paid``.
+
+    Отсюда и разница между двумя видами отказа. Ячейка не опознана, но ``info``
+    стоит - разметка изменилась, и об этом надо сказать вслух. Ячейка не
+    опознана и ``info`` не стоит - так выглядит состояние, которого в таблице
+    ещё нет, и повреждением это не является.
 
     Args:
         row (Node): Узел строки заказа.
@@ -317,17 +376,21 @@ def _status(row: Node) -> tuple[Observed[OrderStatus], str | None]:
     if cell is None:
         return Observed.missing("selector_no_match:status"), None
 
-    by_cell = STATUS_BY_CELL_CLASS.get(" ".join(sorted(_classes(cell, without="tc-status"))))
-    by_row = STATUS_BY_ROW_CLASS.get(" ".join(sorted(_classes(row, without="tc-item"))))
+    marks = _classes(cell, without="tc-status") & set(STATUS_BY_CELL_CLASS)
+    marked_paid = ROW_MARKER_BY_STATUS[OrderStatus.PAID] in _classes(row, without="tc-item")
 
-    if by_cell is None or by_row is None:
-        # Состояние на странице есть, но в наблюдённой таблице его нет. Это не
-        # unknown: unknown означал бы, что состояние прочитано и не опознано,
-        # тогда как оно не прочитано вовсе. Носитель при этом сохраняется в
-        # status_carrier - по нему и узнают, как выглядит новое состояние.
+    if len(marks) != 1:
+        # Ноль - состояние, которого в таблице нет; больше одного - разметка
+        # объявляет два состояния сразу, и выбрать одно было бы выдумкой.
+        if marked_paid:
+            return (
+                Observed.missing("status_carriers_disagree"),
+                "status_carriers_disagree",
+            )
         return Observed.missing("status_carrier_not_mapped"), None
 
-    if by_cell is not by_row:
+    by_cell = STATUS_BY_CELL_CLASS[next(iter(marks))]
+    if marked_paid is not (by_cell is OrderStatus.PAID):
         return Observed.missing("status_carriers_disagree"), "status_carriers_disagree"
 
     return Observed.present(by_cell, Confidence.OBSERVED), None
@@ -393,22 +456,24 @@ def _parse_row(row: Node, index: int) -> tuple[OrderListEntry | None, list[Defec
         status=status,
         status_carrier=_carrier(row.css_first(".tc-status")),
         order_number_text=_text(row.css_first(".tc-order"), "order_number_text"),
-        description_text=_text(row.css_first(".order-desc"), "description_text"),
+        description_text=_text(row.css_first(".order-desc > div"), "description_text"),
+        category_text=_text(row.css_first(".order-desc .text-muted"), "category_text"),
         counterparty_name=_text(row.css_first(".tc-user .media-user-name"), "counterparty_name"),
-        counterparty_href=(
-            Observed.present((user_link.attributes.get("data-href") or "").strip())
-            if user_link is not None
-            else Observed.missing("selector_no_match:counterparty_href")
-        ),
+        counterparty_href=_attribute(user_link, "data-href", "counterparty_href"),
         counterparty_online=online,
         amount_text=_text(row.css_first(".tc-price"), "amount_text"),
+        currency_symbol_text=_text(row.css_first(".tc-price .unit"), "currency_symbol_text"),
         time_text=_text(row.css_first(".tc-date-time"), "time_text"),
+        time_ago_text=_text(row.css_first(".tc-date-left"), "time_ago_text"),
     )
 
     for name in (
         "status_carrier",
         "order_number_text",
         "description_text",
+        "category_text",
+        "currency_symbol_text",
+        "time_ago_text",
         "counterparty_name",
         "counterparty_href",
         # counterparty_online сюда не входит по той же причине, что и статус:
@@ -515,6 +580,24 @@ def parse_orders_page(html: str, *, observed_at: datetime) -> OrdersPage:
                     field_name=name,
                 )
             )
+
+    # Состояние сюда не входит: один заказ в состоянии, которого нет в таблице,
+    # - обычное дело и повреждением не является. А вот ни одного прочитанного
+    # состояния на непустой странице - другое дело. Все восемь заказов разом в
+    # новом состоянии неправдоподобны, и такое чтение означает, что разметка
+    # изменилась. Это последний рубеж: переименование класса закрытого заказа
+    # иначе не ловится ничем - у закрытого нет положительного модификатора
+    # строки, и отличить переименование от нового состояния по одной строке
+    # нельзя даже в принципе.
+    if entries and all(not entry.status.is_observed for entry in entries):
+        defects.append(
+            Defect(
+                severity=Severity.PAGE,
+                code="status_unreadable_on_every_row",
+                detail="ни в одной строке состояние не опознано по наблюдённым носителям",
+                field_name="status",
+            )
+        )
 
     if not rows_total:
         completeness, reason = Completeness.UNKNOWN, "empty_list_not_observed"

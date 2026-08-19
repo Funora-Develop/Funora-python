@@ -504,3 +504,137 @@ def test_missing_user_cell_is_still_a_defect() -> None:
     codes = {(d.field_name, d.code) for d in page.defects}
     assert ("counterparty_href", "field_not_observed") in codes
     assert ("counterparty_name", "field_not_observed") in codes
+
+
+def test_cosmetic_class_does_not_break_status() -> None:
+    """Проверяет, что лишний класс на разметке не отменяет чтение состояния.
+
+    Главная проверка этой партии. Прежняя реализация сравнивала строку классов
+    целиком, и добавленный площадкой ``hidden-xs`` делал состояние нечитаемым на
+    всех восьми строках сразу - при полноте complete и нуле повреждений. То есть
+    ответ на вопрос «оплачен ли заказ» пропадал молча, а именно молчание тут
+    дороже всего.
+
+    Returns:
+        None
+    """
+    intact = _fixture("orders-trade.states.logged.ru")
+    for spoiled in (
+        intact.replace('"tc-status text-primary"', '"tc-status text-primary hidden-xs"'),
+        intact.replace('"tc-item info"', '"tc-item info hover"'),
+        intact.replace('"tc-status text-success"', '"tc-status text-success col-lg-2"'),
+    ):
+        page = _parse(spoiled)
+        assert page.completeness is Completeness.COMPLETE
+        assert all(e.status.is_observed for e in page.rows()), "косметика отменила состояние"
+
+
+def test_renamed_cell_class_is_loud_when_the_row_still_marks_it() -> None:
+    """Проверяет, что переименование цветового класса не проходит тихо.
+
+    Ячейка не опознана, а модификатор строки говорит «оплачен» - значит,
+    изменилась разметка, а не появилось новое состояние. Разница между этими
+    двумя случаями и есть всё, ради чего читается второй носитель.
+
+    Returns:
+        None
+    """
+    page = _parse(_fixture("orders-trade.states.logged.ru").replace("text-primary", "text-blue"))
+    assert page.completeness is Completeness.PARTIAL
+    assert any(d.code == "status_carriers_disagree" for d in page.defects)
+
+
+def test_a_new_state_is_quiet() -> None:
+    """Проверяет, что состояние вне таблицы не считается поломкой.
+
+    Обратная сторона предыдущей проверки. Заказ в возврате - обычное дело, и
+    помечать из-за него страницу повреждённой значило бы кричать на нормальную
+    работу. Значение при этом всё равно ненаблюдённое.
+
+    Returns:
+        None
+    """
+    page = _parse(
+        _fixture("orders-trade.states.logged.ru").replace(
+            '"tc-status text-success"', '"tc-status text-danger"'
+        )
+    )
+    assert page.completeness is Completeness.COMPLETE
+    assert not page.defects
+    unread = [e for e in page.rows() if not e.status.is_observed]
+    assert len(unread) == 3
+    assert {e.status.reason for e in unread} == {"status_carrier_not_mapped"}
+
+
+def test_no_readable_status_at_all_is_a_page_defect() -> None:
+    """Проверяет последний рубеж: ни одного прочитанного состояния на странице.
+
+    Переименование класса закрытого заказа иначе не ловится ничем - у закрытого
+    нет положительного модификатора строки, и отличить переименование от нового
+    состояния по одной строке нельзя даже в принципе. По всей странице - можно:
+    восемь заказов разом в новом состоянии неправдоподобны.
+
+    Returns:
+        None
+    """
+    all_closed = (
+        _fixture("orders-trade.states.logged.ru")
+        .replace('"tc-item info"', '"tc-item"')
+        .replace("text-primary", "text-success")
+        .replace("text-success", "text-green")
+    )
+    page = _parse(all_closed)
+    assert page.completeness is Completeness.PARTIAL
+    assert any(d.code == "status_unreadable_on_every_row" for d in page.defects)
+
+
+def test_description_and_category_are_separate() -> None:
+    """Проверяет, что название лота и раздел не склеены.
+
+    У описания наблюдалось ровно два потомка. Текст контейнера целиком склеивал
+    их без пометки границы, и склейка выглядела безобидной ровно до того, как по
+    описанию начнут что-нибудь искать.
+
+    Returns:
+        None
+    """
+    entry = _parse(_fixture("orders-trade.states.logged.ru")).rows()[0]
+    assert entry.description_text.is_observed
+    assert entry.category_text.is_observed
+    assert entry.description_text.value != entry.category_text.value
+    assert entry.category_text.value not in entry.description_text.value
+
+
+def test_currency_symbol_and_time_ago_are_read() -> None:
+    """Проверяет чтение двух полей, которые прежде терялись.
+
+    Символ валюты лежит в отдельном узле ячейки цены, давность - в отдельной
+    ячейке даты. Оба наблюдались во всех восьми строках, и оба разбор прежде не
+    читал вовсе.
+
+    Returns:
+        None
+    """
+    page = _parse(_fixture("orders-trade.states.logged.ru"))
+    for entry in page.rows():
+        assert entry.currency_symbol_text.is_observed
+        assert entry.time_ago_text.is_observed
+        assert entry.time_ago_text.value != entry.time_text.value
+
+
+def test_blank_attribute_is_empty_not_a_link() -> None:
+    """Проверяет, что пустой атрибут не выдаётся за наблюдённый адрес.
+
+    Пустая строка, выданная как адрес, подставится в запрос и уведёт его
+    неизвестно куда. Разница между «пусто» и «не наблюдалось» здесь стоит
+    дороже обычного.
+
+    Returns:
+        None
+    """
+    import re as _re
+
+    blank = _re.sub(r'data-href="[^"]*"', 'data-href=""', _fixture("orders-trade.states.logged.ru"))
+    entry = _parse(blank).rows(accept_incomplete=True)[0]
+    assert entry.counterparty_href.presence is Presence.EMPTY
+    assert entry.counterparty_href.presence is not Presence.PRESENT
