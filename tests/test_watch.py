@@ -22,7 +22,12 @@ from funora._diff import Event
 from funora._poll import Schedule
 from funora._transport import Observation
 from funora._watch import Router, dispatch
-from funora.errors import FunoraError, HandlerError, StateSchemaIncompatibleError
+from funora.errors import (
+    FunoraError,
+    HandlerError,
+    SessionExpiredError,
+    StateSchemaIncompatibleError,
+)
 from funora.events import EventType
 
 #: Каталог со снимками страниц.
@@ -146,11 +151,39 @@ def test_event_without_handler_does_not_block() -> None:
     assert dispatch(Router(), (_event(1),)).advance
 
 
-def test_funora_error_from_handler_is_not_swallowed() -> None:
-    """Проверяет, что ошибка из иерархии Funora проходит наружу.
+def test_funora_error_does_not_tear_the_batch_apart() -> None:
+    """Проверяет, что ошибка площадки не обрывает раздачу посреди партии.
 
-    Обработчик, вызвавший операцию клиента и получивший истёкшую сессию, не
-    должен выглядеть как обработчик с багом: лечится это по-разному.
+    Раньше здесь стоял raise, и партия рвалась: накопленные delivered и failed
+    пропадали, курсор не сохранялся, цикл падал целиком. Условие площадки при
+    этом никуда не девалось - оно просто уносило с собой все остальные события
+    партии.
+
+    Теперь партия дорабатывается, а ошибка возвращается отдельным полем: она не
+    баг обработчика, а условие площадки, и вызывающий обязан её увидеть.
+
+    Returns:
+        None
+    """
+    router = Router()
+    seen: list[str] = []
+
+    @router.on(EventType.ORDER_CREATED)
+    def handle(event: Event) -> None:
+        seen.append(event.id)
+        if event.id == "e2":
+            raise FunoraError("сессия истекла")
+
+    result = dispatch(router, (_event(1), _event(2), _event(3)))
+
+    assert seen == ["e1", "e2", "e3"], "партия обязана дойти до конца"
+    assert isinstance(result.fatal, FunoraError)
+    assert result.failed == (_event(2),)
+    assert not result.advance
+
+
+def test_no_fatal_error_when_handlers_are_fine() -> None:
+    """Проверяет, что поле ошибки площадки пусто при штатной работе.
 
     Returns:
         None
@@ -159,10 +192,30 @@ def test_funora_error_from_handler_is_not_swallowed() -> None:
 
     @router.on(EventType.ORDER_CREATED)
     def handle(event: Event) -> None:
-        raise FunoraError("сессия истекла")
+        return None
 
-    with pytest.raises(FunoraError):
-        dispatch(router, (_event(1),))
+    assert dispatch(router, (_event(1),)).fatal is None
+
+
+def test_ordinary_handler_bug_is_not_fatal() -> None:
+    """Проверяет, что обычное исключение обработчика не считается условием площадки.
+
+    Опечатка в обработчике и истёкшая сессия лечатся по-разному, и склеивать их
+    значило бы останавливать цикл из-за чужого бага либо продолжать работу при
+    недействительной сессии.
+
+    Returns:
+        None
+    """
+    router = Router()
+
+    @router.on(EventType.ORDER_CREATED)
+    def handle(event: Event) -> None:
+        raise ValueError("опечатка")
+
+    result = dispatch(router, (_event(1),))
+    assert result.fatal is None
+    assert isinstance(result.errors[0], HandlerError)
 
 
 def _page(name: str) -> str:
@@ -448,3 +501,140 @@ def test_watch_refuses_foreign_state(no_sleep: list[float], tmp_path: Path) -> N
         pytest.raises(StateSchemaIncompatibleError),
     ):
         client.watch(Router(), max_iterations=1, state_path=state_path)
+
+
+def _orders_with(ids: list[str]) -> str:
+    """Готовит страницу заказов с заданными идентификаторами.
+
+    В снимке все заказы несут один и тот же замаскированный идентификатор.
+    Без разведения любая проверка на появление нового заказа проходит по
+    случайной причине и ничего не проверяет.
+
+    Args:
+        ids (list[str]): Идентификаторы, по одному на строку снимка.
+
+    Returns:
+        str: Разметка страницы.
+    """
+    page = _page("orders-trade.logged.ru")
+    for number in ids:
+        page = page.replace(
+            'href="https://funpay.com/orders/{n}/"',
+            f'href="https://funpay.com/orders/{number}/"',
+            1,
+        )
+    return page
+
+
+def test_restart_does_not_swallow_what_changed_while_it_was_down(
+    no_sleep: list[float], tmp_path: Path
+) -> None:
+    """Проверяет главное, ради чего курсор сохраняется.
+
+    Заказ, оплаченный между остановкой и запуском, обязан породить событие.
+    Раньше перезапуск уходил в холодный старт и молча съедал всё, что изменилось
+    за простой: ни исключения, ни строки в журнале, а товар не выдан. Отказа
+    обработчика для этого не требовалось - хватало планового обновления бота.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+        tmp_path (Path): Временный каталог для файла состояния.
+
+    Returns:
+        None
+    """
+    state_path = tmp_path / "state.json"
+    chats = _page("chat.logged.ru")
+    before = _orders_with(["101", "102", "103"])
+    after = _orders_with(["101", "102", "104"])
+
+    seen: list[str] = []
+    router = Router()
+
+    @router.on(EventType.ORDER_CREATED)
+    def handle(event: Event) -> None:
+        seen.append(event.entity_id)
+
+    with Client(transport=_Cycle([before, chats])) as client:  # type: ignore[arg-type]
+        client.watch(router, max_iterations=1, state_path=state_path)
+
+    assert seen == [], "холодный старт обязан молчать о данных"
+
+    # Процесс остановлен. Пока он стоял, появился заказ 104.
+    with Client(transport=_Cycle([after, chats])) as client:  # type: ignore[arg-type]
+        client.watch(router, max_iterations=1, state_path=state_path)
+
+    assert seen == ["104"], "изменение за простой обязано дойти до обработчика"
+
+
+def test_partial_read_does_not_move_the_cursor(no_sleep: list[float], tmp_path: Path) -> None:
+    """Проверяет, что неполное чтение не сдвигает курсор.
+
+    Строка, выпавшая из неполного чтения, при следующем чтении выглядела бы
+    новым заказом, и бот выдал бы товар по заказу, который был и раньше.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+        tmp_path (Path): Временный каталог.
+
+    Returns:
+        None
+    """
+    state_path = tmp_path / "state.json"
+    chats = _page("chat.logged.ru")
+    whole = _orders_with(["101", "102", "103"])
+
+    # У первой строки пропал адрес: она отбрасывается, чтение неполное.
+    first = whole.index('<a class="tc-item info" href=')
+    end = whole.index(">", first)
+    damaged = whole[:first] + '<a class="tc-item info"' + whole[end:]
+
+    seen: list[str] = []
+    router = Router()
+
+    @router.on(EventType.ORDER_CREATED)
+    def handle(event: Event) -> None:
+        seen.append(event.entity_id)
+
+    with Client(transport=_Cycle([whole, chats, damaged, chats, whole, chats])) as client:  # type: ignore[arg-type]
+        client.watch(router, max_iterations=3, state_path=state_path)
+
+    assert seen == [], "заказ 101 существовал всё время и новым не является"
+
+
+def test_platform_error_from_handler_reaches_the_caller(
+    no_sleep: list[float], tmp_path: Path
+) -> None:
+    """Проверяет, что условие площадки из обработчика доходит до вызывающего.
+
+    Партия при этом дорабатывается и состояние сохраняется: отказ на первом
+    событии не должен уносить с собой остальные.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+        tmp_path (Path): Временный каталог.
+
+    Returns:
+        None
+    """
+    state_path = tmp_path / "state.json"
+    chats = _page("chat.logged.ru")
+    before = _orders_with(["101", "102", "103"])
+    after = _orders_with(["101", "102", "104"])
+
+    router = Router()
+
+    @router.on(EventType.ORDER_CREATED)
+    def handle(event: Event) -> None:
+        raise SessionExpiredError("сессия истекла")
+
+    with Client(transport=_Cycle([before, chats])) as client:  # type: ignore[arg-type]
+        client.watch(router, max_iterations=1, state_path=state_path)
+
+    with (
+        Client(transport=_Cycle([after, chats])) as client,  # type: ignore[arg-type]
+        pytest.raises(SessionExpiredError),
+    ):
+        client.watch(router, max_iterations=1, state_path=state_path)
+
+    assert state_path.is_file(), "состояние обязано сохраниться до подъёма ошибки"

@@ -18,7 +18,14 @@ from pathlib import Path
 import pytest
 
 from funora._chats import parse_chats_page
-from funora._diff import diff_chats, diff_orders, diff_thread, disappeared
+from funora._diff import (
+    chats_cursor,
+    diff_chats,
+    diff_orders,
+    diff_thread,
+    orders_cursor,
+    thread_cursor,
+)
 from funora._orders import Completeness, parse_orders_page
 from funora._thread import parse_thread
 from funora.events import ORDERING_KEY, EventType
@@ -104,8 +111,8 @@ def test_identical_snapshots_produce_nothing() -> None:
     Returns:
         None
     """
-    assert diff_orders(_orders(), _orders(), account_id=ACCOUNT) == ()
-    assert diff_chats(_chats(), _chats(), account_id=ACCOUNT) == ()
+    assert diff_orders(orders_cursor(_orders()), _orders(), account_id=ACCOUNT) == ()
+    assert diff_chats(chats_cursor(_chats()), _chats(), account_id=ACCOUNT) == ()
 
 
 def test_new_order_produces_one_event() -> None:
@@ -120,7 +127,7 @@ def test_new_order_produces_one_event() -> None:
         'href="https://funpay.com/orders/999/"',
         1,
     )
-    events = diff_orders(before, _orders(grown), account_id=ACCOUNT)
+    events = diff_orders(orders_cursor(before), _orders(grown), account_id=ACCOUNT)
 
     assert len(events) == 1
     assert events[0].type is EventType.ORDER_CREATED
@@ -142,7 +149,7 @@ def test_ordering_key_follows_the_spec_template() -> None:
         'href="https://funpay.com/orders/999/"',
         1,
     )
-    event = diff_orders(_orders(), _orders(grown), account_id=ACCOUNT)[0]
+    event = diff_orders(orders_cursor(_orders()), _orders(grown), account_id=ACCOUNT)[0]
 
     template = ORDERING_KEY[EventType.ORDER_CREATED]
     assert event.ordering_key == template.format(order_id="999")
@@ -160,8 +167,10 @@ def test_event_id_does_not_depend_on_observation_time() -> None:
     """
     moved = _raw("chat.logged.ru").replace('data-node-msg="T10:d"', 'data-node-msg="T10:x"', 1)
 
-    early = diff_chats(_chats(), _chats(moved, WHEN), account_id=ACCOUNT)
-    later = diff_chats(_chats(), _chats(moved, WHEN + timedelta(days=3)), account_id=ACCOUNT)
+    early = diff_chats(chats_cursor(_chats()), _chats(moved, WHEN), account_id=ACCOUNT)
+    later = diff_chats(
+        chats_cursor(_chats()), _chats(moved, WHEN + timedelta(days=3)), account_id=ACCOUNT
+    )
 
     assert early[0].id == later[0].id
     assert early[0].observed_at != later[0].observed_at
@@ -178,8 +187,8 @@ def test_event_id_depends_on_the_account() -> None:
     """
     moved = _raw("chat.logged.ru").replace('data-node-msg="T10:d"', 'data-node-msg="T10:x"', 1)
 
-    first = diff_chats(_chats(), _chats(moved), account_id="11111111")
-    second = diff_chats(_chats(), _chats(moved), account_id="22222222")
+    first = diff_chats(chats_cursor(_chats()), _chats(moved), account_id="11111111")
+    second = diff_chats(chats_cursor(_chats()), _chats(moved), account_id="22222222")
 
     assert first[0].id != second[0].id
 
@@ -194,13 +203,14 @@ def test_event_id_changes_with_the_revision() -> None:
         None
     """
     base = _raw("chat.logged.ru")
+    cursor = chats_cursor(_chats())
     first = diff_chats(
-        _chats(),
+        cursor,
         _chats(base.replace('data-node-msg="T10:d"', 'data-node-msg="T10:x"', 1)),
         account_id=ACCOUNT,
     )
     second = diff_chats(
-        _chats(),
+        cursor,
         _chats(base.replace('data-node-msg="T10:d"', 'data-node-msg="T10:y"', 1)),
         account_id=ACCOUNT,
     )
@@ -220,7 +230,7 @@ def test_no_status_change_events_are_ever_produced() -> None:
     changed = _raw("orders-trade.logged.ru").replace(
         "tc-status text-primary", "tc-status text-warning"
     )
-    events = diff_orders(_orders(), _orders(changed), account_id=ACCOUNT)
+    events = diff_orders(orders_cursor(_orders()), _orders(changed), account_id=ACCOUNT)
 
     assert all(e.type is not EventType.ORDER_STATUS_CHANGED for e in events)
 
@@ -236,7 +246,7 @@ def test_new_message_produces_an_event_with_origin() -> None:
     """
     before = _thread()
     grown = _raw("chat-thread.logged.ru").replace('id="T18:adp"', 'id="message-777"', 1)
-    events = diff_thread(before, _thread(grown), account_id=ACCOUNT, chat_id="42")
+    events = diff_thread(thread_cursor(before), _thread(grown), account_id=ACCOUNT, chat_id="42")
 
     assert len(events) == 1
     assert events[0].type is EventType.MESSAGE_CREATED
@@ -254,34 +264,82 @@ def test_payload_carries_no_personal_data() -> None:
         None
     """
     grown = _raw("chat-thread.logged.ru").replace('id="T18:adp"', 'id="message-777"', 1)
-    events = diff_thread(_thread(), _thread(grown), account_id=ACCOUNT, chat_id="42")
+    events = diff_thread(thread_cursor(_thread()), _thread(grown), account_id=ACCOUNT, chat_id="42")
 
     for event in events:
         for key in ("text", "author_name", "preview", "message"):
             assert key not in event.payload
 
 
-def test_partial_snapshot_forbids_disappearance_conclusions() -> None:
-    """Проверяет правило о неполном снимке.
+def test_partial_snapshot_does_not_make_old_orders_new() -> None:
+    """Проверяет главную причину перехода на курсор.
 
-    Запись, не попавшая в частично прочитанную страницу, не исчезла - её не
-    прочитали. Разница между этими случаями есть разница между «заказ отменён» и
-    «мы не смогли его увидеть», а обработчик по первому вернёт деньги.
+    Строка, отброшенная из-за поломки разметки, отсутствует в прочитанной
+    странице. Сравнивай мы снимок со снимком, при следующем чтении тот же заказ
+    выглядел бы новым - и бот выдал бы товар по заказу, который существовал и
+    раньше.
+
+    Курсор хранит известное и не теряет его от одной испорченной строки.
 
     Returns:
         None
     """
-    broken = _orders(
-        _raw("orders-trade.logged.ru").replace(
-            '<div class="tc-status text-primary">', '<div class="tc-gone">'
+    raw = _raw("orders-trade.logged.ru")
+    # В снимке все заказы несут один и тот же замаскированный идентификатор,
+    # поэтому без разведения проверка ничего не проверяет.
+    distinct = raw
+    for number in ("101", "102", "103"):
+        distinct = distinct.replace(
+            'href="https://funpay.com/orders/{n}/"',
+            f'href="https://funpay.com/orders/{number}/"',
+            1,
         )
-    )
-    assert broken.completeness is Completeness.PARTIAL
 
-    assert not disappeared(broken, _orders())
-    assert not disappeared(_orders(), broken)
-    assert disappeared(_orders(), _orders())
-    assert not disappeared(None, _orders())
+    full = _orders(distinct)
+    cursor = orders_cursor(full)
+    assert cursor == {"101", "102", "103"}
+
+    first = distinct.index('<a class="tc-item info" href=')
+    end_of_tag = distinct.index(">", first)
+    broken = distinct[:first] + '<a class="tc-item info"' + distinct[end_of_tag:]
+    damaged = _orders(broken)
+
+    assert damaged.completeness is Completeness.PARTIAL
+    assert len(damaged.rows(accept_incomplete=True)) == 2
+
+    # Курсор снят с полного чтения и не пострадал, поэтому повторное полное
+    # чтение событий не порождает.
+    assert diff_orders(cursor, full, account_id=ACCOUNT) == ()
+
+    # И неполное чтение тоже: выпавшая строка не превращается в новый заказ.
+    assert diff_orders(cursor, damaged, account_id=ACCOUNT) == ()
+
+
+def test_new_order_is_seen_even_in_a_partial_read() -> None:
+    """Проверяет, что неполное чтение не теряет по-настоящему новый заказ.
+
+    Защита обязана отсекать ложное, а не всё подряд: заказ, которого нет в
+    курсоре, новый независимо от того, целиком ли прочиталась страница.
+
+    Returns:
+        None
+    """
+    raw = _raw("orders-trade.logged.ru")
+    distinct = raw
+    for number in ("101", "102", "103"):
+        distinct = distinct.replace(
+            'href="https://funpay.com/orders/{n}/"',
+            f'href="https://funpay.com/orders/{number}/"',
+            1,
+        )
+
+    cursor = frozenset({"102", "103"})
+    broken = distinct.replace('<div class="tc-status text-primary">', '<div class="tc-gone">')
+    damaged = _orders(broken)
+    assert damaged.completeness is Completeness.PARTIAL
+
+    events = diff_orders(cursor, damaged, account_id=ACCOUNT)
+    assert [e.entity_id for e in events] == ["101"]
 
 
 @pytest.mark.parametrize("event_type", list(EventType))

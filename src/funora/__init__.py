@@ -23,7 +23,15 @@ from ._budget import Budget, Reservation
 from ._chats import ChatListEntry, ChatsPage, parse_chats_page
 from ._classify import DEFAULT_IDENTITY_CSS, ResponseClass, Signature, Verdict, classify
 from ._client import ChatsService, Client, OrdersService
-from ._diff import Event, diff_chats, diff_orders, diff_thread
+from ._diff import (
+    Event,
+    chats_cursor,
+    diff_chats,
+    diff_orders,
+    diff_thread,
+    orders_cursor,
+    thread_cursor,
+)
 from ._gate import check_capability
 from ._host import host_of, is_safe_hop, same_host
 from ._observed import Confidence, Observed, Presence
@@ -120,6 +128,9 @@ __all__ = [
     "diff_orders",
     "diff_chats",
     "diff_thread",
+    "orders_cursor",
+    "chats_cursor",
+    "thread_cursor",
     "Schedule",
     "Deduplicator",
     "Router",

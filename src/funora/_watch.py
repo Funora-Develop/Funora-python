@@ -104,16 +104,22 @@ class StepResult:
 
     Attributes:
         delivered (tuple[Event, ...]): События, дошедшие до обработчиков.
-        failed (tuple[Event, ...]): События, на которых обработчик упал. База не
-            сдвигается, пока список непуст: иначе они исчезнут навсегда.
-        advance (bool): Можно ли сдвигать базовый снимок.
+        failed (tuple[Event, ...]): События, на которых обработчик упал. Курсор
+            не сдвигается, пока список непуст: иначе они исчезнут навсегда.
+        advance (bool): Можно ли сдвигать курсор.
         errors (tuple[HandlerError, ...]): Отказы обработчиков.
+        fatal (FunoraError | None): Первая ошибка Funora, поднятая обработчиком.
+            Это не его баг, а условие площадки - истёкшая сессия, исчерпанный
+            бюджет, - и вызывающий обязан её увидеть. Партия при этом
+            дорабатывается до конца: отказ на первом событии не должен терять
+            все остальные.
     """
 
     delivered: tuple[Event, ...]
     failed: tuple[Event, ...]
     advance: bool
     errors: tuple[HandlerError, ...]
+    fatal: FunoraError | None = None
 
 
 def dispatch(router: Router, events: tuple[Event, ...]) -> StepResult:
@@ -137,6 +143,7 @@ def dispatch(router: Router, events: tuple[Event, ...]) -> StepResult:
     delivered: list[Event] = []
     failed: list[Event] = []
     errors: list[HandlerError] = []
+    fatal: FunoraError | None = None
 
     for event in events:
         handlers = router.handlers_for(event)
@@ -151,8 +158,22 @@ def dispatch(router: Router, events: tuple[Event, ...]) -> StepResult:
         for handler in handlers:
             try:
                 handler(event)
-            except FunoraError:
-                raise
+            except FunoraError as exc:
+                # Раньше здесь стоял raise, и партия обрывалась посреди раздачи:
+                # накопленные delivered и failed пропадали, курсор не
+                # сохранялся, а цикл падал целиком. Условие площадки при этом
+                # никуда не девалось - оно просто уносило с собой все остальные
+                # события партии.
+                broke = True
+                if fatal is None:
+                    fatal = exc
+                _log.warning(
+                    "обработчик получил ошибку площадки на событии %s (ключ %s): %s",
+                    event.type,
+                    event.ordering_key,
+                    type(exc).__name__,
+                )
+                break
             except Exception as exc:
                 broke = True
                 error = HandlerError(
@@ -175,10 +196,11 @@ def dispatch(router: Router, events: tuple[Event, ...]) -> StepResult:
     return StepResult(
         delivered=tuple(delivered),
         failed=tuple(failed),
-        # База сдвигается только когда непринятых нет. Сдвинь её раньше - и
+        # Курсор сдвигается только когда непринятых нет. Сдвинь его раньше - и
         # событие, на котором обработчик упал, исчезнет навсегда.
         advance=not failed,
         errors=tuple(errors),
+        fatal=fatal,
     )
 
 
