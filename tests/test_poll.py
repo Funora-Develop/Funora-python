@@ -158,7 +158,10 @@ def test_duplicate_event_is_suppressed() -> None:
         None
     """
     dedup = Deduplicator()
-    assert len(dedup.filter((_event("a"),), 0.0)) == 1
+    fresh = dedup.filter((_event("a"),), 0.0)
+    assert len(fresh) == 1
+    dedup.commit(fresh, 0.0)
+
     assert len(dedup.filter((_event("a"),), 1.0)) == 0
     assert dedup.suppressed == 1
 
@@ -197,7 +200,8 @@ def test_records_expire() -> None:
         None
     """
     dedup = Deduplicator(ttl_ms=1000)
-    assert len(dedup.filter((_event("a"),), 0.0)) == 1
+    dedup.commit(dedup.filter((_event("a"),), 0.0), 0.0)
+
     assert len(dedup.filter((_event("a"),), 0.5)) == 0
     assert len(dedup.filter((_event("a"),), 2.0)) == 1
 
@@ -213,7 +217,8 @@ def test_bucket_is_bounded() -> None:
     """
     dedup = Deduplicator(entries_per_key=4)
     for index in range(20):
-        dedup.filter((_event(f"e{index}"),), float(index))
+        event = (_event(f"e{index}"),)
+        dedup.commit(dedup.filter(event, float(index)), float(index))
 
     assert len(dedup.filter((_event("e0"),), 100.0)) == 1, (
         "самая старая запись обязана быть вытеснена"
@@ -249,3 +254,33 @@ def test_empty_batch_is_handled(count: int) -> None:
     dedup = Deduplicator()
     events = tuple(_event(f"e{i}") for i in range(count))
     assert len(dedup.filter(events, 0.0)) == count
+
+
+def test_nothing_is_remembered_until_committed() -> None:
+    """Проверяет, что проверка ничего не запоминает.
+
+    Это исправление настоящего дефекта, а не украшение. Записав событие в момент
+    проверки, мы объявляли бы его доставленным до того, как обработчик его
+    увидел. Обработчик падает - база не сдвигается, событие приходит снова и
+    гасится как повтор. Оно исчезает навсегда, причём именно то, которое
+    обработчику не далось.
+
+    Returns:
+        None
+    """
+    dedup = Deduplicator()
+    assert len(dedup.filter((_event("a"),), 0.0)) == 1
+    assert len(dedup.filter((_event("a"),), 1.0)) == 1, "непринятое событие обязано прийти снова"
+    assert dedup.suppressed == 0
+
+
+def test_committed_event_is_suppressed_afterwards() -> None:
+    """Проверяет, что доставленное событие гасится при повторе.
+
+    Returns:
+        None
+    """
+    dedup = Deduplicator()
+    fresh = dedup.filter((_event("a"),), 0.0)
+    dedup.commit(fresh, 0.0)
+    assert len(dedup.filter((_event("a"),), 1.0)) == 0

@@ -17,6 +17,13 @@
 Гашение повторов работает в пределах ключа упорядочивания, а не глобально.
 Глобальный кэш склеивал бы события разных диалогов при совпадении отпечатка, а
 разъехавшиеся события двух аккаунтов гасили бы друг друга.
+
+Проверка и запись разделены намеренно, и это не удобство вызова. Записав событие
+в момент проверки, мы объявили бы его доставленным до того, как обработчик его
+увидел. Обработчик падает - база не сдвигается, событие приходит снова и гасится
+как повтор. Оно исчезает навсегда, причём именно то, которое обработчику не
+далось, то есть самое важное. Запись выполняется после обработчиков, тем же
+правилом, что и продвижение курсора.
 """
 
 from __future__ import annotations
@@ -169,7 +176,15 @@ class Deduplicator:
         return self._suppressed
 
     def filter(self, events: tuple[Event, ...], now: float) -> tuple[Event, ...]:
-        """Отбрасывает события, которые уже выдавались.
+        """Отбрасывает события, которые уже были доставлены.
+
+        Метод ничего не запоминает. Запись выполняет :meth:`commit` после того,
+        как обработчики отработали: событие, помеченное доставленным до
+        обработчика, при его отказе погасится как повтор и исчезнет навсегда.
+
+        Повторы внутри одного набора схлопываются здесь же: два одинаковых
+        события в одном опросе - это одно событие, и ждать обработчиков, чтобы
+        это понять, незачем.
 
         Args:
             events (tuple[Event, ...]): События одного опроса.
@@ -179,21 +194,41 @@ class Deduplicator:
             tuple[Event, ...]: События, которые вызывающий ещё не видел.
         """
         fresh: list[Event] = []
+        in_batch: set[tuple[str, str]] = set()
+
         for event in events:
             bucket = self._seen.setdefault(event.ordering_key, OrderedDict())
             self._evict(bucket, now)
 
-            if event.id in bucket:
+            key = (event.ordering_key, event.id)
+            if event.id in bucket or key in in_batch:
                 self._suppressed += 1
                 continue
 
+            in_batch.add(key)
+            fresh.append(event)
+
+        return tuple(fresh)
+
+    def commit(self, events: tuple[Event, ...], now: float) -> None:
+        """Запоминает события как доставленные.
+
+        Вызывается после обработчиков. Событие, на котором обработчик упал, сюда
+        не попадает и потому придёт снова - в этом и смысл разделения.
+
+        Args:
+            events (tuple[Event, ...]): События, дошедшие до обработчиков.
+            now (float): Текущий момент, монотонные секунды.
+
+        Returns:
+            None
+        """
+        for event in events:
+            bucket = self._seen.setdefault(event.ordering_key, OrderedDict())
             bucket[event.id] = now
             bucket.move_to_end(event.id)
             while len(bucket) > self._entries_per_key:
                 bucket.popitem(last=False)
-            fresh.append(event)
-
-        return tuple(fresh)
 
     def _evict(self, bucket: OrderedDict[str, float], now: float) -> None:
         """Убирает записи, у которых вышел срок.
