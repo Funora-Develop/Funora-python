@@ -1,9 +1,11 @@
 {
   "captured_at": "2026-08-19T11:46:00+00:00",
+  "captured_format": "structural-skeleton-v3",
   "classification": "ok",
   "classification_provisional": false,
   "classification_reason": "identity_confirmed",
   "content_length": 36543,
+  "converted": false,
   "elapsed_ms": 248,
   "final_url": "https://funpay.com/orders/trade",
   "format": "structural-skeleton-v3",

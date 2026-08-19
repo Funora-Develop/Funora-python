@@ -1,9 +1,12 @@
 {
   "captured_at": "2026-08-18T14:16:26+00:00",
+  "captured_format": "structural-skeleton-v2",
   "classification": "ok",
   "classification_provisional": false,
   "classification_reason": "no_signature_matched_identity_unchecked",
   "content_length": 46969,
+  "conversion_note": "Снимок снят в указанном captured_format и преобразован в текущий формат повторным применением маскировки, без нового обращения к площадке. Отличия такого файла от снятого нативно могут объясняться сменой формата, а не сменой разметки: сравнивать его с нативным снимком как два наблюдения площадки нельзя.",
+  "converted": true,
   "converted_from": "structural-skeleton-v1",
   "elapsed_ms": 531,
   "format": "structural-skeleton-v3",
