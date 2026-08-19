@@ -52,7 +52,7 @@ def test_ok_page() -> None:
     [
         (401, ResponseClass.LOGIN_REQUIRED),
         (403, ResponseClass.BLOCKED),
-        (429, ResponseClass.BLOCKED),
+        (429, ResponseClass.RATE_LIMITED),
         (503, ResponseClass.MAINTENANCE),
         (500, ResponseClass.TRANSPORT_ERROR),
         (404, ResponseClass.TRANSPORT_ERROR),
@@ -61,9 +61,18 @@ def test_ok_page() -> None:
 def test_status_codes(status: int, expected: ResponseClass) -> None:
     """Проверяет разбор по коду состояния.
 
+    Код 429 раньше отображался в blocked, и этот набор закреплял такое
+    поведение. Оно было ошибкой: blocked трактуется как отказ с закрытым замком,
+    поэтому первое же попадание в ограничение частоты остановило бы опрос
+    навсегда, а политика повторов для RateLimitedError осталась бы недостижимым
+    кодом. «Слишком быстро» и «вам сюда нельзя» - разные ответы.
+
     Args:
         status (int): Код ответа.
         expected (ResponseClass): Ожидаемый класс.
+
+    Returns:
+        None
     """
     assert _c(status=status).cls is expected
 

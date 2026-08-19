@@ -40,6 +40,7 @@ from ._secret import (
 )
 from ._skeleton import SkeletonError, skeletonize
 from ._transport import Fetcher, Observation, TransportSettings
+from ._verdicts import error_for
 from .capabilities import CAPABILITY_INITIAL, Capability, CapabilityState
 from .errors import ERROR_BY_ABI_CODE, ERROR_BY_STABLE_ID, FunoraError
 
@@ -60,6 +61,7 @@ __all__ = [
     "Verdict",
     "Signature",
     "DEFAULT_IDENTITY_CSS",
+    "error_for",
     # скелет
     "skeletonize",
     "SkeletonError",
