@@ -1,23 +1,26 @@
-"""Синхронный клиент: способ выполнить то, о чём просит ядро.
+"""Асинхронный клиент: тот же способ, но через ожидание.
 
-Логики здесь нет. Нормативный порядок шагов, политика повторов, расход бюджета,
-сдвиг курсора и правила гашения живут в [_engine.py] и не знают ни о сети, ни о
-том, синхронно их крутят или асинхронно. Этот файл - двенадцать строк цикла,
-который на просьбу сходить отвечает вызовом, на просьбу подождать - сном, а на
-просьбу раздать события - раздачей.
+Файл читается рядом с [_client.py], и это не совпадение, а условие. Оба -
+драйверы одного ядра из [_engine.py]: на просьбу сходить отвечают обращением, на
+просьбу подождать - паузой, на просьбу раздать события - раздачей. Отличаются
+ровно тремя строками, в которых стоит ``await``.
 
-Разделение не эстетическое. Асинхронный клиент отличается ровно этими тремя
-строками; напиши мы его вторым файлом целиком - и нормативный порядок шагов
-существовал бы в двух экземплярах. Копия расходится, это в проекте уже случалось
-трижды с правилом хоста, и один раз ценой сессионного ключа.
+Нормативного порядка шагов здесь нет. Политики повторов нет. Расхода бюджета,
+сдвига курсора, правил гашения - нет. Всё это написано один раз и проверено один
+раз; сюда оно попадает готовым.
+
+Обработчики принимаются и обычные, и асинхронные. Обычный вызывается как есть,
+сопрограмма дожидается. Обратное - асинхронный обработчик в синхронном клиенте -
+отвергается вслух: промолчать значило бы зарегистрировать обработчик, который
+никогда не выполнится.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Generator
 from pathlib import Path
-from time import sleep
 from typing import TYPE_CHECKING, TypeVar
 
 from ._budget import Budget
@@ -27,39 +30,35 @@ from ._orders import OrdersPage
 from ._poll import Schedule
 from ._secret import Secret, SecretProvider
 from ._thread import Thread
-from ._transport import Fetcher, TransportSettings
-from ._watch import Router, dispatch
+from ._transport import AsyncFetcher, TransportSettings
+from ._watch import Router, adispatch
 from .capabilities import Capability, CapabilityState
 from .errors import ConfigurationError, FunoraError
 
 if TYPE_CHECKING:
     from ._transport import Observation
 
-__all__ = ["Client", "OrdersService", "ChatsService"]
+__all__ = ["AsyncClient", "AsyncOrdersService", "AsyncChatsService"]
 
 _log = logging.getLogger("funora.client")
 
-#: Тип, которым завершается сопрограмма ядра. Синтаксис PEP 695 не годится:
-#: пакет поддерживает Python 3.11, где его ещё нет.
+#: Тип, которым завершается сопрограмма ядра.
 T = TypeVar("T")
 
 
-class OrdersService:
+class AsyncOrdersService:
     """Операции над заказами.
 
-    Сервис - это не слой ради слоя. Он даёт вызывающему одно имя на одну
-    операцию и позволяет менять способ чтения, не трогая вызов.
-
     Args:
-        client (Client): Клиент, которому принадлежит сервис.
+        client (AsyncClient): Клиент, которому принадлежит сервис.
     """
 
     __slots__ = ("_client",)
 
-    def __init__(self, client: Client) -> None:
+    def __init__(self, client: AsyncClient) -> None:
         self._client = client
 
-    def list(self) -> OrdersPage:
+    async def list(self) -> OrdersPage:
         """Читает список заказов.
 
         Returns:
@@ -70,22 +69,22 @@ class OrdersService:
         Raises:
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
-        return self._client.run(self._client.engine.read_orders())
+        return await self._client.run(self._client.engine.read_orders())
 
 
-class ChatsService:
+class AsyncChatsService:
     """Операции над перепиской.
 
     Args:
-        client (Client): Клиент, которому принадлежит сервис.
+        client (AsyncClient): Клиент, которому принадлежит сервис.
     """
 
     __slots__ = ("_client",)
 
-    def __init__(self, client: Client) -> None:
+    def __init__(self, client: AsyncClient) -> None:
         self._client = client
 
-    def list(self) -> ChatsPage:
+    async def list(self) -> ChatsPage:
         """Читает список диалогов.
 
         Returns:
@@ -94,9 +93,9 @@ class ChatsService:
         Raises:
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
-        return self._client.run(self._client.engine.read_chats())
+        return await self._client.run(self._client.engine.read_chats())
 
-    def thread(self, node_id: str) -> Thread:
+    async def thread(self, node_id: str) -> Thread:
         """Читает переписку одного диалога.
 
         Args:
@@ -110,11 +109,11 @@ class ChatsService:
             ValidationError: Если идентификатор непригоден для подстановки.
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
-        return self._client.run(self._client.engine.read_thread(node_id))
+        return await self._client.run(self._client.engine.read_thread(node_id))
 
 
-class Client:
-    """Клиент площадки.
+class AsyncClient:
+    """Асинхронный клиент площадки.
 
     Args:
         secret (Secret | SecretProvider | None): Сессионный секрет либо его
@@ -122,14 +121,11 @@ class Client:
         settings (TransportSettings | None): Настройки транспорта.
         experimental (frozenset[Capability] | None): Возможности, которые
             вызывающий включает явно, соглашаясь на возможную смену контракта.
-        transport (Fetcher | None): Готовый транспорт. Нужен там, где вызывающий
-            собирает его сам, и в проверках: создание транспорта поднимает
-            контекст TLS, а это полсекунды на каждый вызов, из-за чего набор
-            проверок начинают выключать.
+        transport (AsyncFetcher | None): Готовый транспорт. Нужен там, где
+            вызывающий собирает его сам, и в проверках.
         budget (Budget | None): Общий бюджет запросов. Передаётся, когда в одном
             процессе живут несколько клиентов: площадке видна сетевая
-            идентичность, а не то, сколько клиентов мы завели у себя, и общий
-            предел обходится ровно тем, что каждый заводит свой бюджет.
+            идентичность, а не то, сколько клиентов мы завели у себя.
 
     Raises:
         ConfigurationError: Если не передано ни секрета, ни транспорта. Повтор
@@ -144,7 +140,7 @@ class Client:
         *,
         settings: TransportSettings | None = None,
         experimental: frozenset[Capability] | None = None,
-        transport: Fetcher | None = None,
+        transport: AsyncFetcher | None = None,
         budget: Budget | None = None,
     ) -> None:
         resolved_settings = settings or TransportSettings()
@@ -153,7 +149,7 @@ class Client:
             self._fetcher = transport
         elif secret is not None:
             resolved = secret if isinstance(secret, Secret) else secret.get("golden_key")
-            self._fetcher = Fetcher(resolved, settings=resolved_settings)
+            self._fetcher = AsyncFetcher(resolved, settings=resolved_settings)
         else:
             raise ConfigurationError(
                 "клиенту нужен либо секрет, либо готовый транспорт: без них "
@@ -165,18 +161,18 @@ class Client:
             budget or Budget(),
             experimental or frozenset(),
         )
-        self.orders = OrdersService(self)
-        self.chats = ChatsService(self)
+        self.orders = AsyncOrdersService(self)
+        self.chats = AsyncChatsService(self)
 
-    def __enter__(self) -> Client:
-        """Входит в контекстный менеджер.
+    async def __aenter__(self) -> AsyncClient:
+        """Входит в асинхронный контекстный менеджер.
 
         Returns:
-            Client: Сам объект.
+            AsyncClient: Сам объект.
         """
         return self
 
-    def __exit__(self, *exc: object) -> None:
+    async def __aexit__(self, *exc: object) -> None:
         """Закрывает соединения при выходе.
 
         Args:
@@ -185,15 +181,15 @@ class Client:
         Returns:
             None
         """
-        self.close()
+        await self.close()
 
-    def close(self) -> None:
+    async def close(self) -> None:
         """Закрывает пул соединений.
 
         Returns:
             None
         """
-        self._fetcher.close()
+        await self._fetcher.close()
 
     def capability(self, capability: Capability) -> CapabilityState:
         """Возвращает текущее состояние возможности.
@@ -206,7 +202,7 @@ class Client:
         """
         return self.engine.capability(capability)
 
-    def watch(
+    async def watch(
         self,
         router: Router,
         *,
@@ -217,11 +213,13 @@ class Client:
     ) -> None:
         """Ведёт наблюдение: опрашивает площадку и раздаёт события обработчикам.
 
-        Метод блокирующий и спит между опросами. Цикл целиком описан ядром;
-        здесь он только исполняется.
+        Метод не блокирует поток: между опросами он отдаёт управление циклу
+        событий. Сам цикл наблюдения целиком описан ядром и совпадает с
+        синхронным до строки.
 
         Args:
-            router (Router): Реестр обработчиков.
+            router (Router): Реестр обработчиков. Обработчики могут быть как
+                обычными функциями, так и сопрограммами.
             account_id (str): Идентификатор аккаунта для отпечатков событий.
             max_iterations (int | None): Сколько шагов сделать. None означает
                 бесконечно; ограничение нужно проверкам и разовым прогонам.
@@ -236,7 +234,7 @@ class Client:
         Raises:
             FunoraError: Любая ошибка чтения, которую не удалось повторить.
         """
-        self.run(
+        await self.run(
             self.engine.watch(
                 router,
                 account_id=account_id,
@@ -247,7 +245,7 @@ class Client:
             router=router,
         )
 
-    def run(
+    async def run(
         self,
         core: Generator[Request, Reply, T],
         *,
@@ -276,16 +274,17 @@ class Client:
             try:
                 request = core.throw(failure) if failure is not None else core.send(reply)
             except StopIteration as stop:
-                return stop.value  # type: ignore[no-any-return]
+                result: T = stop.value
+                return result
             failure = None
             reply = None
 
             if isinstance(request, Pause):
                 if request.ms > 0:
-                    sleep(request.ms / 1000)
+                    await asyncio.sleep(request.ms / 1000)
             elif isinstance(request, Fetch):
                 try:
-                    reply = self._fetch(request.path)
+                    reply = await self._fetch(request.path)
                 except FunoraError as exc:
                     failure = exc
             elif isinstance(request, Deliver):
@@ -293,9 +292,9 @@ class Client:
                     raise ConfigurationError(
                         "ядро просит раздать события, но реестр обработчиков не передан"
                     )
-                reply = dispatch(router, request.events)
+                reply = await adispatch(router, request.events)
 
-    def _fetch(self, path: str) -> Observation:
+    async def _fetch(self, path: str) -> Observation:
         """Выполняет одно обращение к площадке.
 
         Args:
@@ -307,4 +306,4 @@ class Client:
         Raises:
             FunoraError: При сетевом отказе либо непригодном ответе.
         """
-        return self._fetcher.fetch(path)
+        return await self._fetcher.fetch(path)

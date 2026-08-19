@@ -1,6 +1,6 @@
 """Транспортный слой наблюдения.
 
-Слой намеренно тонкий: задача спайка - не построить клиент, а один раз аккуратно
+Слой намеренно тонкий: задача - не построить клиент, а один раз аккуратно
 сходить на страницу и не оставить следов, которых не должно быть.
 
 Что здесь сделано осознанно:
@@ -23,6 +23,10 @@
     один раз: молча работать в таком режиме нельзя, а падать - слишком.
   * Числа таймаутов и пределов взяты из spec/runtime/budget.yaml и помечены там
     как провизорные.
+
+Транспортов два - синхронный и асинхронный, - но решение о переходе у них одно
+на двоих и живёт в [_hops.py]. Разъехаться правилу безопасности здесь дороже,
+чем любому другому: цена расхождения - чужой доступ к аккаунту.
 """
 
 from __future__ import annotations
@@ -34,11 +38,12 @@ from urllib.parse import urljoin
 
 import httpx
 
-from ._host import host_of, is_safe_hop
+from ._hops import Follow, Reject, next_hop
+from ._host import host_of
 from ._secret import Secret
 from .errors import NetworkError, RemoteServerError, TimeoutError
 
-__all__ = ["Observation", "Fetcher", "TransportSettings"]
+__all__ = ["Observation", "Fetcher", "AsyncFetcher", "TransportSettings"]
 
 _log = logging.getLogger("funora.transport")
 
@@ -142,6 +147,128 @@ def _warn_if_headers_logged() -> None:
     _warned = True
 
 
+def _client_kwargs(settings: TransportSettings) -> dict[str, object]:
+    """Собирает одинаковые для обоих транспортов настройки httpx.
+
+    Общая функция здесь не ради краткости. Из перечисленных настроек две -
+    отключённое хранилище cookie и отключённое следование за переходами -
+    держат обе найденные разбором дыры закрытыми. Заданные по отдельности, они
+    расходятся при первой же правке, и расхождение это молчаливое.
+
+    Args:
+        settings (TransportSettings): Настройки транспорта.
+
+    Returns:
+        dict[str, object]: Аргументы конструктора клиента httpx.
+    """
+    return {
+        "timeout": httpx.Timeout(
+            connect=settings.connect_timeout_s,
+            read=settings.read_timeout_s,
+            write=settings.read_timeout_s,
+            pool=settings.connect_timeout_s,
+        ),
+        "limits": httpx.Limits(
+            max_connections=settings.max_connections,
+            max_keepalive_connections=settings.max_connections,
+        ),
+        "follow_redirects": False,
+        # Хранилище cookie отключено намеренно. С включённым площадка одним
+        # заголовком Set-Cookie подкладывала свой golden_key, и он уходил
+        # следующим запросом ВПЕРЕДИ настоящего: сервер читает первое вхождение,
+        # и клиент молча читал чужой аккаунт как свой. Ни исключения, ни
+        # повреждений, ни строки в журнале - правдоподобные данные не того
+        # аккаунта. Заголовок Cookie собирается вручную.
+        "cookies": None,
+        "headers": {
+            "User-Agent": settings.user_agent,
+            "Accept-Language": "ru,en;q=0.8",
+        },
+    }
+
+
+def _translate(exc: httpx.HTTPError, path: str) -> Exception:
+    """Переводит отказ HTTP-стека в иерархию ошибок Funora.
+
+    Перевод делается здесь, а не у вызывающего. Иначе обработчик, ловящий
+    FunoraError, пропускал бы обрыв связи мимо себя, и цикл наблюдения падал бы
+    целиком вместо повтора - при том, что политика повторов для сетевых отказов
+    написана и покрыта тестами.
+
+    Args:
+        exc (httpx.HTTPError): Исходный отказ.
+        path (str): Путь, по которому шло обращение. Нужен для сообщения.
+
+    Returns:
+        Exception: TimeoutError при истечении предела ожидания, иначе
+        NetworkError.
+    """
+    if isinstance(exc, httpx.TimeoutException):
+        return TimeoutError(f"истёк предел ожидания при обращении к {path}")
+    return NetworkError(f"сетевой отказ при обращении к {path}: {type(exc).__name__}")
+
+
+def _observe(
+    response: httpx.Response,
+    *,
+    settings: TransportSettings,
+    rejected_url: str | None,
+    redirects: int,
+    sent: int,
+    elapsed: float,
+) -> Observation:
+    """Собирает наблюдение из ответа.
+
+    Args:
+        response (httpx.Response): Последний полученный ответ.
+        settings (TransportSettings): Настройки транспорта.
+        rejected_url (str | None): Адрес отвергнутого перехода либо None.
+        redirects (int): Число выполненных переходов.
+        sent (int): Число отправленных запросов.
+        elapsed (float): Суммарная длительность запросов, секунды.
+
+    Returns:
+        Observation: Наблюдение.
+
+    Raises:
+        RemoteServerError: Если ответ превысил предел размера.
+    """
+    raw = response.content
+    if len(raw) > settings.max_response_bytes:
+        raise RemoteServerError(
+            f"ответ превысил предел {settings.max_response_bytes} байт: получено {len(raw)}"
+        )
+
+    return Observation(
+        status=response.status_code,
+        final_url=rejected_url or str(response.url),
+        html=response.text,
+        elapsed_ms=int(elapsed * 1000),
+        redirects=redirects,
+        requests_sent=sent,
+        content_length=len(raw),
+        declared_length=_header_int(response, "content-length"),
+        retry_after_ms=_retry_after_ms(response),
+    )
+
+
+def _log_rejected(target: str, expected: str) -> None:
+    """Пишет в журнал об отвергнутом переходе.
+
+    Args:
+        target (str): Адрес, куда нас пытались увести.
+        expected (str): Ожидаемый хост площадки.
+
+    Returns:
+        None: Побочный эффект - запись в журнал.
+    """
+    _log.warning(
+        "переход отклонён: %s не принадлежит %s либо понижает схему",
+        host_of(target) or "адрес без хоста",
+        expected,
+    )
+
+
 class Fetcher:
     """Выполняет одиночные запросы к площадке.
 
@@ -152,7 +279,7 @@ class Fetcher:
         settings (TransportSettings): Настройки транспорта.
     """
 
-    __slots__ = ("_secret", "_cookie_name", "_settings", "_client")
+    __slots__ = ("_client", "_cookie_name", "_secret", "_settings")
 
     def __init__(
         self,
@@ -164,30 +291,7 @@ class Fetcher:
         self._secret = secret
         self._cookie_name = cookie_name
         self._settings = settings or TransportSettings()
-        self._client = httpx.Client(
-            timeout=httpx.Timeout(
-                connect=self._settings.connect_timeout_s,
-                read=self._settings.read_timeout_s,
-                write=self._settings.read_timeout_s,
-                pool=self._settings.connect_timeout_s,
-            ),
-            limits=httpx.Limits(
-                max_connections=self._settings.max_connections,
-                max_keepalive_connections=self._settings.max_connections,
-            ),
-            follow_redirects=False,
-            # Хранилище cookie отключено намеренно. С включённым площадка одним
-            # заголовком Set-Cookie подкладывала свой golden_key, и он уходил
-            # следующим запросом ВПЕРЕДИ настоящего: сервер читает первое
-            # вхождение, и клиент молча читал чужой аккаунт как свой. Ни
-            # исключения, ни повреждений, ни строки в журнале - правдоподобные
-            # данные не того аккаунта. Заголовок Cookie собирается вручную.
-            cookies=None,
-            headers={
-                "User-Agent": self._settings.user_agent,
-                "Accept-Language": "ru,en;q=0.8",
-            },
-        )
+        self._client = httpx.Client(**_client_kwargs(self._settings))  # type: ignore[arg-type]
 
     def __enter__(self) -> Fetcher:
         """Входит в контекстный менеджер.
@@ -221,7 +325,8 @@ class Fetcher:
 
         Переходы выполняются вручную, а не средствами клиента: конечный URL нужен
         классификатору, и автоматический переход скрыл бы тот факт, что нас увели
-        на страницу входа.
+        на страницу входа. Решение о каждом переходе принимает [_hops.next_hop] -
+        то же самое, что и в асинхронном транспорте.
 
         Args:
             path (str): Путь или полный адрес страницы.
@@ -238,83 +343,193 @@ class Fetcher:
             RemoteServerError: Если ответ превысил предел размера.
         """
         expected = host_of(self._settings.base_url)
-        url = urljoin(self._settings.base_url, path)
+        url = _start_url(self._settings, path)
         rejected_url: str | None = None
         redirects = 0
         sent = 0
         elapsed = 0.0
 
         while True:
-            # Секрет разворачивается здесь и уходит только на проверенный хост.
-            # Заголовок собирается вручную: хранилище cookie отключено, чтобы
-            # присланное площадкой значение не оседало и не уходило следующим
-            # запросом впереди настоящего.
             sent += 1
             try:
-                response = self._client.get(
-                    url,
-                    headers={"Cookie": f"{self._cookie_name}={self._secret.reveal()}"},
-                )
-            except httpx.TimeoutException as exc:
-                # Отказы стека переводятся в иерархию Funora здесь, а не у
-                # вызывающего. Иначе обработчик, ловящий FunoraError, пропускал
-                # бы обрыв связи мимо себя, и цикл наблюдения падал бы целиком
-                # вместо повтора - при том, что политика повторов для сетевых
-                # отказов написана и покрыта тестами.
-                raise TimeoutError(f"истёк предел ожидания при обращении к {path}") from exc
+                # Секрет разворачивается здесь и уходит только на проверенный
+                # хост. Заголовок собирается вручную: хранилище cookie
+                # отключено, чтобы присланное площадкой значение не оседало.
+                response = self._client.get(url, headers=self._cookie())
             except httpx.HTTPError as exc:
-                raise NetworkError(
-                    f"сетевой отказ при обращении к {path}: {type(exc).__name__}"
-                ) from exc
+                raise _translate(exc, path) from exc
             elapsed += response.elapsed.total_seconds()
 
-            if not (response.is_redirect and redirects < self._settings.max_redirects):
-                break
-
-            location = response.headers.get("location", "")
-            if not location:
-                break
-
-            target = urljoin(url, location)
-            if not is_safe_hop(url, target, expected):
-                # Запрос туда не отправляется вовсе: проверка после отправки
-                # была бы бесполезна, секрет уже ушёл бы.
-                #
-                # Отклонённый адрес всё равно объявляется конечным. Это не
-                # мелочь: классификатор увидит чужой хост и поставит диагноз
-                # wrong_identity, а с исходным адресом он увидел бы пустое тело
-                # и сказал бы unknown - то есть «разметка изменилась» вместо
-                # «нас пытались увести».
-                _log.warning(
-                    "переход отклонён: %s не принадлежит %s либо понижает схему",
-                    host_of(target) or "адрес без хоста",
-                    expected,
-                )
-                rejected_url = target
-                redirects += 1
-                break
-
-            url = target
-            redirects += 1
-
-        raw = response.content
-        if len(raw) > self._settings.max_response_bytes:
-            raise RemoteServerError(
-                f"ответ превысил предел {self._settings.max_response_bytes} байт: "
-                f"получено {len(raw)}"
+            hop = next_hop(
+                current=url,
+                is_redirect=response.is_redirect,
+                location=response.headers.get("location", ""),
+                redirects=redirects,
+                max_redirects=self._settings.max_redirects,
+                expected=expected,
             )
+            if isinstance(hop, Follow):
+                url = hop.url
+                redirects += 1
+                continue
+            if isinstance(hop, Reject):
+                _log_rejected(hop.url, expected)
+                rejected_url = hop.url
+                redirects += 1
+            break
 
-        return Observation(
-            status=response.status_code,
-            final_url=rejected_url or str(response.url),
-            html=response.text,
-            elapsed_ms=int(elapsed * 1000),
+        return _observe(
+            response,
+            settings=self._settings,
+            rejected_url=rejected_url,
             redirects=redirects,
-            requests_sent=sent,
-            content_length=len(raw),
-            declared_length=_header_int(response, "content-length"),
-            retry_after_ms=_retry_after_ms(response),
+            sent=sent,
+            elapsed=elapsed,
         )
+
+    def _cookie(self) -> dict[str, str]:
+        """Собирает заголовок с сессионным секретом.
+
+        Returns:
+            dict[str, str]: Заголовок Cookie с единственным значением.
+        """
+        return {"Cookie": f"{self._cookie_name}={self._secret.reveal()}"}
+
+
+class AsyncFetcher:
+    """Асинхронный близнец [Fetcher].
+
+    Отличается ровно тем, чем должен: ожиданием ответа. Решение о переходе,
+    настройки клиента, сборка заголовка с секретом, перевод отказов и сборка
+    наблюдения - общие с синхронным транспортом и живут в этом же модуле. Дважды
+    написанное правило безопасности расходится, и цена расхождения здесь - чужой
+    доступ к аккаунту.
+
+    Args:
+        secret (Secret): Сессионный секрет. Разворачивается только в момент
+            сборки запроса.
+        cookie_name (str): Имя cookie, в которой передаётся секрет.
+        settings (TransportSettings): Настройки транспорта.
+    """
+
+    __slots__ = ("_client", "_cookie_name", "_secret", "_settings")
+
+    def __init__(
+        self,
+        secret: Secret,
+        cookie_name: str = "golden_key",
+        settings: TransportSettings | None = None,
+    ) -> None:
+        _warn_if_headers_logged()
+        self._secret = secret
+        self._cookie_name = cookie_name
+        self._settings = settings or TransportSettings()
+        self._client = httpx.AsyncClient(**_client_kwargs(self._settings))  # type: ignore[arg-type]
+
+    async def __aenter__(self) -> AsyncFetcher:
+        """Входит в асинхронный контекстный менеджер.
+
+        Returns:
+            AsyncFetcher: Сам объект.
+        """
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        """Закрывает соединения при выходе из контекстного менеджера.
+
+        Args:
+            *exc (object): Сведения об исключении. Не используются.
+
+        Returns:
+            None
+        """
+        await self.close()
+
+    async def close(self) -> None:
+        """Закрывает пул соединений.
+
+        Returns:
+            None
+        """
+        await self._client.aclose()
+
+    async def fetch(self, path: str) -> Observation:
+        """Загружает одну страницу.
+
+        Args:
+            path (str): Путь или полный адрес страницы.
+
+        Returns:
+            Observation: Результат обращения, устроенный так же, как у
+            синхронного транспорта.
+
+        Raises:
+            TimeoutError: Если истёк предел ожидания.
+            NetworkError: При любом другом сетевом отказе.
+            RemoteServerError: Если ответ превысил предел размера.
+        """
+        expected = host_of(self._settings.base_url)
+        url = _start_url(self._settings, path)
+        rejected_url: str | None = None
+        redirects = 0
+        sent = 0
+        elapsed = 0.0
+
+        while True:
+            sent += 1
+            try:
+                response = await self._client.get(url, headers=self._cookie())
+            except httpx.HTTPError as exc:
+                raise _translate(exc, path) from exc
+            elapsed += response.elapsed.total_seconds()
+
+            hop = next_hop(
+                current=url,
+                is_redirect=response.is_redirect,
+                location=response.headers.get("location", ""),
+                redirects=redirects,
+                max_redirects=self._settings.max_redirects,
+                expected=expected,
+            )
+            if isinstance(hop, Follow):
+                url = hop.url
+                redirects += 1
+                continue
+            if isinstance(hop, Reject):
+                _log_rejected(hop.url, expected)
+                rejected_url = hop.url
+                redirects += 1
+            break
+
+        return _observe(
+            response,
+            settings=self._settings,
+            rejected_url=rejected_url,
+            redirects=redirects,
+            sent=sent,
+            elapsed=elapsed,
+        )
+
+    def _cookie(self) -> dict[str, str]:
+        """Собирает заголовок с сессионным секретом.
+
+        Returns:
+            dict[str, str]: Заголовок Cookie с единственным значением.
+        """
+        return {"Cookie": f"{self._cookie_name}={self._secret.reveal()}"}
+
+
+def _start_url(settings: TransportSettings, path: str) -> str:
+    """Приводит путь к полному адресу.
+
+    Args:
+        settings (TransportSettings): Настройки транспорта.
+        path (str): Путь либо полный адрес.
+
+    Returns:
+        str: Полный адрес запроса.
+    """
+    return urljoin(settings.base_url, path)
 
 
 def _header_int(response: httpx.Response, name: str) -> int | None:
