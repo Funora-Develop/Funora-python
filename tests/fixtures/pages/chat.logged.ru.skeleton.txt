@@ -31,7 +31,7 @@
                 <div class="navbar-header">
                   <button aria-expanded="T5:a" class="collapsed navbar-toggle navbar-toggle-logged" data-target="T7:ap" data-toggle="T8:a" type="T6:a">
                     <span class="user-link-photo">
-                      <img alt src="https://sfunpay.com/s/avatar/vz/mp/{n}"/>
+                      <img alt src="https://sfunpay.com/{t}/{t}/{t}/{t}/{t}"/>
                     </span>
                     <span class="caret"></span>
                   </button>
@@ -135,7 +135,7 @@
                       <li class="dropdown hidden-sm hidden-xs">
                         <a aria-expanded="T5:a" aria-haspopup="T4:a" class="dropdown-toggle user-link" data-toggle="T8:a" href="{n}" role="T6:a">
                           <div class="user-link-photo">
-                            <img alt src="https://sfunpay.com/s/avatar/vz/mp/{n}"/>
+                            <img alt src="https://sfunpay.com/{t}/{t}/{t}/{t}/{t}"/>
                           </div>
                           <span class="caret"></span>
                         </a>

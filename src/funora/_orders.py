@@ -79,8 +79,9 @@ class OrderListEntry:
         row_index (int): Порядковый номер строки на странице, с нуля.
         status (Observed[str]): Статус заказа. Сегодня всегда ненаблюдаем:
             соответствия классов статусам не наблюдалось.
-        status_carrier (Observed[str]): Класс-носитель статуса, как он есть в
-            разметке. Нужен для того, чтобы соответствие однажды составить.
+        status_carrier (Observed[str]): Цветовой класс ячейки статуса. Читается
+            класс, а не текст: текст локализован, и составить по нему
+            соответствие статусам нельзя.
         order_number_text (Observed[str]): Видимый номер заказа, текст.
         description_text (Observed[str]): Описание заказа, текст.
         counterparty_name (Observed[str]): Имя контрагента, текст.
@@ -186,6 +187,27 @@ def _text(node: Node | None, name: str) -> Observed[str]:
     return Observed.present(value) if value else Observed.empty("")
 
 
+def _carrier(node: Node | None) -> Observed[str]:
+    """Извлекает класс-носитель статуса.
+
+    Читается именно класс, а не текст ячейки. Текст локализован, и составить по
+    нему соответствие статусам нельзя: сменив язык аккаунта, площадка вернула бы
+    другие значения для тех же состояний. Класс от языка не зависит - именно
+    поэтому спецификация и называет носителем его.
+
+    Args:
+        node (Node | None): Узел ячейки статуса.
+
+    Returns:
+        Observed[str]: Цветовой класс ячейки без общего класса tc-status.
+    """
+    if node is None:
+        return Observed.missing("selector_no_match:status_carrier")
+    raw = (node.attributes or {}).get("class") or ""
+    classes = [c for c in raw.split() if c != "tc-status"]
+    return Observed.present(" ".join(classes)) if classes else Observed.empty("")
+
+
 def _parse_row(row: Node, index: int) -> tuple[OrderListEntry | None, list[Defect]]:
     """Разбирает одну строку заказа.
 
@@ -232,7 +254,7 @@ def _parse_row(row: Node, index: int) -> tuple[OrderListEntry | None, list[Defec
         # наблюдалось. Выдать здесь unknown значило бы утверждать, что статус
         # прочитан и не опознан, тогда как он не прочитан вовсе.
         status=Observed.missing("status_mapping_not_observed"),
-        status_carrier=_text(row.css_first(".tc-status"), "status_carrier"),
+        status_carrier=_carrier(row.css_first(".tc-status")),
         order_number_text=_text(row.css_first(".tc-order"), "order_number_text"),
         description_text=_text(row.css_first(".order-desc"), "description_text"),
         counterparty_name=_text(row.css_first(".tc-user .media-user-name"), "counterparty_name"),

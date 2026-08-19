@@ -19,7 +19,7 @@ import pytest
 from selectolax.parser import HTMLParser
 
 from funora._classify import ResponseClass, classify
-from funora._skeleton import _self_check
+from funora._skeleton import SKELETON_FORMAT, _self_check
 
 #: Каталог с фикстурами страниц.
 PAGES = Path(__file__).parent / "fixtures" / "pages"
@@ -99,7 +99,10 @@ def test_fixture_has_provenance(name: str) -> None:
     data = json.loads((PAGES / f"{name}.provenance.json").read_text(encoding="utf-8"))
     for key in ("path", "captured_at", "http_status", "locale", "format"):
         assert key in data, f"в описании нет поля {key}"
-    assert data["format"] == "structural-skeleton-v2"
+    # Версия сверяется с кодом, а не записана числом: иначе она расходится
+    # с форматом молча, и снимок начинает читаться правилами, по которым
+    # его не снимали.
+    assert data["format"] == SKELETON_FORMAT
 
 
 def test_logged_and_guest_markers_do_not_overlap() -> None:

@@ -230,15 +230,15 @@
               </a>
             </div>
             <div class="footer-block footer-block-social">
-              <a class="btn btn-gray btn-round" href="https://telegram.me/{n}" rel="T8:a" target="T6:ap">
+              <a class="btn btn-gray btn-round" href="https://telegram.me/{t}" rel="T8:a" target="T6:ap">
                 <svg height="T2:d" width="T2:d">
                   <use href="/{n}/img/layout/sprites.svg#social-logo-telegram"></use>
                 </svg>
               </a>
-              <a class="btn btn-gray btn-round" href="https://www.youtube.com/c/funpayofficial" rel="T8:a" target="T6:ap">
+              <a class="btn btn-gray btn-round" href="https://www.youtube.com/{t}/{t}" rel="T8:a" target="T6:ap">
                 <i class="fab fa-youtube"></i>
               </a>
-              <a class="btn btn-gray btn-round" href="https://vk.com/funpay" rel="T8:a" target="T6:ap">
+              <a class="btn btn-gray btn-round" href="https://vk.com/{t}" rel="T8:a" target="T6:ap">
                 <i class="fab fa-vk"></i>
               </a>
             </div>
@@ -248,7 +248,7 @@
                 T11:c
                 <br/>
                 T1:c
-                <a href="https://www.artlebedev.ru/funpay/" target="T6:ap">
+                <a href="https://www.artlebedev.ru/{t}/" target="T6:ap">
                   T14:cs
                   <br/>
                   T8:c

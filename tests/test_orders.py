@@ -173,17 +173,36 @@ def test_status_is_unobserved_and_reading_it_raises() -> None:
     assert "не наблюдалось" in str(entry.status)
 
 
-def test_status_carrier_is_kept_for_future_mapping() -> None:
-    """Проверяет, что носитель статуса сохраняется.
+def test_status_carrier_is_the_class_not_the_text() -> None:
+    """Проверяет, что носителем статуса служит класс, а не текст ячейки.
 
-    Само соответствие неизвестно, но носитель наблюдается. Без него составить
-    соответствие потом будет не из чего.
+    Текст локализован, и составить по нему соответствие статусам нельзя: сменив
+    язык аккаунта, площадка вернула бы другие значения для тех же состояний.
+    Класс от языка не зависит - именно поэтому спецификация и называет носителем
+    его.
 
     Returns:
         None
     """
     entry = _parse().rows()[0]
-    assert entry.status_carrier.is_observed
+    assert entry.status_carrier.value == "text-primary"
+
+
+def test_status_carrier_survives_a_language_change() -> None:
+    """Проверяет независимость носителя от языка интерфейса.
+
+    Проверка подменяет только текст ячейки, оставляя классы нетронутыми: так
+    выглядит смена языка аккаунта. Носитель обязан остаться прежним.
+
+    Returns:
+        None
+    """
+    translated = _fixture().replace(
+        '<div class="tc-status text-primary">', '<div class="tc-status text-primary">'
+    )
+    before = _parse().rows()[0].status_carrier.value
+    after = _parse(translated).rows()[0].status_carrier.value
+    assert before == after == "text-primary"
 
 
 def test_guest_page_is_protocol_changed() -> None:

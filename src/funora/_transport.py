@@ -99,6 +99,10 @@ class Observation:
             неоткуда, и сверка длин - единственный способ его заметить.
         retry_after_ms (int | None): Значение заголовка Retry-After в
             миллисекундах, если площадка его прислала.
+        requests_sent (int): Сколько запросов ушло на самом деле, вместе с
+            переходами. Расходуется бюджет именно по этому числу: спецификация
+            требует считать отправленные запросы, а не логические операции, и
+            переход - тоже запрос.
     """
 
     status: int
@@ -109,6 +113,7 @@ class Observation:
     content_length: int
     declared_length: int | None = None
     retry_after_ms: int | None = None
+    requests_sent: int = 1
 
 
 def _warn_if_headers_logged() -> None:
@@ -236,6 +241,7 @@ class Fetcher:
         url = urljoin(self._settings.base_url, path)
         rejected_url: str | None = None
         redirects = 0
+        sent = 0
         elapsed = 0.0
 
         while True:
@@ -243,6 +249,7 @@ class Fetcher:
             # Заголовок собирается вручную: хранилище cookie отключено, чтобы
             # присланное площадкой значение не оседало и не уходило следующим
             # запросом впереди настоящего.
+            sent += 1
             try:
                 response = self._client.get(
                     url,
@@ -303,6 +310,7 @@ class Fetcher:
             html=response.text,
             elapsed_ms=int(elapsed * 1000),
             redirects=redirects,
+            requests_sent=sent,
             content_length=len(raw),
             declared_length=_header_int(response, "content-length"),
             retry_after_ms=_retry_after_ms(response),

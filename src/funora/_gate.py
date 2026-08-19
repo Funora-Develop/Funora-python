@@ -51,16 +51,19 @@ def check_capability(
     """
     current = state if state is not None else CAPABILITY_INITIAL[capability]
 
-    if current is CapabilityState.UNSUPPORTED:
-        raise UnsupportedCapabilityError(
-            f"возможность {capability.value} отсутствует по наблюдению. "
-            "Это не догадка: состояние выставляется только по полученному ответу"
-        )
+    # Решение берётся у порождённого allows_call, а не собирается здесь заново.
+    # Правило объявлено нормативным в spec/capabilities.yaml, и второй его
+    # экземпляр разошёлся бы с первым молча: состояния те же, поведение разное.
+    if current.allows_call(opted_in=opted_in):
+        return current
 
-    if current.opt_in_required and not opted_in:
+    if current.opt_in_required:
         raise ExperimentalCapabilityError(
             f"возможность {capability.value} экспериментальна: контракт может "
             "измениться. Включите её явно, если готовы к этому"
         )
 
-    return current
+    raise UnsupportedCapabilityError(
+        f"возможность {capability.value} отсутствует по наблюдению. "
+        "Это не догадка: состояние выставляется только по полученному ответу"
+    )
