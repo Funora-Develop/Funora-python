@@ -59,7 +59,7 @@ from ._state import StateFile
 from ._thread import Thread, parse_thread
 from ._transport import Observation, TransportSettings
 from ._verdicts import error_for
-from ._watch import Router, StepResult, primed
+from ._watch import Router, StepResult, incomplete, primed
 from .capabilities import CAPABILITY_INITIAL, Capability, CapabilityState
 from .errors import (
     AuthenticationError,
@@ -684,8 +684,30 @@ class Engine:
             now = monotonic()
 
             chat_events = diff_chats(known_chats, chats, account_id=account_id)
+            # Неполное чтение объявляется вслух и в той же партии, что и события
+            # по нему. Несдвинутый курсор защищает будущее - выпавшие строки не
+            # будут сочтены исчезнувшими, - а настоящее не защищает никак:
+            # события по прочитанному порождаются, и обработчик принимает их за
+            # полную картину.
+            notices = tuple(
+                incomplete(
+                    account_id,
+                    page.observed_at,
+                    "account:" + account_id,
+                    entity=name,
+                    reason=page.reason,
+                    rows_total=page.rows_total,
+                    rows_accepted=page.rows_accepted,
+                )
+                for name, page in (("orders", orders), ("chats", chats))
+                if page.completeness is not Completeness.COMPLETE
+            )
             head = dedup.filter(
-                (*diff_orders(known_orders, orders, account_id=account_id), *chat_events),
+                (
+                    *notices,
+                    *diff_orders(known_orders, orders, account_id=account_id),
+                    *chat_events,
+                ),
                 now,
             )
 

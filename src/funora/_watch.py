@@ -34,6 +34,7 @@ from .events import EventType
 
 __all__ = [
     "Router",
+    "incomplete",
     "Handler",
     "StepResult",
     "PRODUCIBLE",
@@ -55,6 +56,9 @@ Invoke = tuple[Handler, Event]
 
 #: Событие, которым отмечается сохранение первого снимка.
 _PRIMED: Final[EventType] = EventType.WATCH_PRIMED
+
+#: Событие, которым отмечается неполно собранный снимок.
+_INCOMPLETE: Final[EventType] = EventType.SNAPSHOT_INCOMPLETE
 
 
 #: Виды событий, которые эта реализация вправду порождает.
@@ -78,6 +82,7 @@ PRODUCIBLE: Final[frozenset[EventType]] = frozenset(
         EventType.ORDER_CREATED,
         EventType.ORDER_STATUS_CHANGED,
         EventType.WATCH_PRIMED,
+        EventType.SNAPSHOT_INCOMPLETE,
     }
 )
 
@@ -497,4 +502,70 @@ def primed(account_id: str, observed_at: datetime, ordering_key: str) -> Event:
         observed_at=observed_at,
         origin="structural",
         payload={"reason": "cold_start"},
+    )
+
+
+def incomplete(
+    account_id: str,
+    observed_at: datetime,
+    ordering_key: str,
+    *,
+    entity: str,
+    reason: str,
+    rows_total: int,
+    rows_accepted: int,
+) -> Event:
+    """Собирает событие о неполно собранном снимке.
+
+    Цикл наблюдения умел обращаться с неполным чтением и молчал о нём. Курсор он
+    не двигал - это верно и защищает будущее: строки, выпавшие из неполного
+    чтения, не будут сочтены исчезнувшими. Настоящее несдвинутый курсор не
+    защищает никак: события по прочитанному порождаются, и обработчик принимает
+    их за полную картину - обрабатывает часть заказов как все.
+
+    Событие приходит в той же партии, что и события по этому списку. Отдельный
+    поздний сигнал бесполезен: решение по неполным данным к тому времени уже
+    принято.
+
+    Отпечаток строится из сущности, причины и числа принятых строк. Одна и та же
+    неполнота, держащаяся много шагов подряд, доходит один раз за срок гашения;
+    переход от «двух строк не хватает» к «не хватает двадцати» доходит сразу -
+    это новость.
+
+    Args:
+        account_id (str): Идентификатор аккаунта.
+        observed_at (datetime): Момент наблюдения.
+        ordering_key (str): Ключ упорядочивания наблюдения.
+        entity (str): Что прочитано неполно: orders, chats, thread.
+        reason (str): Машиночитаемая причина неполноты со страницы.
+        rows_total (int): Сколько кандидатов в строки нашлось.
+        rows_accepted (int): Сколько строк принято.
+
+    Returns:
+        Event: Событие snapshot.incomplete.
+    """
+    return Event(
+        id=f"incomplete:{account_id}:{entity}:{reason}:{rows_accepted}",
+        type=_INCOMPLETE,
+        ordering_key=ordering_key,
+        entity_id=account_id,
+        observed_at=observed_at,
+        origin="structural",
+        payload={
+            # Идентификатор наблюдения лежит и в нагрузке: так велит схема
+            # события, и это не дубль оболочки без причины. Нагрузку принято
+            # передавать дальше отдельно от оболочки - в очередь, в журнал, - и
+            # там она обязана оставаться самодостаточной.
+            "watch_id": account_id,
+            "entity": entity,
+            # Чтение однослойное: страница запрошена одна и получена одна.
+            # Поля сохранены, потому что неполнота бывает и постраничной, а
+            # получателю нужно уметь различать роды по одному и тому же событию.
+            # Здесь расходятся не страницы, а строки.
+            "pages_fetched": 1,
+            "pages_requested": 1,
+            "rows_total": rows_total,
+            "rows_accepted": rows_accepted,
+            "reason_code": reason,
+        },
     )
