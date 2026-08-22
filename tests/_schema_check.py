@@ -61,6 +61,9 @@ _PROPERTY_KEYWORDS: frozenset[str] = frozenset(
         "x-funora-closed",
         "x-funora-observability",
         "x-funora-sensitivity",
+        "x-funora-nullable",
+        "x-funora-observed-value",
+        "$ref",
     }
 )
 
@@ -179,7 +182,25 @@ def _check_value(value: Any, schema: dict[str, Any], where: str) -> None:
             _fail(where, f"доменный тип {domain} требует непустую строку, получено {value!r}")
         return
 
+    # Пустота обязана объявить, что означает. Смыслов два, и они приводят к
+    # разным решениям вызывающего: «не наблюдали» - значение, возможно, есть, а
+    # прочитать не удалось; «неприменимо» - в этом состоянии поля не бывает.
+    #
+    # Здесь проверяется не выбор смысла (это дело валидатора спецификации), а
+    # согласованность: объявленная пустота обязана быть выразимой типом.
+    declared_null = schema.get("x-funora-nullable")
+    if declared_null is not None and declared_null != "not_applicable":
+        raise UnsupportedKeyword(f"{where}: проверка не знает x-funora-nullable «{declared_null}»")
+
     types = _types_of(schema)
+    says_empty = declared_null == "not_applicable" or (
+        schema.get("x-funora-observability") == "unobserved-possible"
+    )
+    if says_empty and types and "null" not in types:
+        _fail(where, f"пустота объявлена, а тип её не допускает: {types}")
+    if types and "null" in types and not says_empty and "$ref" not in schema:
+        _fail(where, "тип допускает null, а смысл пустоты не объявлен")
+
     if types:
         # bool до int: bool - подкласс int, и без этого True прошёл бы как целое.
         if isinstance(value, bool) and "boolean" not in types:
