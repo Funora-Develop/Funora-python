@@ -31,6 +31,7 @@ from typing import Final
 
 from selectolax.parser import HTMLParser, Node
 
+from ._extract import attribute
 from ._host import host_of, same_host
 from ._observed import Observed
 from ._result import Completeness, Defect, Severity, collect_rows
@@ -223,29 +224,6 @@ def _origin(message: Node) -> Origin:
     return Origin.UNKNOWN
 
 
-def _attribute(node: Node | None, name: str, field_name: str) -> Observed[str]:
-    """Извлекает значение атрибута как наблюдаемое значение.
-
-    Пустой атрибут даёт пустое значение, а не наблюдение. Тип Observed обещает,
-    что PRESENT - это непустое значение, и собирать его в состоянии, которое он
-    сам себе запрещает, значит отбирать у вызывающего единственный способ
-    отличить «адрес есть» от «атрибут пуст».
-
-    Args:
-        node (Node | None): Узел либо None, если селектор не нашёл ничего.
-        name (str): Имя атрибута.
-        field_name (str): Имя поля для причины отсутствия.
-
-    Returns:
-        Observed[str]: Наблюдение. Отсутствие узла, отсутствие атрибута и пустое
-        значение различаются.
-    """
-    if node is None:
-        return Observed.missing(f"selector_no_match:{field_name}")
-    value = ((node.attributes or {}).get(name) or "").strip()
-    return Observed.present(value) if value else Observed.empty("")
-
-
 def _external_links(message: Node, host: str) -> Observed[tuple[str, ...]]:
     """Собирает ссылки из текста, ведущие за пределы площадки.
 
@@ -330,7 +308,7 @@ def _parse_message(message: Node, index: int, host: str) -> tuple[Message, list[
         row_index=index,
         origin=origin,
         author_name=_text(message.css_first(_AUTHOR_NAME), "author_name"),
-        author_href=_attribute(author_link, "href", "author_href"),
+        author_href=attribute(author_link, "href", "author_href"),
         text=_text(message.css_first(_TEXT), "text"),
         time_text=_text(message.css_first(_DATE), "time_text"),
         time_full_text=_title(message.css_first(_DATE)),

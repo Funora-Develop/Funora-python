@@ -53,6 +53,7 @@ from typing import Final
 
 from selectolax.parser import HTMLParser, Node
 
+from ._extract import attribute
 from ._observed import Confidence, Observed
 from ._result import Completeness, Defect, Severity, collect_rows
 from .errors import IncompleteResultError, ProtocolChangedError
@@ -229,29 +230,6 @@ def _text(node: Node | None, name: str) -> Observed[str]:
     if node is None:
         return Observed.missing(f"selector_no_match:{name}")
     value = " ".join((node.text() or "").split())
-    return Observed.present(value) if value else Observed.empty("")
-
-
-def _attribute(node: Node | None, name: str, field_name: str) -> Observed[str]:
-    """Извлекает значение атрибута как наблюдаемое значение.
-
-    Пустой атрибут даёт пустое значение, а не наблюдение. Разница здесь та же,
-    что и всюду в этом модуле, но цена у неё выше обычной: пустая строка,
-    выданная как наблюдённый адрес, подставится в запрос и уведёт его неизвестно
-    куда.
-
-    Args:
-        node (Node | None): Узел либо None, если селектор не нашёл ничего.
-        name (str): Имя атрибута.
-        field_name (str): Имя поля для причины отсутствия.
-
-    Returns:
-        Observed[str]: Наблюдение. Отсутствие узла, отсутствие атрибута и пустое
-        значение различаются.
-    """
-    if node is None:
-        return Observed.missing(f"selector_no_match:{field_name}")
-    value = ((node.attributes or {}).get(name) or "").strip()
     return Observed.present(value) if value else Observed.empty("")
 
 
@@ -459,7 +437,7 @@ def _parse_row(row: Node, index: int) -> tuple[OrderListEntry | None, list[Defec
         description_text=_text(row.css_first(".order-desc > div"), "description_text"),
         category_text=_text(row.css_first(".order-desc .text-muted"), "category_text"),
         counterparty_name=_text(row.css_first(".tc-user .media-user-name"), "counterparty_name"),
-        counterparty_href=_attribute(user_link, "data-href", "counterparty_href"),
+        counterparty_href=attribute(user_link, "data-href", "counterparty_href"),
         counterparty_online=online,
         amount_text=_text(row.css_first(".tc-price"), "amount_text"),
         currency_symbol_text=_text(row.css_first(".tc-price .unit"), "currency_symbol_text"),

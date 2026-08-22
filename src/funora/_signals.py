@@ -28,6 +28,7 @@ from typing import Final
 from selectolax.parser import HTMLParser, Node
 
 __all__ = [
+    "BLANK",
     "ATTR_ALLOWLIST",
     "Change",
     "ChangeKind",
@@ -129,6 +130,18 @@ def _element_key(node: Node, index: int) -> str:
     return label + "#" + mark
 
 
+#: Чем обозначается атрибут без значения.
+#:
+#: Разборщик отдаёт None и для `data-chat`, и для `data-chat=""`. Прежде такая
+#: пара молча выбрасывалась, и сравнение о ней не говорило ничего: атрибут,
+#: стоящий без значения в обоих чтениях, не попадал в отчёт вовсе, а появление у
+#: него значения выглядело как появление самого атрибута.
+#:
+#: Знак выбран невозможный внутри значения: разборщики HTML заменяют нулевой
+#: байт на символ замены, так что совпасть с настоящим значением он не может.
+BLANK: Final[str] = "\x00"
+
+
 def collect(html: str, attrs: frozenset[str] = ATTR_ALLOWLIST) -> dict[tuple[str, str], str]:
     """Извлекает значения атрибутов из белого списка.
 
@@ -157,9 +170,10 @@ def collect(html: str, attrs: frozenset[str] = ATTR_ALLOWLIST) -> dict[tuple[str
         key = _element_key(node, counters[tag])
         for name in present:
             value = node_attrs[name]
-            if value is None:
-                continue
-            found[(key, name)] = value
+            # Атрибут без значения обозначается явно, а не выбрасывается:
+            # выброшенный он неотличим от отсутствующего, и сравнение назвало бы
+            # появление значения появлением атрибута.
+            found[(key, name)] = BLANK if value is None else value
     return found
 
 
