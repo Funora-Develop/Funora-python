@@ -60,7 +60,8 @@ from ._state import StateFile
 from ._thread import Thread, parse_thread
 from ._transport import Observation, TransportSettings
 from ._verdicts import error_for
-from ._watch import Router, StepResult, incomplete, primed
+from ._watch import Router, StepResult, incomplete, loss, primed
+from .budget import MAX_QUEUE_DEPTH_PER_KEY
 from .capabilities import CAPABILITY_INITIAL, Capability, CapabilityState
 from .errors import (
     AuthenticationError,
@@ -769,13 +770,40 @@ class Engine:
                 if event.id in delivered_ids and event.entity_id not in pending:
                     pending.append(event.entity_id)
 
+            # Очередь ограничена, и предел объявлен спецификацией. Он нужен:
+            # очередь пополняется на каждом изменении диалога, а вычерпывается
+            # по несколько штук за шаг - у продавца с полусотней активных
+            # переписок она растёт быстрее, чем убывает.
+            #
+            # Выброшенное объявляется вслух. Ограничить и промолчать - худший
+            # исход из возможных: сообщение покупателя не будет прочитано
+            # никогда, и узнать об этом неоткуда.
+            #
+            # Выбрасывается ХВОСТ, а не голова: в голове самые давние диалоги, и
+            # они ждут дольше всех. Выбросить их значило бы гарантировать, что
+            # именно они не дочитаются никогда.
+            dropped = 0
+            if len(pending) > MAX_QUEUE_DEPTH_PER_KEY:
+                dropped = len(pending) - MAX_QUEUE_DEPTH_PER_KEY
+                del pending[MAX_QUEUE_DEPTH_PER_KEY:]
+                _log.warning(
+                    "очередь дочитывания переполнена: %d диалогов выпало, предел %d",
+                    dropped,
+                    MAX_QUEUE_DEPTH_PER_KEY,
+                )
+
             messages, thread_cursors, followed = yield from self._follow(
                 pending,
                 known_threads,
                 account_id=account_id,
                 limit=max_threads_per_step,
             )
-            fresh = (*head, *dedup.filter(messages, now))
+            losses = (
+                (loss(account_id, orders.observed_at, lost=dropped, reason="queue_overflow"),)
+                if dropped
+                else ()
+            )
+            fresh = (*head, *dedup.filter((*losses, *messages), now))
 
             batch = fresh
             greeting: Event | None = None

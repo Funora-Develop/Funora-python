@@ -26,7 +26,7 @@ from funora._diff import Event
 from funora._engine import Engine, Pause
 from funora._poll import Schedule
 from funora._transport import Observation, TransportSettings
-from funora._watch import PRODUCIBLE, Router, dispatch, incomplete, primed
+from funora._watch import PRODUCIBLE, Router, dispatch, incomplete, loss, primed
 from funora.errors import (
     AccessBlockedError,
     ConfigurationError,
@@ -1519,6 +1519,7 @@ def test_every_declared_kind_is_actually_produced() -> None:
             rows_total=8,
             rows_accepted=8,
         ).type,
+        loss(account, when, lost=1, reason="queue_overflow").type,
     }
 
     assert produced >= PRODUCIBLE, (
@@ -1991,3 +1992,97 @@ def test_complete_thread_says_nothing(no_sleep: list[float]) -> None:
         for event in events
         if event.type is EventType.SNAPSHOT_INCOMPLETE and event.payload.get("entity") == "thread"
     ]
+
+
+def test_queue_overflow_is_announced_not_silent(
+    no_sleep: list[float], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Проверяет, что переполнение очереди не проходит молча.
+
+    Очередь дочитывания пополняется на каждом изменении диалога, а вычерпывается
+    по несколько штук за шаг: у продавца с полусотней активных переписок она
+    растёт быстрее, чем убывает. Предел объявлен спецификацией и до сих пор не
+    применялся - очередь была неограниченной.
+
+    Ограничить её и промолчать было бы худшим исходом: сообщение покупателя не
+    прочитается никогда, и узнать об этом неоткуда. Поэтому выброшенное
+    объявляется событием потери.
+
+    Предел подменяется на маленький: набрать полтораста диалогов в наборе
+    негде.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+        monkeypatch (pytest.MonkeyPatch): Механизм подмены.
+
+    Returns:
+        None
+    """
+    import funora._engine as engine_module
+
+    monkeypatch.setattr(engine_module, "MAX_QUEUE_DEPTH_PER_KEY", 3)
+
+    dialogs = _numeric_dialogs(_page("chat.logged.ru"))
+    # Второе чтение сдвигает позиции у всех диалогов сразу: в очередь попадает
+    # столько узлов, сколько их на странице.
+    moved = re.sub(r'data-node-msg="[^"]*"', 'data-node-msg="T10:d#сдвинуто"', dialogs)
+    assert moved != dialogs, "порча не применилась - проверка бессмысленна"
+
+    _, events = _follow_run([dialogs, moved], 2)
+
+    losses = [event for event in events if event.type is EventType.EVENT_LOSS]
+    assert losses, "очередь переполнилась молча"
+    assert losses[0].payload["lost"] > 0
+    assert losses[0].payload["reason_code"] == "queue_overflow"
+
+
+def test_queue_within_the_limit_reports_no_loss(no_sleep: list[float]) -> None:
+    """Проверяет, что непереполненная очередь событий потери не даёт.
+
+    Без этой проверки правило вырождается в «сообщать всегда», и получатель
+    привыкает не читать.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    dialogs = _numeric_dialogs(_page("chat.logged.ru"))
+
+    _, events = _follow_run([dialogs, _moved(dialogs, "777")], 2)
+
+    assert not [event for event in events if event.type is EventType.EVENT_LOSS]
+
+
+def test_overflow_drops_the_tail_not_the_head(
+    no_sleep: list[float], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Проверяет, что при переполнении выбывает хвост, а не голова.
+
+    В голове очереди самые давние диалоги - они ждут дольше всех. Выбросить их
+    значило бы гарантировать, что именно они не дочитаются никогда, а
+    дочитываться будут только свежие.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+        monkeypatch (pytest.MonkeyPatch): Механизм подмены.
+
+    Returns:
+        None
+    """
+    import funora._engine as engine_module
+
+    monkeypatch.setattr(engine_module, "MAX_QUEUE_DEPTH_PER_KEY", 2)
+
+    dialogs = _numeric_dialogs(_page("chat.logged.ru"))
+    moved = re.sub(r'data-node-msg="[^"]*"', 'data-node-msg="T10:d#сдвинуто"', dialogs)
+
+    transport, _ = _follow_run([dialogs, moved], 2)
+
+    read = transport.threads_read()
+    assert read, "ни одна переписка не прочитана"
+    first_on_page = re.search(r'data-id="(\d+)"', dialogs).group(1)
+    assert read[0] == f"/chat/?node={first_on_page}", (
+        f"первой прочитана {read[0]}, а не голова очереди - выбывает не хвост"
+    )

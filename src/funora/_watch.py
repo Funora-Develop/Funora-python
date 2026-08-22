@@ -29,11 +29,18 @@ from datetime import datetime
 from typing import Final
 
 from ._diff import Event, make_event
-from .errors import ConfigurationError, FunoraError, HandlerError
-from .events import EventType
+from .budget import HANDLER_TIMEOUT_MS, MAX_CONCURRENT_HANDLERS
+from .errors import (
+    ConfigurationError,
+    FunoraError,
+    HandlerError,
+    HandlerTimeoutError,
+)
+from .events import ORDERING_KEY, EventType
 
 __all__ = [
     "Router",
+    "loss",
     "incomplete",
     "Handler",
     "StepResult",
@@ -59,6 +66,9 @@ _PRIMED: Final[EventType] = EventType.WATCH_PRIMED
 
 #: Событие, которым отмечается неполно собранный снимок.
 _INCOMPLETE: Final[EventType] = EventType.SNAPSHOT_INCOMPLETE
+
+#: Событие, которым объявляется потеря событий.
+_LOSS: Final[EventType] = EventType.EVENT_LOSS
 
 #: Причина, по которой наблюдение объявляется начавшимся.
 _COLD_START: Final[str] = "cold_start"
@@ -92,6 +102,7 @@ PRODUCIBLE: Final[frozenset[EventType]] = frozenset(
         EventType.ORDER_STATUS_CHANGED,
         EventType.WATCH_PRIMED,
         EventType.SNAPSHOT_INCOMPLETE,
+        EventType.EVENT_LOSS,
     }
 )
 
@@ -244,6 +255,24 @@ def dispatch_core(
             exc = yield (handler, event)
             if exc is None:
                 continue
+            if isinstance(exc, HandlerError):
+                # Отказ обработчика - его беда, а не условие площадки, и это
+                # верно даже для отказа по времени: HandlerTimeoutError входит в
+                # иерархию Funora, и без этой ветки один задумавшийся обработчик
+                # останавливал бы наблюдение целиком.
+                #
+                # Ветка стоит ПЕРЕД проверкой на FunoraError намеренно:
+                # HandlerError её потомок, и обратный порядок отправил бы отказ
+                # обработчика в fatal.
+                broke = True
+                errors.append(exc)
+                _log.warning(
+                    "обработчик отказал на событии %s (ключ %s): %s",
+                    event.type,
+                    event.ordering_key,
+                    type(exc).__name__,
+                )
+                break
             if isinstance(exc, FunoraError):
                 # Раньше здесь стоял raise, и партия обрывалась посреди раздачи:
                 # накопленные delivered и failed пропадали, курсор не
@@ -358,7 +387,29 @@ async def _adispatch_serially(router: Router, events: tuple[Event, ...]) -> Step
         try:
             outcome = handler(event)
             if inspect.isawaitable(outcome):
-                await outcome
+                # Предел времени объявлен спецификацией и до сих пор не
+                # применялся нигде: обработчик, ушедший в вечное ожидание,
+                # останавливал цикл наблюдения целиком. Ни исключения, ни
+                # строки в журнале - клиент просто переставал ходить на
+                # площадку, и внешне это неотличимо от «ничего не происходит».
+                #
+                # Обещание должно быть либо выполнено, либо снято. Здесь оно
+                # выполнимо: сопрограмму можно отменить.
+                await asyncio.wait_for(outcome, HANDLER_TIMEOUT_MS / 1000)
+        except TimeoutError as exc:
+            _log.warning(
+                "обработчик не уложился в %d мс на событии %s (ключ %s)",
+                HANDLER_TIMEOUT_MS,
+                event.type,
+                event.ordering_key,
+            )
+            timeout = HandlerTimeoutError(
+                f"обработчик {getattr(handler, '__name__', handler)!r} не уложился "
+                f"в {HANDLER_TIMEOUT_MS} мс на событии {event.type} с ключом "
+                f"{event.ordering_key}"
+            )
+            timeout.__cause__ = exc
+            reply = timeout
         except Exception as exc:  # noqa: BLE001
             reply = exc
 
@@ -458,11 +509,29 @@ async def adispatch(
         router (Router): Реестр обработчиков.
         events (tuple[Event, ...]): События этого шага.
         concurrency (int): Сколько ключей упорядочивания обрабатывать
-            одновременно. Единица означает последовательную раздачу.
+            одновременно. Единица означает последовательную раздачу. Значение
+            выше объявленного спецификацией предела отвергается: договор об
+            одновременности - часть контракта, а не настройка вызывающего.
 
     Returns:
         StepResult: Что доставлено, что нет, и можно ли сдвигать базу.
+
+    Raises:
+        ConfigurationError: Если запрошено больше одновременных обработчиков,
+            чем объявляет спецификация.
     """
+    if concurrency > MAX_CONCURRENT_HANDLERS:
+        # Предел объявлен спецификацией и до сих пор не применялся: вызывающий
+        # мог попросить хоть тысячу. Тысяча одновременных обработчиков - это
+        # тысяча одновременных соединений с чужой базой у него и, что важнее,
+        # тысяча параллельных реакций на площадке.
+        #
+        # Отказ, а не тихое понижение: понизить молча значило бы дать
+        # вызывающему неверное представление о том, как работает его код.
+        raise ConfigurationError(
+            f"запрошено {concurrency} одновременных обработчиков, "
+            f"спецификация объявляет предел {MAX_CONCURRENT_HANDLERS}"
+        )
     if concurrency <= 1 or len(events) < 2:
         return await _adispatch_serially(router, events)
 
@@ -602,6 +671,47 @@ def incomplete(
             "pages_requested": 1,
             "rows_total": rows_total,
             "rows_accepted": rows_accepted,
+            "reason_code": reason,
+        },
+    )
+
+
+def loss(account_id: str, observed_at: datetime, *, lost: int, reason: str) -> Event:
+    """Собирает событие о потерянных событиях.
+
+    Очередь дочитывания переписок ограничена: спецификация объявляет предел, и
+    предел этот нужен - очередь пополняется на каждом изменении диалога, а
+    вычерпывается по несколько штук за шаг. У продавца с полусотней активных
+    переписок она растёт быстрее, чем убывает.
+
+    Но ограничить очередь и молча выбросить лишнее - худший исход из возможных:
+    сообщение покупателя не будет прочитано никогда, и узнать об этом неоткуда.
+    Поэтому выброшенное объявляется вслух.
+
+    Само это событие не выбрасывается никогда: выбросить сообщение о потере
+    значит потерять и сам факт потери.
+
+    Args:
+        account_id (str): Идентификатор аккаунта, он же наблюдения.
+        observed_at (datetime): Момент наблюдения.
+        lost (int): Сколько диалогов выпало из очереди.
+        reason (str): Машиночитаемая причина потери.
+
+    Returns:
+        Event: Событие event.loss.
+    """
+    return make_event(
+        account_id=account_id,
+        event_type=_LOSS,
+        entity_id=account_id,
+        # Версия - причина и число: две потери подряд по одной причине с разным
+        # числом - разные новости, а с одинаковым - одна и та же.
+        revision=f"{reason}{_PART_SEP}{lost}",
+        observed_at=observed_at,
+        key_field="account_id",
+        payload={
+            "ordering_key": ORDERING_KEY[_LOSS].format(account_id=account_id),
+            "lost": lost,
             "reason_code": reason,
         },
     )

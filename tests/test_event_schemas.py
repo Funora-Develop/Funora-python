@@ -26,7 +26,7 @@ from funora._chats import parse_chats_page
 from funora._diff import Event, diff_chats, diff_orders, diff_thread
 from funora._orders import parse_orders_page
 from funora._thread import parse_thread
-from funora._watch import PRODUCIBLE, incomplete, primed
+from funora._watch import PRODUCIBLE, incomplete, loss, primed
 from funora.events import ORDERING_KEY, EventType
 from funora.extraction import OrderStatus
 
@@ -158,6 +158,7 @@ def _every_produced_event() -> list[Event]:
             rows_total=8,
             rows_accepted=6,
         ),
+        loss(ACCOUNT, WHEN, lost=3, reason="queue_overflow"),
     ]
 
     kinds = {event.type for event in events}
