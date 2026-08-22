@@ -725,7 +725,16 @@ def render_events(spec: Path) -> str:
     ]
 
     out.append("__all__ = [\n")
-    for name in ("EventType", "ORDERING_KEY", "FINGERPRINT_FIELDS", "DEDUP_TTL_MS"):
+    for name in (
+        "EventType",
+        "ORDERING_KEY",
+        "FINGERPRINT_FIELDS",
+        "FINGERPRINT_SEPARATOR",
+        "FINGERPRINT_HASH",
+        "FINGERPRINT_DIGEST_BYTES",
+        "FINGERPRINT_LENGTH",
+        "DEDUP_TTL_MS",
+    ):
         out.append(f'    "{name}",\n')
     out.append("]\n")
 
@@ -755,6 +764,38 @@ def render_events(spec: Path) -> str:
     for field_name in identity["fingerprint_from"]:
         out.append(f'    "{field_name}",\n')
     out.append(")\n")
+
+    algorithm: dict[str, Any] = doc["fingerprint_algorithm"]
+    if algorithm.get("separator") != "U+001F":
+        raise SystemExit(
+            "spec/events/delivery.yaml: разделитель отпечатка обязан быть U+001F - "
+            "все части приходят снаружи, и печатный разделитель рано или поздно "
+            "встретится внутри части, склеив две разные четвёрки в одну строку"
+        )
+
+    out.append("\n#: Чем разделяются части при склейке перед хэшированием.\n")
+    out.append("#:\n")
+    out.append("#: Управляющий знак, а не печатный: все части приходят снаружи, и любой\n")
+    out.append("#: печатный разделитель рано или поздно встретится внутри части. Тогда две\n")
+    out.append("#: разные четвёрки склеятся в одну строку, и два разных события получат\n")
+    out.append("#: один отпечаток - молча.\n")
+    out.append('FINGERPRINT_SEPARATOR: Final[str] = "\\x1f"\n')
+
+    out.append("\n#: Имя алгоритма хэширования из hashlib.\n")
+    out.append("#:\n")
+    out.append("#: Выбор не про стойкость: отпечаток не защищает ни от кого, он различает.\n")
+    out.append("#: Зафиксирован он потому, что должен совпасть у шести реализаций.\n")
+    out.append(f'FINGERPRINT_HASH: Final[str] = "{algorithm["hash"]}"\n')
+
+    out.append("\n#: Длина хэша в байтах.\n")
+    out.append(f"FINGERPRINT_DIGEST_BYTES: Final[int] = {algorithm['digest_size_bytes']}\n")
+
+    out.append("\n#: Длина отпечатка в знаках шестнадцатеричной записи.\n")
+    out.append("#:\n")
+    out.append("#: Зафиксирована отдельно от длины хэша, чтобы реализация не удлинила её\n")
+    out.append("#: вслед за сменой алгоритма, не заметив, что этим обнулила сохранённые\n")
+    out.append("#: ключи идемпотентности у всех, кто уже работает.\n")
+    out.append(f"FINGERPRINT_LENGTH: Final[int] = {algorithm['length_chars']}\n")
 
     out.append("\n#: Сколько хранится запись о доставленном событии, миллисекунды.\n")
     out.append(f"DEDUP_TTL_MS: Final[int] = {dedup['ttl_ms']}\n")

@@ -47,6 +47,7 @@ def _event(key: str, number: int) -> Event:
     return Event(
         id=f"{key}:{number}",
         type=EventType.MESSAGE_CREATED,
+        account_id="12345678",
         ordering_key=key,
         entity_id=key,
         observed_at=WHEN,

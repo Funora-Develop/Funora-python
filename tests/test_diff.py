@@ -255,8 +255,8 @@ def test_status_change_produces_an_event() -> None:
     assert {e.type for e in events} == {EventType.ORDER_STATUS_CHANGED}
     assert len(events) == 5, "оплаченных заказов в снимке пять"
     for event in events:
-        assert event.payload["from"] == OrderStatus.PAID
-        assert event.payload["to"] == OrderStatus.CLOSED
+        assert event.payload["previous"] == OrderStatus.PAID
+        assert event.payload["current"] == OrderStatus.CLOSED
         assert event.ordering_key == f"order:{event.entity_id}"
 
 
@@ -878,5 +878,5 @@ def test_status_change_payload_describes_its_own_row() -> None:
     rows = {entry.order_id: entry for entry in page.rows(accept_incomplete=True)}
     for event in events:
         assert event.payload["href"] == rows[event.entity_id].href
-        assert event.payload["from"] == "выдуманное-состояние"
-        assert event.payload["to"] == str(rows[event.entity_id].status.value)
+        assert event.payload["previous"] == "выдуманное-состояние"
+        assert event.payload["current"] == str(rows[event.entity_id].status.value)

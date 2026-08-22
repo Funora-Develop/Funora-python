@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Generator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic
@@ -42,6 +42,7 @@ from ._chats import ChatsPage, parse_chats_page
 from ._classify import DEFAULT_IDENTITY_CSS, classify
 from ._diff import (
     UNREAD_STATUS,
+    Delivery,
     Event,
     chats_cursor,
     diff_chats,
@@ -633,6 +634,10 @@ class Engine:
         known_chats: dict[str, str] | None = None
         known_threads: dict[str, frozenset[str]] = {}
         pending: list[str] = []
+        # Сколько раз каждое событие уже пробовали доставить. Пустой словарь -
+        # штатное состояние: записи заводятся только на события, которые
+        # обработчик не принял.
+        attempts: dict[str, int] = {}
         greeted = False
 
         if state is not None:
@@ -665,6 +670,13 @@ class Engine:
             # дочитаться, не дочитался бы уже никогда: событие о нём доставлено,
             # курсор диалогов сдвинут, и повода вернуться к нему больше нет.
             pending = list(cursor.get("pending_threads") or [])
+            restored_attempts = stored.get("attempts")
+            if isinstance(restored_attempts, dict):
+                attempts = {
+                    str(key): int(value)
+                    for key, value in restored_attempts.items()
+                    if isinstance(value, int) and value > 0
+                }
             # Здоровались ли уже. Восстановленный курсор любого из списков
             # означает, что здоровались: watch.primed - событие о начале
             # наблюдения, а не о начале процесса.
@@ -693,7 +705,6 @@ class Engine:
                 incomplete(
                     account_id,
                     page.observed_at,
-                    "account:" + account_id,
                     entity=name,
                     reason=page.reason,
                     rows_total=page.rows_total,
@@ -742,7 +753,24 @@ class Engine:
                 # приветствие. Наблюдение за перепиской замолкало целиком из-за
                 # состояния чужой страницы - молча.
                 greeted = True
-                batch = (primed(account_id, orders.observed_at, "account:" + account_id), *fresh)
+                batch = (
+                    primed(account_id, orders.observed_at, ("orders", "chats")),
+                    *fresh,
+                )
+
+            # Номер попытки проставляется здесь, а не в строителе событий:
+            # строитель не знает, доставлялось ли это событие раньше, - знает
+            # цикл. Доставка объявлена как минимум однократной, и событие, на
+            # котором обработчик упал, приходит снова тем же отпечатком; без
+            # номера попытки обработчик не отличит повтор от нового события.
+            #
+            # Счётчик пересобирается по партии целиком, а не накапливается:
+            # событие, переставшее порождаться (список изменился, курсор ушёл
+            # вперёд), само выпадает из счётчика, и он не растёт без предела.
+            attempts = {event.id: attempts.get(event.id, 0) + 1 for event in batch}
+            batch = tuple(
+                replace(event, delivery=Delivery(attempt=attempts[event.id])) for event in batch
+            )
 
             reply = yield Deliver(batch)
             if not isinstance(reply, StepResult):
@@ -750,6 +778,10 @@ class Engine:
             result = reply
 
             dedup.commit(result.delivered, now)
+            # Доставленное выбывает: гашение повторов больше его не пропустит,
+            # и держать номер попытки не для чего.
+            for event in result.delivered:
+                attempts.pop(event.id, None)
 
             # Курсор снимается только с полного чтения. Снятый с неполного, он
             # потерял бы выпавшие строки, и при следующем чтении они выглядели
@@ -782,6 +814,12 @@ class Engine:
                 state.save(
                     {
                         "dedup": dedup.snapshot(),
+                        # Номера попыток переживают перезапуск вместе с гашением.
+                        # Иначе перезапуск обнулял бы их, и событие, падавшее
+                        # пятый раз, приходило бы с номером один - то есть
+                        # выглядело бы новым ровно тогда, когда обработчику
+                        # важнее всего знать, что оно не новое.
+                        "attempts": attempts,
                         "cursor": {
                             "orders": known_orders,
                             "chats": known_chats,

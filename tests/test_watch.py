@@ -55,6 +55,7 @@ def _event(index: int, event_type: EventType = EventType.ORDER_CREATED) -> Event
     return Event(
         id=f"e{index}",
         type=event_type,
+        account_id="12345678",
         ordering_key=f"order:{index}",
         entity_id=str(index),
         observed_at=datetime(2026, 8, 19, tzinfo=UTC),
@@ -1509,11 +1510,10 @@ def test_every_declared_kind_is_actually_produced() -> None:
                 account_id=account,
             )
         ),
-        primed(account, when, "account:" + account).type,
+        primed(account, when, ("orders", "chats")).type,
         incomplete(
             account,
             when,
-            "account:" + account,
             entity="orders",
             reason="page_defects",
             rows_total=8,
@@ -1646,7 +1646,6 @@ def test_incompleteness_that_grew_is_reported_again() -> None:
     first = incomplete(
         "acc",
         when,
-        "account:acc",
         entity="orders",
         reason="page_defects",
         rows_total=8,
@@ -1655,7 +1654,6 @@ def test_incompleteness_that_grew_is_reported_again() -> None:
     grew = incomplete(
         "acc",
         when,
-        "account:acc",
         entity="orders",
         reason="page_defects",
         rows_total=8,
@@ -1664,7 +1662,6 @@ def test_incompleteness_that_grew_is_reported_again() -> None:
     same = incomplete(
         "acc",
         when,
-        "account:acc",
         entity="orders",
         reason="page_defects",
         rows_total=8,
@@ -1673,7 +1670,6 @@ def test_incompleteness_that_grew_is_reported_again() -> None:
     other = incomplete(
         "acc",
         when,
-        "account:acc",
         entity="chats",
         reason="page_defects",
         rows_total=8,
@@ -1683,3 +1679,162 @@ def test_incompleteness_that_grew_is_reported_again() -> None:
     assert first.id == same.id, "та же неполнота обязана гаситься как повтор"
     assert first.id != grew.id, "выросшая неполнота обязана дойти заново"
     assert first.id != other.id, "неполнота другого списка - другое событие"
+
+
+def test_redelivery_is_marked_as_a_repeat(no_sleep: list[float]) -> None:
+    """Проверяет, что повторная доставка отличима от первой.
+
+    Доставка объявлена как минимум однократной: событие, на котором обработчик
+    упал, приходит снова тем же отпечатком. Без номера попытки обработчик не
+    отличает повтор от нового события - а это ровно тот случай, ради которого
+    гарантию и формулируют: выдать товар дважды дешевле не становится оттого,
+    что второй раз был повтором.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    attempts: list[int] = []
+    router = Router()
+
+    @router.on(EventType.ORDER_CREATED)
+    def refuse(event: Event) -> None:
+        """Отказывается принимать событие, запомнив номер попытки.
+
+        Args:
+            event (Event): Событие.
+
+        Returns:
+            None
+
+        Raises:
+            ValueError: Всегда - отказ обработчика.
+        """
+        attempts.append(event.delivery.attempt)
+        raise ValueError("обработчик не принял")
+
+    orders, chats = _page("orders-trade.logged.ru"), _page("chat.logged.ru")
+    # На втором шаге в списке появляется заказ, на третьем список тот же.
+    # Курсор не двигается - обработчик не принял, - и событие приходит снова.
+    grown = _renamed_first_order(orders)
+    transport = _Cycle([orders, chats, grown, chats, grown, chats])
+    with Client(transport=transport) as client:  # type: ignore[arg-type]
+        client.watch(router, max_iterations=3)
+
+    assert attempts, "события о заказах не дошли ни разу"
+    assert max(attempts) > 1, (
+        "все доставки помечены первой попыткой - обработчик не отличит повтор "
+        f"от нового события; номера: {sorted(set(attempts))}"
+    )
+    assert min(attempts) == 1, "первая доставка обязана быть первой попыткой"
+
+
+def test_counter_holds_only_what_is_still_undelivered(
+    no_sleep: list[float], tmp_path: Path
+) -> None:
+    """Проверяет, что счётчик попыток не тащит доставленное.
+
+    Счётчик переживает перезапуск вместе с гашением повторов, то есть пишется на
+    диск. Запись о доставленном событии там не нужна ни для чего: гашение
+    повторов его больше не пропустит. Счётчик, из которого ничего не выбывает,
+    растёт файлом состояния - и это не гипотетически, а по одной записи на
+    каждое событие, дошедшее за всё время работы.
+
+    Проверяется по файлу, а не по номерам попыток у обработчика: номера
+    пересобираются по партии, и лишняя запись в них не видна. Видна она ровно
+    там, где вредит.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+        tmp_path (Path): Временный каталог для файла состояния.
+
+    Returns:
+        None
+    """
+    state_path = tmp_path / "state.json"
+    orders, chats = _page("orders-trade.logged.ru"), _page("chat.logged.ru")
+    grown = _renamed_first_order(orders)
+
+    seen: list[Event] = []
+    router = Router()
+    router.on()(seen.append)
+
+    with Client(transport=_Cycle([orders, chats, grown, chats])) as client:  # type: ignore[arg-type]
+        client.watch(router, max_iterations=2, state_path=state_path)
+
+    assert seen, "события не дошли - проверять нечего"
+    assert {event.delivery.attempt for event in seen} == {1}, (
+        "принятое с первого раза событие помечено повтором"
+    )
+
+    saved = json.loads(state_path.read_text(encoding="utf-8"))["payload"]
+    assert saved.get("attempts") == {}, (
+        f"в сохранённом счётчике осталось {saved.get('attempts')} - "
+        "это записи о доставленном, и они будут копиться вечно"
+    )
+
+
+def test_attempt_survives_a_restart(no_sleep: list[float], tmp_path: Path) -> None:
+    """Проверяет, что номер попытки переживает перезапуск.
+
+    Перезапуск, обнуляющий счётчик, выдаёт событие, падавшее пятый раз, за
+    новое - то есть врёт ровно тогда, когда обработчику важнее всего знать, что
+    оно не новое. А перезапуск после серии отказов - обычное дело: так и
+    лечат зависший обработчик.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+        tmp_path (Path): Временный каталог для файла состояния.
+
+    Returns:
+        None
+    """
+    state = tmp_path / "state.json"
+    orders, chats = _page("orders-trade.logged.ru"), _page("chat.logged.ru")
+
+    def run(iterations: int, pages: list[str]) -> list[int]:
+        """Прогоняет цикл с отказывающим обработчиком.
+
+        Args:
+            iterations (int): Сколько шагов сделать.
+            pages (list[str]): Страницы, которые отдаёт подставной транспорт.
+
+        Returns:
+            list[int]: Номера попыток, которые увидел обработчик.
+        """
+        seen: list[int] = []
+        router = Router()
+
+        @router.on(EventType.ORDER_CREATED)
+        def refuse(event: Event) -> None:
+            """Отказывается принимать событие.
+
+            Args:
+                event (Event): Событие.
+
+            Returns:
+                None
+
+            Raises:
+                ValueError: Всегда.
+            """
+            seen.append(event.delivery.attempt)
+            raise ValueError("обработчик не принял")
+
+        with Client(transport=_Cycle(pages)) as client:  # type: ignore[arg-type]
+            client.watch(router, max_iterations=iterations, state_path=state)
+        return seen
+
+    grown = _renamed_first_order(orders)
+    # Первый прогон: заказ появляется на втором шаге и не принимается.
+    first = run(2, [orders, chats, grown, chats])
+    # Второй прогон начинается с восстановленного курсора, и заказ приходит
+    # снова - обработчик его так и не принял.
+    second = run(1, [grown, chats])
+
+    assert first and second
+    assert second[0] > max(first), (
+        f"после перезапуска номер попытки {second[0]} не продолжил ряд {first} - счётчик обнулился"
+    )

@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Final
 
-from ._diff import Event
+from ._diff import Event, make_event
 from .errors import ConfigurationError, FunoraError, HandlerError
 from .events import EventType
 
@@ -59,6 +59,15 @@ _PRIMED: Final[EventType] = EventType.WATCH_PRIMED
 
 #: Событие, которым отмечается неполно собранный снимок.
 _INCOMPLETE: Final[EventType] = EventType.SNAPSHOT_INCOMPLETE
+
+#: Причина, по которой наблюдение объявляется начавшимся.
+_COLD_START: Final[str] = "cold_start"
+
+#: Разделитель частей версии сущности.
+#:
+#: Управляющий знак, а не двоеточие: причина неполноты приходит со страницы
+#: и содержать двоеточие вправе.
+_PART_SEP: Final[str] = "\x1f"
 
 
 #: Виды событий, которые эта реализация вправду порождает.
@@ -479,36 +488,51 @@ async def adispatch(
     return _merge(events, tuple(results))
 
 
-def primed(account_id: str, observed_at: datetime, ordering_key: str) -> Event:
+def primed(account_id: str, observed_at: datetime, entities: tuple[str, ...]) -> Event:
     """Собирает событие о сохранении первого снимка.
 
     Холодный старт молчит намеренно: события на каждую существующую сущность
     дали бы лавину «изменений» по всему наблюдаемому множеству сразу. Но молчать
-    совсем нельзя - вызывающий должен знать, что наблюдение началось.
+    совсем нельзя - вызывающий должен знать, что наблюдение началось, а не что
+    оно молчит по неисправности.
+
+    Идентификатор и ключ упорядочивания строятся общим строителем, а не вручную.
+    Прежде здесь собиралась строка «primed:{account_id}:{ordering_key}» с
+    ключом «account:...», и это расходилось с нормативным «watch:{watch_id}»
+    из спецификации, а версии сущности в идентификаторе не было вовсе.
 
     Args:
-        account_id (str): Идентификатор аккаунта.
+        account_id (str): Идентификатор аккаунта. Он же служит идентификатором
+            наблюдения: наблюдение ведётся за аккаунтом целиком.
         observed_at (datetime): Момент наблюдения.
-        ordering_key (str): Ключ упорядочивания наблюдения.
+        entities (tuple[str, ...]): За чем установлено наблюдение.
 
     Returns:
         Event: Событие watch.primed.
     """
-    return Event(
-        id=f"primed:{account_id}:{ordering_key}",
-        type=_PRIMED,
-        ordering_key=ordering_key,
+    return make_event(
+        account_id=account_id,
+        event_type=_PRIMED,
         entity_id=account_id,
+        # Версия - причина. Приветствие приходит один раз за срок гашения, и
+        # второе приветствие того же наблюдения было бы повтором.
+        revision=_COLD_START,
         observed_at=observed_at,
-        origin="structural",
-        payload={"reason": "cold_start"},
+        key_field="watch_id",
+        payload={
+            "watch_id": account_id,
+            # Перечень, а не число. Прежняя редакция схемы объявляла здесь
+            # количество - оно отвечает на «сколько», тогда как получателю нужен
+            # ответ на «за чем».
+            "entities": list(entities),
+            "reason": _COLD_START,
+        },
     )
 
 
 def incomplete(
     account_id: str,
     observed_at: datetime,
-    ordering_key: str,
     *,
     entity: str,
     reason: str,
@@ -527,15 +551,15 @@ def incomplete(
     поздний сигнал бесполезен: решение по неполным данным к тому времени уже
     принято.
 
-    Отпечаток строится из сущности, причины и числа принятых строк. Одна и та же
-    неполнота, держащаяся много шагов подряд, доходит один раз за срок гашения;
-    переход от «двух строк не хватает» к «не хватает двадцати» доходит сразу -
-    это новость.
+    Версия сущности - сущность, причина И ОБА ЧИСЛА. Первая редакция брала одно
+    число принятых строк, и этого мало: чтение 50 из 50 с тремя отброшенными и
+    чтение 100 из 100 с пятьюдесятью тремя отброшенными дают одинаковое число
+    принятых в одном случае из многих, а разница между «не хватает трёх» и «не
+    хватает пятидесяти трёх» - это новость, которую гасить нельзя.
 
     Args:
-        account_id (str): Идентификатор аккаунта.
+        account_id (str): Идентификатор аккаунта, он же наблюдения.
         observed_at (datetime): Момент наблюдения.
-        ordering_key (str): Ключ упорядочивания наблюдения.
         entity (str): Что прочитано неполно: orders, chats, thread.
         reason (str): Машиночитаемая причина неполноты со страницы.
         rows_total (int): Сколько кандидатов в строки нашлось.
@@ -544,24 +568,24 @@ def incomplete(
     Returns:
         Event: Событие snapshot.incomplete.
     """
-    return Event(
-        id=f"incomplete:{account_id}:{entity}:{reason}:{rows_accepted}",
-        type=_INCOMPLETE,
-        ordering_key=ordering_key,
+    return make_event(
+        account_id=account_id,
+        event_type=_INCOMPLETE,
         entity_id=account_id,
+        revision=f"{entity}{_PART_SEP}{reason}{_PART_SEP}{rows_accepted}/{rows_total}",
         observed_at=observed_at,
-        origin="structural",
+        key_field="watch_id",
         payload={
             # Идентификатор наблюдения лежит и в нагрузке: так велит схема
-            # события, и это не дубль оболочки без причины. Нагрузку принято
-            # передавать дальше отдельно от оболочки - в очередь, в журнал, - и
+            # события, и это не дубль конверта без причины. Нагрузку принято
+            # передавать дальше отдельно от конверта - в очередь, в журнал, - и
             # там она обязана оставаться самодостаточной.
             "watch_id": account_id,
             "entity": entity,
-            # Чтение однослойное: страница запрошена одна и получена одна.
-            # Поля сохранены, потому что неполнота бывает и постраничной, а
-            # получателю нужно уметь различать роды по одному и тому же событию.
-            # Здесь расходятся не страницы, а строки.
+            # Чтение однослойное: страница запрошена одна и получена одна. Поля
+            # сохранены, потому что неполнота бывает и постраничной, а получатель
+            # обязан уметь различать роды по одному и тому же событию. Здесь
+            # расходятся не страницы, а строки.
             "pages_fetched": 1,
             "pages_requested": 1,
             "rows_total": rows_total,
