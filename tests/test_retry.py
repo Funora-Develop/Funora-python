@@ -85,7 +85,17 @@ def test_unsafe_operation_is_not_repeated(safety: Safety) -> None:
     """
     plan = plan_attempt(TimeoutError("x"), attempt=1, safety=safety, rand=_no_jitter)
     assert not plan.retry
-    assert plan.reason.startswith("operation_not_safe")
+
+    # Причины разные, и разница взята из матрицы, а не придумана. Идемпотентная
+    # операция без ключа ведёт себя как небезопасная - так сказано в самой
+    # матрице. Небезопасная при ошибке, допускающей побочный эффект, требует
+    # сверки состояния: это тот случай, когда покупатель получает второе
+    # сообщение.
+    expected = {
+        Safety.IDEMPOTENT: "idempotency_key_required",
+        Safety.UNSAFE: "reconcile_first",
+    }[safety]
+    assert plan.reason == expected
 
 
 def test_attempts_are_bounded() -> None:
@@ -240,3 +250,113 @@ def test_gate_uses_initial_state_by_default() -> None:
     """
     capability = Capability.ORDERS_LIST
     assert check_capability(capability) is CAPABILITY_INITIAL[capability]
+
+
+def test_every_matrix_row_is_reachable() -> None:
+    """Проверяет, что каждая строка матрицы решает хоть какое-то сочетание.
+
+    Строка, до которой не доходит ни одно сочетание, - это правило, записанное и
+    не действующее. Прежде реализация сводила пять строк к одному условию
+    «повторяем только чтения», и три строки из пяти не действовали никогда, при
+    том что были объявлены контрактом.
+
+    Returns:
+        None
+    """
+    from funora._retry import decide
+    from funora.retry import DECISION_MATRIX
+
+    class _Retryable(Exception):
+        retryable = True
+        side_effects_possible = True
+
+    class _RetryableClean(Exception):
+        retryable = True
+        side_effects_possible = False
+
+    class _Final(Exception):
+        retryable = False
+        side_effects_possible = False
+
+    reached = set()
+    for error in (_Retryable("x"), _RetryableClean("x"), _Final("x")):
+        for safety in Safety:
+            reached.add(decide(error, safety))
+
+    declared = {row[-1] for row in DECISION_MATRIX}
+    assert reached == declared, (
+        f"недостижимые решения матрицы: {sorted(declared - reached)} - "
+        "правило записано и не действует"
+    )
+
+
+def test_matrix_covers_every_combination() -> None:
+    """Проверяет полноту матрицы.
+
+    Сочетание без строки означает, что реализации решат сами, - и разойдутся
+    именно там, где расхождение дороже всего. Реализация отказывается вслух,
+    вместо того чтобы выбрать безопасное по умолчанию: молчаливый выбор скрыл бы
+    дыру в контракте.
+
+    Returns:
+        None
+    """
+    from funora._retry import decide
+
+    for retryable in (True, False):
+        for effects in (True, False):
+            error_type = type(
+                "Проба",
+                (Exception,),
+                {"retryable": retryable, "side_effects_possible": effects},
+            )
+            for safety in Safety:
+                decide(error_type("x"), safety)
+
+
+def test_idempotent_operation_retries_with_a_key() -> None:
+    """Проверяет строку матрицы, которая прежде не действовала никогда.
+
+    Идемпотентная операция с ключом повторяема - так говорит контракт. Прежняя
+    реализация отказывала ей наравне с небезопасной, то есть была строже
+    контракта: безопасно, но расходится - второй SDK на той же трассе повторит.
+
+    Returns:
+        None
+    """
+    without = plan_attempt(TimeoutError("x"), attempt=1, safety=Safety.IDEMPOTENT, rand=_no_jitter)
+    assert not without.retry
+    assert without.reason == "idempotency_key_required"
+
+    with_key = plan_attempt(
+        TimeoutError("x"),
+        attempt=1,
+        safety=Safety.IDEMPOTENT,
+        idempotency_key="ключ",
+        rand=_no_jitter,
+    )
+    assert with_key.retry, "с ключом повтор разрешён матрицей"
+
+
+def test_unsafe_operation_retries_when_no_side_effect_was_possible() -> None:
+    """Проверяет вторую строку, которая прежде не действовала.
+
+    Ошибка, гарантированно возникшая ДО отправки, побочного эффекта не имела -
+    повторять можно даже небезопасную операцию. Пример из спецификации: местный
+    отказ бюджета.
+
+    Returns:
+        None
+    """
+    from funora.errors import BudgetExhaustedError, NetworkError
+
+    assert not BudgetExhaustedError.side_effects_possible
+    assert NetworkError.side_effects_possible
+
+    plan = plan_attempt(
+        NetworkError("оборвалось"), attempt=1, safety=Safety.UNSAFE, rand=_no_jitter
+    )
+    assert not plan.retry
+    assert plan.reason == "reconcile_first", (
+        "сетевой отказ допускает побочный эффект: повторять небезопасную операцию по нему нельзя"
+    )

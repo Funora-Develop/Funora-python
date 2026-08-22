@@ -15,9 +15,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Final
 
-__all__ = ["RetryPolicy", "RETRY_POLICIES", "FALLBACK_POLICY", "GLOBAL_MAX_ATTEMPTS"]
+__all__ = [
+    "RetryPolicy",
+    "RETRY_POLICIES",
+    "FALLBACK_POLICY",
+    "GLOBAL_MAX_ATTEMPTS",
+    "RetryDecision",
+    "DECISION_MATRIX",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,3 +203,36 @@ FALLBACK_POLICY: Final[RetryPolicy] = RETRY_POLICIES["funora.transport"]
 
 #: Потолок числа попыток независимо от политики класса ошибки.
 GLOBAL_MAX_ATTEMPTS: Final[int] = 5
+
+
+class RetryDecision(StrEnum):
+    """Что матрица говорит о повторе.
+
+    Решение о повторе - пересечение класса ошибки и безопасности
+    операции. Реализация, сводящая матрицу к «повторяем только
+    чтения», строже контракта: это безопасно, но расходится -
+    второй SDK на той же трассе поступит иначе.
+    """
+
+    NEVER = "never"
+    ALLOWED = "allowed"
+    ALLOWED_WITH_KEY = "allowed_with_key"
+    RECONCILE_FIRST = "reconcile_first"
+
+
+#: Строки матрицы решения о повторе, в порядке спецификации.
+#:
+#: Порядок значим: строки читаются сверху вниз, и первая подошедшая
+#: решает. Первая строка отсекает неповторяемый класс ошибки
+#: независимо от операции.
+#:
+#: Кортеж: повторяем ли класс ошибки; безопасность операции либо
+#: None, если строка о любой; возможен ли побочный эффект либо None,
+#: если неважно; решение.
+DECISION_MATRIX: Final[tuple[tuple[bool, str | None, bool | None, RetryDecision], ...]] = (
+    (False, None, None, RetryDecision.NEVER),
+    (True, "safe", None, RetryDecision.ALLOWED),
+    (True, "idempotent", None, RetryDecision.ALLOWED_WITH_KEY),
+    (True, "unsafe", True, RetryDecision.RECONCILE_FIRST),
+    (True, "unsafe", False, RetryDecision.ALLOWED),
+)
