@@ -87,6 +87,7 @@ from .response_classes import (
     WRITES_PAUSED_IN,
     Health,
 )
+from .retry import RETRY_POLICIES
 
 __all__ = ["Fetch", "Pause", "Deliver", "Request", "Engine", "ORDERS_PATH", "CHATS_PATH"]
 
@@ -231,6 +232,24 @@ IMPLEMENTED: Final[frozenset[Capability]] = frozenset(
         Capability.CHATS_HISTORY,
     }
 )
+
+
+def _scoped(error: Exception) -> bool:
+    """Сообщает, отступает ли по этой ошибке вся идентичность.
+
+    Признак объявлен политикой повторов. Источников запросов много - цикл
+    опроса, планировщики наблюдений, пользовательские записи, - и по
+    отдельности они друг о друге не знают. Отступи каждый только за себя,
+    суммарное давление почти не упало бы.
+
+    Args:
+        error (Exception): Ошибка, вызвавшая отступление.
+
+    Returns:
+        bool: True, если политика объявила отступление общим для аккаунта.
+    """
+    policy = RETRY_POLICIES.get(getattr(error, "stable_id", ""))
+    return bool(policy and policy.account_scoped)
 
 
 def _class_of(capability: Capability) -> RequestClass:
@@ -514,7 +533,13 @@ class Engine:
                 # Прежде этого не делалось вовсе: 429 переводился в ошибку и
                 # уходил в политику повторов, а ёмкость оставалась прежней -
                 # следующий залп был ровно таким же, каким был до ограничения.
-                self._identity.note_limit(monotonic())
+                # Признак account_scoped у политики означает, что отступает
+                # вся идентичность, а не один запрос. Заголовок при этом уже
+                # урезан политикой по max_retry_after_ms.
+                self._identity.note_limit(
+                    monotonic(),
+                    retry_after_ms=retry_after_ms if _scoped(exc) else None,
+                )
 
                 # Третья ступень. Третье ограничение в окне - уже не про темп, а
                 # про то, как площадка относится к аккаунту: состояние доступа

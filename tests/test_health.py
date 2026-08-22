@@ -160,3 +160,59 @@ def test_suspended_class_does_not_pass_even_with_a_full_bucket() -> None:
     assert reservation.bucket == "suspended", (
         f"отказ пришёл от ведра {reservation.bucket!r}, а не от снятия с очереди"
     )
+
+
+def test_cooldown_is_never_shorter_than_the_site_asked() -> None:
+    """Проверяет, что просьбу площадки не укорачивают.
+
+    Заголовок Retry-After - это просьба, и ждать меньше просимого значит спорить
+    с площадкой без единого довода: она знает свою нагрузку, а мы нет. Ждать
+    дольше безопасно всегда.
+
+    Прежде ждали только своё: площадка просила пять минут, клиент отступал на
+    минуту и возвращался. Ровно поведение, из-за которого ограничение и
+    переходит в блокировку.
+
+    Returns:
+        None
+    """
+    identity = Identity(name="проба@funpay.com", budget=Budget())
+    identity.note_limit(NOW, retry_after_ms=300_000)
+
+    assert identity.cooldown_until - NOW >= 300.0, (
+        f"площадка просила 300 с, отступили на {identity.cooldown_until - NOW:.0f}"
+    )
+
+
+def test_own_cooldown_wins_when_the_site_asks_for_less() -> None:
+    """Проверяет обратную половину: короткая просьба не укорачивает своё.
+
+    Иначе площадка, попросившая секунду, отменяла бы собственное отступление
+    клиента - и вторая ступень реакции никогда бы не наступила.
+
+    Returns:
+        None
+    """
+    identity = Identity(name="проба@funpay.com", budget=Budget())
+    identity.note_limit(NOW, retry_after_ms=1_000)
+
+    assert identity.cooldown_until - NOW >= 60.0, (
+        "своё остывание укоротилось до просьбы площадки"
+    )
+
+
+def test_a_policy_without_the_flag_does_not_hold_the_identity() -> None:
+    """Проверяет, что общим отступление делает признак, а не любая ошибка.
+
+    Признак account_scoped стоит у ограничения частоты и не стоит у прочих:
+    сетевой отказ одного запроса не повод останавливать весь аккаунт.
+
+    Returns:
+        None
+    """
+    from funora.retry import RETRY_POLICIES
+
+    scoped = {name for name, policy in RETRY_POLICIES.items() if policy.account_scoped}
+    assert scoped == {"funora.transport.rate_limited"}, (
+        f"общим объявлено отступление по {sorted(scoped)}"
+    )

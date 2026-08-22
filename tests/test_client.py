@@ -643,3 +643,42 @@ def test_rate_limit_cuts_the_identity_capacity() -> None:
         "ёмкость не урезана: следующий залп будет прежним"
     )
     assert identity.is_cooling(identity.cooldown_until - 1), "источник не остывает"
+
+
+def test_the_header_reaches_the_identity(no_sleep: list[float]) -> None:
+    """Проверяет, что просьба площадки доходит до отступления всей идентичности.
+
+    Слабое место связки. Заголовок Retry-After читается транспортом, политика
+    его урезает, идентичность обязана его учесть - и если движок не передаст
+    его дальше, всё сойдётся кроме главного: аккаунт вернётся к работе раньше,
+    чем просила площадка.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    started = monotonic()
+    limited = _observation("", status=429, retry_after_ms=300_000)
+    good = _observation(_page("orders-trade.logged.ru"))
+
+    with Client(  # type: ignore[arg-type]
+        transport=_FakeFetcher([limited, good])
+    ) as client:
+        client.orders.list()
+        identity = client.engine._identity
+
+    assert identity.limits_seen == 1, "ограничение не учтено вовсе"
+
+    # Смотреть надо на остывание ИДЕНТИЧНОСТИ, а не на паузы. Паузу в пять
+    # минут выдаст политика повторов сама по себе - она читает заголовок
+    # напрямую. Разница в том, отступил ли один запрос или весь аккаунт: без
+    # признака account_scoped идентичность остыла бы за минуту, и всё
+    # остальное - цикл опроса, чужие вызовы того же процесса - пошло бы через
+    # минуту, а не через пять.
+    assert identity.cooldown_until - started >= 300.0, (
+        f"площадка просила пять минут, а идентичность отступила на "
+        f"{identity.cooldown_until - started:.0f} с. Значит отступил один "
+        "запрос, а не аккаунт"
+    )

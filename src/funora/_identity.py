@@ -94,7 +94,7 @@ class Identity:
         """
         return now < self.cooldown_until
 
-    def note_limit(self, now: float) -> None:
+    def note_limit(self, now: float, *, retry_after_ms: int | None = None) -> None:
         """Учитывает полученное ограничение частоты.
 
         Правило объявлено спецификацией и до сих пор не применялось нигде.
@@ -108,6 +108,8 @@ class Identity:
 
         Args:
             now (float): Текущий момент, монотонные секунды.
+            retry_after_ms (int | None): Сколько просила подождать площадка,
+                если просила. Заголовок Retry-After, уже урезанный политикой.
 
         Returns:
             None
@@ -123,7 +125,18 @@ class Identity:
             RATE_LIMIT_RESPONSE.min_capacity_factor,
             self.capacity_factor * RATE_LIMIT_RESPONSE.capacity_multiplier,
         )
+        # Дольшее из двух: собственное остывание и просьба площадки.
+        #
+        # Дольшее, а не своё. Заголовок Retry-After - это просьба, и ждать
+        # меньше просимого значит спорить с площадкой без единого довода: она
+        # знает свою нагрузку, а мы нет. Ждать дольше безопасно всегда.
+        #
+        # Прежде ждали только своё: площадка просила пять минут, клиент
+        # отступал на минуту и возвращался. Ровно поведение, из-за которого
+        # ограничение и переходит в блокировку.
         cooldown_ms = RATE_LIMIT_RESPONSE.cooldown_ms * self.limits_seen
+        if retry_after_ms is not None:
+            cooldown_ms = max(cooldown_ms, retry_after_ms)
         self.cooldown_until = now + cooldown_ms / 1000
         self.budget.scale(self.capacity_factor)
 
