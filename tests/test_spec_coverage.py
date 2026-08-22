@@ -235,3 +235,63 @@ def test_supported_locales_match_the_spec() -> None:
         f"есть снимки для локалей {sorted(captured - declared)}, а спецификация "
         "их не объявляет поддерживаемыми"
     )
+
+
+def test_the_checker_understands_every_schema() -> None:
+    """Проверяет, что сверка понимает каждую схему целиком.
+
+    Сверка отказывается работать со схемой, которую не понимает: неизвестное
+    ключевое слово - ошибка, а не пропуск. Свойство это ценно ровно настолько,
+    насколько его применяют: схема, которую никто не сверял, может годами
+    содержать слово, о котором сверка не знает, - и выяснится это в тот день,
+    когда по схеме начнут проверять.
+
+    Проверка обходит ВСЕ схемы событий и моделей, включая те, которых ни одна
+    реализация не собирает.
+
+    Returns:
+        None
+    """
+    import json
+
+    from _schema_check import UnsupportedKeyword, check
+
+    root = _spec_dir()
+    assert root is not None
+
+    schemas = sorted((root / "spec").rglob("*.schema.json"))
+    assert len(schemas) > 20, "схем не набралось - проверять нечего"
+
+    for path in schemas:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            # Значение заведомо не подойдёт - проверяется не оно, а понятность
+            # самой схемы. SchemaError означает «схема понята, значение не
+            # подошло»; UnsupportedKeyword - «схема не понята».
+            check({}, doc, where=path.name)
+        except UnsupportedKeyword as exc:
+            raise AssertionError(f"{path.name}: {exc}") from exc
+        except AssertionError:
+            continue
+
+
+def test_domain_types_come_from_the_spec() -> None:
+    """Проверяет, что словарь доменных типов не переписан копией.
+
+    Копия разошлась бы со spec/types.yaml молча, и сверка начала бы отвергать
+    тип, который спецификация объявила, либо принимать тот, которого она не
+    знает.
+
+    Returns:
+        None
+    """
+    import yaml
+    from _schema_check import KNOWN_TYPES
+
+    root = _spec_dir()
+    assert root is not None
+    doc = yaml.safe_load((root / "spec" / "types.yaml").read_text(encoding="utf-8"))
+
+    assert set(doc["types"]) == KNOWN_TYPES, (
+        f"сверка знает {sorted(KNOWN_TYPES)}, спецификация объявляет {sorted(doc['types'])}"
+    )
