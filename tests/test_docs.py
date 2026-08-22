@@ -219,3 +219,36 @@ def test_documented_subscriptions_are_producible() -> None:
             f"{where}: пример подписывается на EventType.{name}, "
             "а реализация такого вида не порождает - вызов будет отвергнут"
         )
+
+
+def test_documented_list_of_produced_events_matches_reality() -> None:
+    """Проверяет, что перечень порождаемого в документации не отстал.
+
+    Документ, отставший от кода, врёт убедительнее кода: читатель верит тексту и
+    не идёт смотреть исходники. Так и вышло - architecture.md утверждал, что
+    событий об изменении состояния заказа не бывает вовсе, и двумя абзацами ниже
+    перечислял их среди порождаемых.
+
+    Проверка ищет строку «Что порождается сегодня» и сверяет перечисленные там
+    имена с PRODUCIBLE.
+
+    Returns:
+        None
+    """
+    from funora._watch import PRODUCIBLE
+
+    text = (ROOT / "docs" / "architecture.md").read_text(encoding="utf-8")
+    marker = "Что порождается сегодня"
+    start = text.find(marker)
+    assert start != -1, f"в architecture.md нет строки {marker!r} - проверять нечего"
+
+    # Абзац: до первой пустой строки после маркера.
+    end = text.find(chr(10) * 2, start)
+    paragraph = text[start : end if end != -1 else len(text)]
+
+    named = set(re.findall(r"`([a-z]+\.[a-z_]+)`", paragraph))
+    produced = {str(kind) for kind in PRODUCIBLE}
+
+    assert named == produced, (
+        f"документация называет {sorted(named)}, реализация порождает {sorted(produced)}"
+    )

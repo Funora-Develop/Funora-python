@@ -349,9 +349,7 @@ def render_capabilities(spec: Path) -> str:
     out.append("            TypeError: Всегда.\n")
     out.append('        """\n')
     out.append("        raise TypeError(\n")
-    out.append(
-        '            "CapabilityState нельзя привести к булеву значению: состояний "\n'
-    )
+    out.append('            "CapabilityState нельзя привести к булеву значению: состояний "\n')
     out.append('            "пять, а не два, и unsupported истинно как непустая строка. "\n')
     out.append('            "Спросите allows_call(opted_in=...), если нужен факт "\n')
     out.append('            "допустимости вызова, либо сравните состояние с нужным"\n')

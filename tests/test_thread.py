@@ -500,3 +500,29 @@ def _forged(closes: int) -> str:
         + "</div></div></div>"
     )
     return html[:end] + forged + html[end:]
+
+
+def test_duplicate_message_ids_are_loud() -> None:
+    """Проверяет, что одинаковые идентификаторы сообщений заметны.
+
+    Курсор переписки - это множество уже виденных идентификаторов. Два
+    одинаковых схлопываются в один, и второе сообщение объявляется виденным, не
+    будучи доставленным ни разу.
+
+    Для списков заказов и диалогов такая проверка уже стояла, а здесь её не
+    было. Цена ошибки тут выше: непрочитанное сообщение покупателя.
+
+    Returns:
+        None
+    """
+    import re as _re
+
+    same = _re.sub(
+        r'(class="chat-msg-item[^"]*" )id="[^"]*"',
+        lambda match: match.group(1) + 'id="один"',
+        _fixture(),
+    )
+    page = _parse(same)
+
+    assert page.completeness is not Completeness.COMPLETE
+    assert any(d.code == "duplicate_identifiers" for d in page.defects)
