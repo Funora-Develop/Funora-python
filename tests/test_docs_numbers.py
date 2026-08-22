@@ -179,3 +179,48 @@ def test_docs_name_only_existing_fixtures() -> None:
         f"документы называют снимки, которых нет: {missing}. Доступны: "
         f"{sorted(available)}"
     )
+
+
+@pytest.mark.skipif(
+    not SPEC_DIR or not (Path(SPEC_DIR) / "spec").is_dir(),
+    reason="переменная FUNORA_SPEC_DIR не задана или не указывает на рабочую копию Funora-spec",
+)
+def test_documented_unreachable_errors_match_the_registry() -> None:
+    """Проверяет, что таблица недостижимых ошибок сходится с реестром.
+
+    Раздел в limits.md перечисляет классы ошибок, объявленных и не
+    возбуждаемых. Перечень живёт в spec/conformance/not-implemented.yaml, и
+    таблица - его пересказ. Пересказ расходится с оригиналом молча: класс,
+    начавший возбуждаться, исчезнет из реестра и останется в документе, где
+    будет обещать вызывающему ветку, которая теперь исполняется.
+
+    Returns:
+        None
+    """
+    import yaml
+
+    registry = yaml.safe_load(
+        (Path(SPEC_DIR or ".") / "spec" / "conformance" / "not-implemented.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    declared = {
+        symbol
+        for body in registry["items"].values()
+        for symbol in (body.get("symbols") or [])
+        if symbol.endswith("Error")
+    }
+
+    text = _read("limits.md")
+    start = text.index("## Ошибки, которые объявлены и не возбуждаются")
+    section = text[start : text.index("\n## ", start + 1)]
+    # Только строки таблицы. Пояснение рядом вправе назвать класс, которого в
+    # таблице быть не должно: CursorIncompatibleError достижим, а недостижима
+    # догрузка истории по курсору.
+    rows = "\n".join(line for line in section.splitlines() if line.startswith("|"))
+    mentioned = set(re.findall(r"`([A-Z][A-Za-z]*Error)`", rows))
+
+    assert mentioned == declared, (
+        f"таблица в limits.md называет {sorted(mentioned)}, а реестр - "
+        f"{sorted(declared)}. Разошлись: {sorted(mentioned ^ declared)}"
+    )
