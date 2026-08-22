@@ -155,6 +155,31 @@ def _read_somewhere(symbol: str, *, except_module: str) -> bool:
     return False
 
 
+def _generated_fields() -> list[tuple[str, str, str]]:
+    """Собирает поля структур из порождённых модулей.
+
+    Проверка выше смотрит имена модуля, и поля структур мимо неё проходят: у
+    RetryPolicy десять полей, а в __all__ стоит одно имя. Так и остались
+    незамеченными два поля, порождённые из спецификации и не прочитанные
+    ничем.
+
+    Returns:
+        list[tuple[str, str, str]]: Модуль, структура, поле.
+    """
+    import dataclasses
+
+    found: list[tuple[str, str, str]] = []
+    for module_name in GENERATED:
+        module = importlib.import_module(f"funora.{module_name}")
+        for symbol in getattr(module, "__all__", ()):
+            value = getattr(module, symbol, None)
+            if not (isinstance(value, type) and dataclasses.is_dataclass(value)):
+                continue
+            for field in dataclasses.fields(value):
+                found.append((module_name, symbol, field.name))
+    return found
+
+
 def test_every_generated_name_is_read_or_declared_unread() -> None:
     """Проверяет, что порождённое имя либо читается, либо честно объявлено.
 
@@ -195,12 +220,20 @@ def test_registry_does_not_list_what_is_already_read() -> None:
     Returns:
         None
     """
+    unread_by_design = _declared_unread()
     stale: list[str] = []
     for module_name in GENERATED:
         module = importlib.import_module(f"funora.{module_name}")
         for symbol in getattr(module, "__all__", ()):
-            if symbol in _declared_unread() and _read_somewhere(symbol, except_module=module_name):
+            if symbol in unread_by_design and _read_somewhere(symbol, except_module=module_name):
                 stale.append(f"{module_name}.{symbol}")
+
+    # Поля структур проверяются здесь же. Прежде проверка смотрела только имена
+    # модуля, и поле, которое начали читать, оставалось в реестре навсегда: у
+    # RetryPolicy десять полей, а в __all__ стоит одно имя.
+    for module_name, structure, field in _generated_fields():
+        if field in unread_by_design and _read_somewhere(field, except_module=module_name):
+            stale.append(f"{module_name}.{structure}.{field}")
 
     assert not stale, (
         f"реестр неисполненного держит уже читаемое: {sorted(stale)}. "
@@ -221,3 +254,33 @@ def test_registry_entries_explain_themselves() -> None:
         for field in ("declared_in", "what", "why_not", "user_impact"):
             value = str(item.get(field) or "").strip()
             assert len(value) > 20, f"запись {name}: поле {field} пусто или бессодержательно"
+
+
+def test_every_generated_field_is_read_or_declared_unread() -> None:
+    """Проверяет, что поле порождённой структуры кем-то читается.
+
+    Поле, порождённое из спецификации и не прочитанное ничем, - это обещание
+    контракта, которого реализация не держит, и заметить его нечем: файл
+    перестраивается, проверка свежести зелёная, значение стоит правильное.
+
+    Так в RetryPolicy оказались fail_closed и account_scoped: первое требует
+    остановки работы до вмешательства человека, второе - учёта ограничения на
+    весь аккаунт. Ни то, ни другое не делается.
+
+    Returns:
+        None
+    """
+    unread_by_design = _declared_unread()
+    silent: list[str] = []
+
+    for module_name, structure, field in _generated_fields():
+        if field.startswith("_") or field in unread_by_design:
+            continue
+        if not _read_somewhere(field, except_module=module_name):
+            silent.append(f"{module_name}.{structure}.{field}")
+
+    assert not silent, (
+        f"поля порождены из спецификации и не читаются ничем: {sorted(silent)}. "
+        "Либо примените значение, либо внесите имя поля в spec/conformance/"
+        "not-implemented.yaml"
+    )
