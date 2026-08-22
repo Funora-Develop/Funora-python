@@ -26,13 +26,15 @@ provisional=False. Признаки проверки, блокировки и т
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Final
-from urllib.parse import urlparse
 
 from selectolax.parser import HTMLParser
+
+from ._host import host_of, same_host
 
 __all__ = [
     "ResponseClass",
@@ -135,6 +137,8 @@ DEFAULT_IDENTITY_CSS: Final[str] = ".navbar-toggle-logged"
 #: Признаки проверки, блокировки и технических работ остаются умозрительными:
 #: таких страниц мы ещё не видели, и придумывать их точный вид хуже, чем честно
 #: вернуть unknown.
+_log = logging.getLogger("funora.classify")
+
 DEFAULT_SIGNATURES: Final[tuple[Signature, ...]] = (
     Signature(
         name="guest_navbar",
@@ -237,6 +241,39 @@ def _page_text(html: str) -> str:
     return (body.text(separator=" ") or "").lower()
 
 
+def _matches(tree: HTMLParser, selector: str, where: str) -> bool:
+    """Применяет селектор, не давая непригодному уронить классификацию.
+
+    Непригодный селектор пропускается, а не роняет разбор: классификация идёт по
+    живой странице, и уронить её из-за одного выражения значило бы превратить
+    опечатку в отказ читать площадку вовсе.
+
+    Но и молча пропускать нельзя. Молча пропущенный селектор выключает свою
+    подпись насовсем: страница входа перестаёт узнаваться, вердикт уходит в
+    «разметка изменилась», и виноватой выглядит площадка. Отсюда строка в
+    журнале - на каждое применение по разу, зато с именем виноватого.
+
+    Args:
+        tree (HTMLParser): Разобранный документ.
+        selector (str): Выражение CSS.
+        where (str): Откуда селектор взят - для строки журнала.
+
+    Returns:
+        bool: True, если селектор нашёл узел. False, если не нашёл либо
+        оказался непригодным.
+    """
+    try:
+        return tree.css_first(selector) is not None
+    except Exception as exc:
+        _log.warning(
+            "селектор %r из %s не применился (%s); подпись работает без него",
+            selector,
+            where,
+            type(exc).__name__,
+        )
+        return False
+
+
 def _is_known_page(tree: HTMLParser | None, markers: tuple[str, ...]) -> bool:
     """Сообщает, узнаётся ли страница как отданная приложением.
 
@@ -249,13 +286,7 @@ def _is_known_page(tree: HTMLParser | None, markers: tuple[str, ...]) -> bool:
     """
     if tree is None:
         return False
-    for selector in markers:
-        try:
-            if tree.css_first(selector) is not None:
-                return True
-        except Exception:
-            continue
-    return False
+    return any(_matches(tree, selector, "признаков страниц приложения") for selector in markers)
 
 
 def classify(
@@ -307,8 +338,23 @@ def classify(
 
     # Шаг 2. Проверка личности. Идёт до детекторов: ответ с чужого хоста не
     # заслуживает того, чтобы его разбирали, каким бы он ни выглядел.
-    host = urlparse(final_url).hostname or ""
-    if host and host != expected_host and not host.endswith("." + expected_host):
+    # Правило берётся из _host.py, а не пишется здесь заново. Своя копия тут и
+    # была - сравнение хоста с суффиксом, - и она принимала за наш хост адрес
+    # вида https://evil.example\.funpay.com/: разборщик Python видит в нём один
+    # хост, оканчивающийся на .funpay.com, а браузер идёт на evil.example. Это
+    # тот же промах, из-за которого _host.py и появился, и это была четвёртая
+    # его копия.
+    host = host_of(final_url)
+    if not host:
+        # Хост нечитаем: это не расхождение, а невозможность судить. Ответу, о
+        # происхождении которого сказать нечего, доверять нельзя тем более.
+        # Причина названа отдельно, чтобы разбор видел разницу.
+        return Verdict(
+            cls=ResponseClass.WRONG_IDENTITY,
+            reason="host_unreadable",
+            detail={"expected": expected_host, "actual": final_url[:64]},
+        )
+    if not same_host(final_url, expected_host):
         return Verdict(
             cls=ResponseClass.WRONG_IDENTITY,
             reason="host_mismatch",
@@ -322,8 +368,19 @@ def classify(
     tree: HTMLParser | None
     try:
         tree = HTMLParser(html)
-    except Exception:
-        tree = None
+    except Exception as exc:
+        # Тело не разобралось вовсе. Прежде здесь ставилось None, и дальше всё
+        # шло своим чередом: признаков страницы приложения не нашлось, текст
+        # оказался пуст, сигнатуры не сработали, и вердикт выходил
+        # identity_marker_absent - то есть «разметка изменилась». Диагноз не тот
+        # и лечение не то: разметка могла не меняться вовсе, а ответ прийти не
+        # тем, чем должен.
+        _log.warning("тело ответа не разобралось (%s)", type(exc).__name__)
+        return Verdict(
+            cls=ResponseClass.UNKNOWN,
+            reason="body_unparsable",
+            detail={"error": type(exc).__name__},
+        )
 
     # Текстовые сигнатуры применяются только к неузнанной странице. Узнанная -
     # это страница приложения, часть текста на которой пишут посторонние:
@@ -335,17 +392,14 @@ def classify(
     for sig in signatures:
         if tree is not None:
             for selector in sig.css:
-                try:
-                    if tree.css_first(selector) is not None:
-                        return Verdict(
-                            cls=sig.verdict,
-                            reason=f"signature:{sig.name}",
-                            matched=sig.name,
-                            provisional=sig.provisional,
-                            detail={"selector": selector},
-                        )
-                except Exception:
-                    continue
+                if _matches(tree, selector, f"подписи {sig.name}"):
+                    return Verdict(
+                        cls=sig.verdict,
+                        reason=f"signature:{sig.name}",
+                        matched=sig.name,
+                        provisional=sig.provisional,
+                        detail={"selector": selector},
+                    )
         if sig.patterns and not known:
             if text is None:
                 text = _page_text(html)

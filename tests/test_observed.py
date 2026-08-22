@@ -150,3 +150,107 @@ def test_reason_only_on_missing() -> None:
     assert Observed.missing("no_node").reason == "no_node"
     assert Observed.present("x").reason is None
     assert Observed.empty("").reason is None
+
+
+def test_present_refuses_an_empty_string() -> None:
+    """Проверяет, что пустая строка не собирается как наблюдённая.
+
+    Непустоту обещает сам тип, и обещание держалось на честном слове:
+    конструктор принимал что угодно. Собранное здесь пустое значение отбирает у
+    вызывающего единственный способ отличить «поле есть, и оно пусто» от «поле
+    есть»: различать он должен по состоянию, а не заглядывая внутрь.
+
+    Returns:
+        None
+    """
+    with pytest.raises(ValueError, match="empty"):
+        Observed.present("")
+
+
+def test_present_refuses_an_empty_sequence() -> None:
+    """Проверяет то же для последовательности.
+
+    Пустой кортеж ссылок как наблюдённое значение означал бы «посмотрели, ссылок
+    нет»; такое наблюдение существует, но собирается через empty().
+
+    Returns:
+        None
+    """
+    with pytest.raises(ValueError, match="empty"):
+        Observed.present(())
+
+
+def test_present_accepts_false_and_zero() -> None:
+    """Проверяет, что строгость не задела логическое и числовое поля.
+
+    У логического поля False - полноценное значение, а не пустота: признак
+    непрочитанного, равный False, означает «прочитано», а не «не наблюдалось».
+    Проверка стоит здесь затем, что запретить «всё ложное» было бы проще, и
+    именно это сломало бы chats.unread.
+
+    Returns:
+        None
+    """
+    assert Observed.present(False).value is False
+    assert Observed.present(0).value == 0
+
+
+def test_no_parsed_field_breaks_the_promise() -> None:
+    """Проверяет обещание на всех полях всех снимков разом.
+
+    Проверка конструктора держит только те поля, что собраны через present().
+    Эта смотрит с другой стороны - на результат разбора целиком, - и потому
+    переживёт появление поля, собранного как-нибудь иначе.
+
+    Returns:
+        None
+    """
+    from datetime import UTC, datetime
+    from pathlib import Path
+
+    from funora._chats import parse_chats_page
+    from funora._orders import parse_orders_page
+    from funora._thread import parse_thread
+
+    fixtures = Path(__file__).parent / "fixtures" / "pages"
+    when = datetime(2026, 8, 19, 12, 0, tzinfo=UTC)
+
+    def read(name: str) -> str:
+        """Читает снимок страницы.
+
+        Args:
+            name (str): Имя снимка без расширения.
+
+        Returns:
+            str: Разметка снимка.
+        """
+        return (fixtures / f"{name}.skeleton.txt").read_text(encoding="utf-8")
+
+    entities = [
+        *parse_orders_page(read("orders-trade.logged.ru"), observed_at=when).rows(
+            accept_incomplete=True
+        ),
+        *parse_chats_page(read("chat.logged.ru"), observed_at=when).rows(accept_incomplete=True),
+        *parse_thread(read("chat-thread.logged.ru"), observed_at=when).messages(
+            accept_incomplete=True
+        ),
+    ]
+    assert len(entities) > 20, "сущностей не набралось - проверять нечего"
+
+    checked = 0
+    for entity in entities:
+        for name in entity.__slots__:
+            field = getattr(entity, name)
+            if not isinstance(field, Observed):
+                continue
+            checked += 1
+            if field.presence is not Presence.PRESENT:
+                continue
+            value = field.value
+            if isinstance(value, str | tuple | list | frozenset | set | dict):
+                assert value, (
+                    f"поле {type(entity).__name__}.{name} объявлено наблюдённым, "
+                    "а значение пусто - отличить «пусто» от «есть» вызывающему нечем"
+                )
+
+    assert checked > 100, "наблюдаемых полей не набралось - проверка почти ничего не смотрит"

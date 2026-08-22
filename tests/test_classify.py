@@ -387,3 +387,242 @@ def test_unknown_page_still_uses_text_signatures() -> None:
     ):
         html = f"<html><body><h1>{phrase}</h1></body></html>"
         assert _c(html=html).cls is expected
+
+
+def test_every_builtin_selector_is_usable() -> None:
+    """Проверяет, что каждый встроенный селектор вправду применяется.
+
+    Непригодный селектор пропускается на живой странице - иначе опечатка
+    превратилась бы в отказ читать площадку. Цена этой мягкости в том, что
+    сломанный селектор выключает свою подпись насовсем: страница входа
+    перестаёт узнаваться, вердикт уходит в «разметка изменилась», и виноватой
+    выглядит площадка.
+
+    Значит, поймать сломанный селектор надо здесь, до выпуска, а не там.
+
+    Returns:
+        None
+    """
+    from selectolax.parser import HTMLParser
+
+    from funora._classify import DEFAULT_CONTENT_MARKERS, DEFAULT_SIGNATURES
+
+    tree = HTMLParser("<html><body><div></div></body></html>")
+
+    selectors = [
+        *DEFAULT_CONTENT_MARKERS,
+        *(selector for sig in DEFAULT_SIGNATURES for selector in sig.css),
+    ]
+    assert len(selectors) > 5, "селекторов не набралось - проверять нечего"
+
+    for selector in selectors:
+        try:
+            tree.css_first(selector)
+        except Exception as exc:  # noqa: BLE001 - имя виноватого важнее типа
+            pytest.fail(f"селектор {selector!r} непригоден: {type(exc).__name__}")
+
+
+def test_unusable_selector_is_logged_not_swallowed(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Проверяет, что непригодный селектор оставляет след в журнале.
+
+    Молча пропущенный селектор выключает свою подпись насовсем, и узнать об этом
+    неоткуда: вердикт выглядит правдоподобно, просто он не тот.
+
+    Args:
+        caplog (pytest.LogCaptureFixture): Перехват журнала.
+
+    Returns:
+        None
+    """
+    broken = Signature(
+        name="сломанная",
+        verdict=ResponseClass.LOGIN_REQUIRED,
+        css=("::=не селектор=::",),
+        provisional=False,
+    )
+
+    with caplog.at_level("WARNING", logger="funora.classify"):
+        verdict = classify(
+            status=200,
+            html="<html><body><div class='content-account'></div></body></html>",
+            final_url=f"https://{HOST}/orders/trade",
+            expected_host=HOST,
+            signatures=(broken,),
+            identity_css=None,
+        )
+
+    assert verdict.cls is not ResponseClass.LOGIN_REQUIRED
+    assert any("сломанная" in record.getMessage() for record in caplog.records), (
+        "непригодный селектор исчез молча - подпись выключена, и узнать неоткуда"
+    )
+
+
+def test_unusable_selector_does_not_break_classification() -> None:
+    """Проверяет, что непригодный селектор не роняет разбор целиком.
+
+    Классификация идёт по живой странице, и уронить её из-за одного выражения
+    значило бы превратить опечатку в отказ читать площадку вовсе. Остальные
+    селекторы подписи обязаны отработать.
+
+    Returns:
+        None
+    """
+    mixed = Signature(
+        name="наполовину_сломанная",
+        verdict=ResponseClass.LOGIN_REQUIRED,
+        css=("::=не селектор=::", ".menu-item-login"),
+        provisional=False,
+    )
+
+    verdict = classify(
+        status=200,
+        html="<html><body><a class='menu-item-login'>вход</a></body></html>",
+        final_url=f"https://{HOST}/orders/trade",
+        expected_host=HOST,
+        signatures=(mixed,),
+        identity_css=None,
+    )
+
+    assert verdict.cls is ResponseClass.LOGIN_REQUIRED
+    assert verdict.detail == {"selector": ".menu-item-login"}
+
+
+def test_backslash_host_is_not_ours() -> None:
+    """Проверяет самый коварный вид подделки хоста.
+
+    Адрес `https://evil.example\\.funpay.com/` разборщик Python видит как один
+    хост, оканчивающийся на `.funpay.com`, - и сравнение с суффиксом объявляет
+    его нашим. Браузер по такому адресу идёт на `evil.example`.
+
+    Классификатор держал свою копию правила о хосте и на этом попадался. Копия
+    была четвёртой: ровно из-за таких расхождений `_host.py` и появился.
+
+    Returns:
+        None
+    """
+    verdict = classify(
+        status=200,
+        html="<html><body><div class='navbar-toggle-logged'></div></body></html>",
+        final_url="https://evil.example\\.funpay.com/orders/trade",
+        expected_host=HOST,
+    )
+
+    assert verdict.cls is ResponseClass.WRONG_IDENTITY
+    assert verdict.reason in {"host_mismatch", "host_unreadable"}
+
+
+def test_prefix_host_is_not_ours() -> None:
+    """Проверяет подделку приставкой.
+
+    `https://funpay.com.evil.example/` содержит имя площадки и ведёт совсем не
+    туда. Сравнение подстрокой на этом попадается; сравнение суффиксом - нет,
+    но проверка стоит здесь затем, чтобы попытка «упростить» правило обратно к
+    подстроке падала.
+
+    Returns:
+        None
+    """
+    verdict = classify(
+        status=200,
+        html="<html><body><div class='navbar-toggle-logged'></div></body></html>",
+        final_url="https://funpay.com.evil.example/orders/trade",
+        expected_host=HOST,
+    )
+
+    assert verdict.cls is ResponseClass.WRONG_IDENTITY
+    assert verdict.reason == "host_mismatch"
+
+
+def test_unreadable_host_is_refused_not_trusted() -> None:
+    """Проверяет адрес, о происхождении которого сказать нечего.
+
+    Прежде пустой хост проверку личности проходил: условие начиналось с «если
+    хост есть». Ответу, о происхождении которого сказать нечего, доверять нельзя
+    тем более, чем ответу с чужого хоста.
+
+    Returns:
+        None
+    """
+    verdict = classify(
+        status=200,
+        html="<html><body><div class='navbar-toggle-logged'></div></body></html>",
+        final_url="не адрес вовсе",
+        expected_host=HOST,
+    )
+
+    assert verdict.cls is ResponseClass.WRONG_IDENTITY
+    assert verdict.reason == "host_unreadable"
+
+
+def test_subdomain_of_ours_is_still_ours() -> None:
+    """Проверяет, что строгость не задела свои поддомены.
+
+    Returns:
+        None
+    """
+    verdict = classify(
+        status=200,
+        html="<html><body><div class='navbar-toggle-logged'></div></body></html>",
+        final_url=f"https://support.{HOST}/orders/trade",
+        expected_host=HOST,
+    )
+
+    assert verdict.cls is not ResponseClass.WRONG_IDENTITY
+
+
+def test_unparsable_body_is_not_called_a_markup_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Проверяет диагноз на теле, которое не разобралось вовсе.
+
+    Прежде разборщик, упавший на теле, давал None, и дальше всё шло своим
+    чередом: признаков страницы приложения не нашлось, текст оказался пуст,
+    сигнатуры не сработали - и вердикт выходил identity_marker_absent, то есть
+    «разметка изменилась».
+
+    Диагноз не тот и лечение не то. Разметка могла не меняться вовсе, а ответ
+    прийти не тем, чем должен: телом другого формата, обрывком, чем угодно. На
+    «разметка изменилась» полагается идти и смотреть страницу; здесь смотреть
+    нечего.
+
+    Ветка достижима только подменой разборщика: на строке он не падает ни на
+    какой из тех, что я пробовал. Проверяется поэтому не достижимость, а
+    поведение - оно и было неверным.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Подмена разборщика.
+
+    Returns:
+        None
+    """
+    import funora._classify as classify_module
+
+    def refuse(*args: object, **kwargs: object) -> object:
+        """Разборщик, который всегда отказывает.
+
+        Args:
+            *args (object): Не используются.
+            **kwargs (object): Не используются.
+
+        Returns:
+            object: Не возвращает.
+
+        Raises:
+            ValueError: Всегда.
+        """
+        raise ValueError("тело не разбирается")
+
+    monkeypatch.setattr(classify_module, "HTMLParser", refuse)
+
+    verdict = classify(
+        status=200,
+        html="<html><body>что-то есть</body></html>",
+        final_url=f"https://{HOST}/orders/trade",
+        expected_host=HOST,
+    )
+
+    assert verdict.cls is ResponseClass.UNKNOWN
+    assert verdict.reason == "body_unparsable"
+    assert verdict.reason != "identity_marker_absent"
