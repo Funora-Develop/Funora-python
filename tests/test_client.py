@@ -17,6 +17,7 @@ from time import monotonic
 import pytest
 
 import funora._client as client_module
+import funora._engine as engine_module
 from funora._budget import Budget
 from funora._chats import ChatsPage
 from funora._client import Client
@@ -122,7 +123,36 @@ def no_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
         list[float]: Список длительностей, которые клиент собирался проспать.
     """
     slept: list[float] = []
-    monkeypatch.setattr(client_module, "sleep", slept.append)
+
+    # Часы двигаются вместе со сном. Подмена, глотающая сон и оставляющая часы
+    # на месте, показывает ведро, которое не пополняется никогда, и остывание,
+    # которое не истекает никогда: проверка тогда проходит или падает по
+    # причине, которой в жизни не бывает.
+    started = monotonic()
+    offset = [0.0]
+
+    def fake_sleep(seconds: float) -> None:
+        """Считает паузу и продвигает часы на неё же.
+
+        Args:
+            seconds (float): Сколько клиент собирался проспать.
+
+        Returns:
+            None
+        """
+        slept.append(seconds)
+        offset[0] += seconds
+
+    def fake_monotonic() -> float:
+        """Возвращает время с учётом проспанного.
+
+        Returns:
+            float: Монотонные секунды.
+        """
+        return started + offset[0]
+
+    monkeypatch.setattr(client_module, "sleep", fake_sleep)
+    monkeypatch.setattr(engine_module, "monotonic", fake_monotonic)
     return slept
 
 
@@ -242,7 +272,19 @@ def test_rate_limited_is_retried_and_respects_the_header(no_sleep: list[float]) 
     with _client([limited, good]) as client:
         page = client.orders.list()
         assert page.completeness is Completeness.COMPLETE
-        assert no_sleep == [2.0], "пауза обязана быть взята из заголовка"
+        # Пауз две, и обе обязательны. Первая - подсказка площадки из
+        # заголовка Retry-After. Вторая - остаток собственного остывания
+        # идентичности: спецификация велит после первого ограничения не только
+        # урезать ёмкость, но и выдержать минуту.
+        #
+        # Вместе они дают ровно минуту, а не минуту с двумя секундами: часы
+        # идут и во время первой паузы.
+        assert no_sleep[0] == 2.0, "первая пауза обязана быть взята из заголовка"
+        assert len(no_sleep) == 2, f"ожидались две паузы, получено {no_sleep}"
+        assert abs(sum(no_sleep) - 60) < 0.01, (
+            f"собственное остывание после первого ограничения - минута, "
+            f"получилось {sum(no_sleep):.1f} с"
+        )
 
 
 def test_rate_limited_gives_up_after_the_policy_limit(no_sleep: list[float]) -> None:
