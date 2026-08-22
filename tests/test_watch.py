@@ -2320,3 +2320,52 @@ def test_overflow_drops_the_tail_not_the_head(
     assert read[0] == f"/chat/?node={first_on_page}", (
         f"первой прочитана {read[0]}, а не голова очереди - выбывает не хвост"
     )
+
+
+def test_overflow_drops_the_newest_and_keeps_the_oldest(
+    no_sleep: list[float], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Проверяет, что за пределом очереди выбывает хвост, а не голова.
+
+    В голове самые давние диалоги: они ждут дольше всех, и повода вернуться к
+    ним больше нет - событие об изменении доставлено, курсор сдвинут. Выброси
+    их, и именно они не дочитаются НИКОГДА, сколько бы шагов ни прошло.
+
+    Хвост же выбывает временно: диалог, изменившийся снова, вернётся в очередь
+    следующим шагом.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+        monkeypatch (pytest.MonkeyPatch): Механизм подмены.
+
+    Returns:
+        None
+    """
+    import funora._engine as engine_module
+
+    limit = 3
+    monkeypatch.setattr(engine_module, "MAX_QUEUE_DEPTH_PER_KEY", limit)
+
+    dialogs = _numeric_dialogs(_page("chat.logged.ru"))
+    moved = re.sub(r'data-node-msg="[^"]*"', 'data-node-msg="T10:d#сдвинуто"', dialogs)
+    assert moved != dialogs, "порча не применилась - проверка бессмысленна"
+
+    transport, _ = _follow_run([dialogs, moved], 2)
+
+    order = re.findall(r'data-id="([^"]*)"', moved)
+    read = [
+        match.group(1)
+        for path in transport.paths
+        if (match := re.search(r"node=([^&]+)", path)) is not None
+    ]
+    assert read, "ни одна переписка не дочитана - проверять нечего"
+
+    positions = [order.index(node) for node in read if node in order]
+    assert positions, "дочитанные узлы не с этой страницы"
+    assert max(positions) < limit, (
+        f"дочитаны узлы на позициях {sorted(positions)} при пределе очереди "
+        f"{limit}. Значит уцелел хвост, а не голова, и самые давние диалоги "
+        "не дочитаются никогда"
+    )
+
+
