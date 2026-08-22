@@ -95,13 +95,33 @@ class Observed(Generic[T]):
     def present(cls, value: T, confidence: Confidence = Confidence.OBSERVED) -> Observed[T]:
         """Собирает наблюдённое непустое значение.
 
+        Непустоту обещает сам тип, и до сих пор обещание держалось на честном
+        слове: конструктор принимал что угодно. Собранное здесь пустое значение
+        отбирает у вызывающего единственный способ отличить «поле есть, и оно
+        пусто» от «поле есть», - а различать он должен по состоянию, а не
+        заглядывая внутрь.
+
+        Пустота проверяется только у строк и последовательностей. У логического
+        поля False - полноценное значение, а не пустота, и у числового ноль
+        тоже: там пустоты не бывает.
+
         Args:
             value (T): Значение.
             confidence (Confidence): Уверенность правила извлечения.
 
         Returns:
             Observed[T]: Запись в состоянии PRESENT.
+
+        Raises:
+            ValueError: Если строка или последовательность пуста. Это не
+                состояние площадки, а ошибка в разборе: для пустого значения
+                есть empty().
         """
+        if isinstance(value, str | tuple | list | frozenset | set | dict) and not value:
+            raise ValueError(
+                "Observed.present получил пустое значение; "
+                "для пустого наблюдения есть Observed.empty"
+            )
         return cls(Presence.PRESENT, confidence, None, value)
 
     @classmethod
