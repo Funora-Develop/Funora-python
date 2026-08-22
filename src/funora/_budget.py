@@ -25,6 +25,7 @@ from typing import Final
 
 from .budget import (
     BUCKETS,
+    BURST_WINDOW_MS,
     DEMAND_WINDOW_MS,
     FLOOR_SHARE,
     MAX_WAIT_MS,
@@ -70,6 +71,13 @@ class TokenBucket:
     updated_at: float = 0.0
     factor: float = 1.0
 
+    #: Право на залп: сколько ещё можно отправить, не переводя дыхания.
+    #:
+    #: Второй предел, независимый от запаса. Ведро, полное до краёв, всё равно
+    #: не выпустит больше burst запросов подряд: запас копится в простое, а
+    #: право на залп восстанавливается равномерно, burst единиц за окно.
+    allowance: float = 0.0
+
     def __post_init__(self) -> None:
         """Заполняет ведро, если начальный запас не задан.
 
@@ -78,6 +86,8 @@ class TokenBucket:
         """
         if self.tokens < 0:
             self.tokens = float(self.limits.capacity)
+        if self.allowance == 0.0:
+            self.allowance = float(self.limits.burst)
 
     def _refill(self, now: float) -> None:
         """Пополняет ведро по прошедшему времени.
@@ -97,6 +107,10 @@ class TokenBucket:
         self.tokens = min(
             self.limits.capacity * self.factor,
             self.tokens + elapsed * self.limits.refill_per_second,
+        )
+        self.allowance = min(
+            float(self.limits.burst),
+            self.allowance + elapsed * self.limits.burst / (BURST_WINDOW_MS / 1000),
         )
         self.updated_at = now
 
@@ -135,11 +149,23 @@ class TokenBucket:
         """
         self._refill(now)
         needed = cost + self.limits.capacity * self.factor * floor
-        if self.tokens >= needed:
-            return 0
-        if self.limits.refill_per_second <= 0:
-            return MAX_WAIT_MS
-        return int(((needed - self.tokens) / self.limits.refill_per_second) * 1000) + 1
+
+        # Ждать приходится дольшего из двух пределов: запрос проходит, только
+        # когда хватает и запаса, и права на залп.
+        by_tokens = 0
+        if self.tokens < needed:
+            if self.limits.refill_per_second <= 0:
+                return MAX_WAIT_MS
+            by_tokens = (
+                int(((needed - self.tokens) / self.limits.refill_per_second) * 1000) + 1
+            )
+
+        by_burst = 0
+        if self.allowance < cost:
+            per_second = self.limits.burst / (BURST_WINDOW_MS / 1000)
+            by_burst = int(((cost - self.allowance) / per_second) * 1000) + 1
+
+        return max(by_tokens, by_burst)
 
     def take(self, now: float, cost: float = 1.0) -> None:
         """Занимает запас без проверки.
@@ -156,6 +182,7 @@ class TokenBucket:
         """
         self._refill(now)
         self.tokens -= cost
+        self.allowance -= cost
 
 
 class Budget:

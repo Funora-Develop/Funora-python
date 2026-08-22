@@ -25,6 +25,7 @@ from funora._engine import Engine, Fetch, Pause
 from funora._orders import Completeness
 from funora._thread import Origin, Thread
 from funora._transport import Observation, TransportSettings
+from funora.budget import MAX_WAIT_MS
 from funora.capabilities import Capability, CapabilityState
 from funora.errors import (
     BudgetExhaustedError,
@@ -439,8 +440,16 @@ def test_exhausted_budget_does_not_send_the_request(no_sleep: list[float]) -> No
     # восполниться, и проверка станет зелёной, ничего не проверив.
     budget = Budget(names=("write",))
     now = monotonic()
-    while budget.reserve(now).granted:
-        pass
+    # Опустошать надо ЗАПАС, а не право на залп. Залп восстанавливается за
+    # доли секунды, и остановка на нём дала бы ведро, полное на три четверти:
+    # клиент подождал бы сто миллисекунд и спокойно сходил.
+    while True:
+        reservation = budget.reserve(now)
+        if reservation.granted:
+            continue
+        if reservation.wait_ms > MAX_WAIT_MS:
+            break
+        now += reservation.wait_ms / 1000
 
     fetcher = _FakeFetcher([_observation(_page("orders-trade.logged.ru"))])
     with Client(transport=fetcher, budget=budget) as client:  # type: ignore[arg-type]

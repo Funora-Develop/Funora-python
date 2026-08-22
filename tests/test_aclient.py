@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from time import monotonic
 
 import pytest
 from test_client import _FakeFetcher, _observation, _page
@@ -86,8 +87,15 @@ def no_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     """
     waits: list[float] = []
 
+    # Часы двигаются вместе со сном. Подмена, глотающая сон и оставляющая часы
+    # на месте, показывает ведро, которое не пополняется никогда, и остывание,
+    # которое не истекает никогда: проверка тогда проходит или падает по
+    # причине, которой в жизни не бывает.
+    started = monotonic()
+    offset = [0.0]
+
     def fake_sleep(seconds: float) -> None:
-        """Записывает паузу вместо того, чтобы спать.
+        """Записывает паузу и продвигает часы на неё же.
 
         Args:
             seconds (float): Длительность.
@@ -96,6 +104,7 @@ def no_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
             None
         """
         waits.append(seconds)
+        offset[0] += seconds
 
     async def fake_asleep(seconds: float) -> None:
         """То же для асинхронной паузы.
@@ -107,9 +116,19 @@ def no_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
             None
         """
         waits.append(seconds)
+        offset[0] += seconds
+
+    def fake_monotonic() -> float:
+        """Возвращает время с учётом проспанного.
+
+        Returns:
+            float: Монотонные секунды.
+        """
+        return started + offset[0]
 
     monkeypatch.setattr("funora._client.sleep", fake_sleep)
     monkeypatch.setattr(asyncio, "sleep", fake_asleep)
+    monkeypatch.setattr("funora._engine.monotonic", fake_monotonic)
     return waits
 
 

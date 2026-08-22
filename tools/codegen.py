@@ -841,6 +841,7 @@ def render_budget(spec: Path) -> str:
         "BucketLimits",
         "BUCKETS",
         "MAX_WAIT_MS",
+        "BURST_WINDOW_MS",
         "RequestClass",
         "ON_REFUSAL",
         "FLOOR_SHARE",
@@ -891,7 +892,42 @@ def render_budget(spec: Path) -> str:
     out.append("}\n")
 
     out.append("\n#: Сколько ждать освобождения бюджета, прежде чем отказать.\n")
+    burst = doc.get("burst_rule") or {}
+    window = burst.get("window_ms")
+    if not isinstance(window, int) or window <= 0:
+        raise SystemExit(
+            "spec/runtime/budget.yaml: burst_rule.window_ms не объявлен либо "
+            "неположителен. Без окна залп остаётся числом без правила применения, "
+            "а числа у вёдер стоят"
+        )
+    if burst.get("meaning") is None:
+        raise SystemExit(
+            "spec/runtime/budget.yaml: burst_rule не говорит, что ограничивает залп"
+        )
+    for name, entry in doc["buckets"].items():
+        if not isinstance(entry.get("burst"), int) or entry["burst"] <= 0:
+            raise SystemExit(
+                f"spec/runtime/budget.yaml: у ведра {name} залп не объявлен либо "
+                "неположителен"
+            )
+        if entry["burst"] > entry["capacity"]:
+            raise SystemExit(
+                f"spec/runtime/budget.yaml: у ведра {name} залп {entry['burst']} "
+                f"больше ёмкости {entry['capacity']}. Тогда залп не ограничивает "
+                "ничего: запас кончится раньше права на него"
+            )
+
     out.append(f"MAX_WAIT_MS: Final[int] = {doc['exhausted']['max_wait_ms']}\n")
+    out.append("\n#: Окно, за которое считается право на залп.\n")
+    out.append("#:\n")
+    out.append("#: Ёмкость и залп ограничивают разное. Ёмкость - запас: она\n")
+    out.append("#: копится в простое. Залп - темп: сколько можно отправить подряд,\n")
+    out.append("#: не переводя дыхания, независимо от накопленного.\n")
+    out.append("#:\n")
+    out.append("#: Без второго предела клиент, простоявший минуту, выпускает\n")
+    out.append("#: шестьдесят запросов в одну секунду - и первым от собственного\n")
+    out.append("#: залпа страдает сам аккаунт.\n")
+    out.append(f"BURST_WINDOW_MS: Final[int] = {window}\n")
 
     admission = doc.get("class_admission") or {}
     classes = doc.get("classes") or {}

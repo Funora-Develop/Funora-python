@@ -15,7 +15,14 @@ from __future__ import annotations
 import pytest
 
 from funora._budget import Budget
-from funora.budget import BUCKETS, DEMAND_WINDOW_MS, FLOOR_SHARE, ON_REFUSAL, RequestClass
+from funora.budget import (
+    BUCKETS,
+    BURST_WINDOW_MS,
+    DEMAND_WINDOW_MS,
+    FLOOR_SHARE,
+    ON_REFUSAL,
+    RequestClass,
+)
 from funora.errors import BudgetExhaustedError
 
 #: Ведро аккаунта - самое узкое, на нём правило и проявляется.
@@ -25,7 +32,7 @@ ACCOUNT = BUCKETS["account"]
 NOW = 10_000.0
 
 
-def _drain(budget: Budget, now: float, down_to: float) -> None:
+def _drain(budget: Budget, now: float, down_to: float) -> float:
     """Тратит бюджет от лица покупательских вызовов.
 
     Args:
@@ -34,11 +41,20 @@ def _drain(budget: Budget, now: float, down_to: float) -> None:
         down_to (float): До какого запаса опустошать ведро аккаунта.
 
     Returns:
-        None
+        float: Момент, на котором расход закончился. Дальше спрашивать надо
+        именно его: часы ведра ушли вперёд, и вопрос из прошлого дал бы
+        отрицательный промежуток.
     """
-    while budget.reserve(now, 1.0, RequestClass.INTERACTIVE).granted:
-        if budget._buckets[1].tokens <= down_to:
-            return
+    # Время идёт: залп не пускает больше burst запросов подряд, сколько бы ни
+    # было в ведре. Шаг короче окна залпа, поэтому право на залп успевает
+    # восстанавливаться, а запас почти нет.
+    moment = now
+    while budget._buckets[1].tokens > down_to:
+        if not budget.reserve(moment, 1.0, RequestClass.INTERACTIVE).granted:
+            moment += 0.05
+            if moment - now > 60.0:
+                raise AssertionError("ведро не опустошается - расход не работает")
+    return moment
 
 
 def test_monitoring_takes_the_whole_bucket_when_nobody_competes() -> None:
@@ -51,14 +67,18 @@ def test_monitoring_takes_the_whole_bucket_when_nobody_competes() -> None:
         None
     """
     budget = Budget()
-    granted = sum(
-        1
-        for _ in range(int(ACCOUNT.capacity))
-        if budget.reserve(NOW, 1.0, RequestClass.MONITORING).granted
-    )
-    assert granted == int(ACCOUNT.capacity), (
+    granted = 0
+    moment = NOW
+    while budget._buckets[1].tokens > 0.5:
+        if budget.reserve(moment, 1.0, RequestClass.MONITORING).granted:
+            granted += 1
+        else:
+            moment += 0.05
+        assert moment - NOW < 60.0, "наблюдение не может исчерпать ведро"
+
+    assert granted >= int(ACCOUNT.capacity), (
         f"наблюдение получило {granted} из {int(ACCOUNT.capacity)} при том, что "
-        "никто больше не претендовал"
+        "никто больше не претендовал. Доля - это пол, а не потолок"
     )
 
 
@@ -74,12 +94,16 @@ def test_monitoring_yields_first_when_buyers_are_answered() -> None:
     budget = Budget()
     for request_class in (RequestClass.INTERACTIVE, RequestClass.AUTOMATION, RequestClass.POLL):
         budget.reserve(NOW, 1.0, request_class)
-    _drain(budget, NOW, ACCOUNT.capacity * 0.30)
+    moment = _drain(budget, NOW, ACCOUNT.capacity * 0.30)
+
+    # Даём восстановиться праву на залп: спор идёт о доле, а не о темпе, и
+    # мешать одно с другим значило бы проверять два предела одной проверкой.
+    moment += BURST_WINDOW_MS / 1000
 
     with pytest.raises(BudgetExhaustedError, match="отменяемым"):
-        budget.require(NOW, 1.0, RequestClass.MONITORING)
+        budget.require(moment, 1.0, RequestClass.MONITORING)
 
-    assert budget.reserve(NOW, 1.0, RequestClass.INTERACTIVE).granted, (
+    assert budget.reserve(moment, 1.0, RequestClass.INTERACTIVE).granted, (
         "ответ покупателю не прошёл там, где ради него всё и написано"
     )
 
@@ -269,9 +293,9 @@ def test_zero_cost_still_respects_the_class_floor() -> None:
     budget = Budget()
     for request_class in (RequestClass.INTERACTIVE, RequestClass.AUTOMATION, RequestClass.POLL):
         budget.reserve(NOW, 1.0, request_class)
-    _drain(budget, NOW, ACCOUNT.capacity * 0.30)
+    moment = _drain(budget, NOW, ACCOUNT.capacity * 0.30)
 
-    free = budget.reserve(NOW, 0.0, RequestClass.MONITORING)
+    free = budget.reserve(moment, 0.0, RequestClass.MONITORING)
     assert not free.granted, (
         "запрос ценой ноль прошёл мимо порога допуска: наблюдение обошло долю "
         "более защищённых классов, ничего не заплатив"
