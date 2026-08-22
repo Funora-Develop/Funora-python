@@ -26,9 +26,10 @@ from funora._diff import Event
 from funora._engine import Engine, Pause
 from funora._poll import Schedule
 from funora._transport import Observation, TransportSettings
-from funora._watch import Router, dispatch
+from funora._watch import PRODUCIBLE, Router, dispatch, primed
 from funora.errors import (
     AccessBlockedError,
+    ConfigurationError,
     FunoraError,
     HandlerError,
     RateLimitedError,
@@ -1377,3 +1378,145 @@ def _tokens(budget: Budget) -> int:
     while budget.reserve(monotonic()).granted:
         count += 1
     return count
+
+
+def test_subscribing_to_an_unproduced_event_is_refused() -> None:
+    """Проверяет отказ в подписке на вид, которого реализация не порождает.
+
+    Перечисление объявляет шестнадцать видов, реализация порождает пять. Прочие
+    одиннадцать принимались без возражений и не срабатывали ни разу, а молчание
+    обработчика неотличимо от «ничего не произошло»: продавец, подписавшийся на
+    отзывы, увидел бы ровно то же, что при отсутствии новых отзывов.
+
+    Однажды это уже случилось с message.created. Починили тогда одно событие,
+    правила не написали.
+
+    Returns:
+        None
+    """
+    router = Router()
+    never = sorted(set(EventType) - PRODUCIBLE, key=str)
+    assert never, "если порождается всё, проверка бессмысленна - её надо убрать"
+
+    for kind in never:
+        with pytest.raises(ConfigurationError) as exc:
+            router.on(kind)
+        assert str(kind) in str(exc.value), "отказ не называет вид, о котором речь"
+
+    assert not router.by_type, "отвергнутая подписка всё же попала в реестр"
+
+
+def test_refusal_names_what_is_available() -> None:
+    """Проверяет, что отказ говорит, на что подписаться можно.
+
+    Отказ без перечня оставляет вызывающего гадать, и первое, что он сделает, -
+    полезет читать исходники. Перечень в сообщении отвечает на вопрос сразу.
+
+    Returns:
+        None
+    """
+    with pytest.raises(ConfigurationError) as exc:
+        Router().on(EventType.REVIEW_CHANGED)
+
+    message = str(exc.value)
+    for kind in PRODUCIBLE:
+        assert str(kind) in message
+
+
+def test_subscribing_to_a_produced_event_works() -> None:
+    """Проверяет, что отказ не задел то, что порождается.
+
+    Returns:
+        None
+    """
+    router = Router()
+    for kind in PRODUCIBLE:
+        router.on(kind)(lambda event: None)
+    assert len(router.by_type) == len(PRODUCIBLE)
+
+
+def test_catch_all_is_not_refused() -> None:
+    """Проверяет, что подписка на весь поток остаётся без ограничений.
+
+    Такой обработчик просит поток целиком, а не конкретный вид, и молчания в нём
+    нет: он видит ровно то, что пришло. Журналированию и метрикам нужен именно
+    он.
+
+    Returns:
+        None
+    """
+    router = Router()
+    router.on()(lambda event: None)
+    assert len(router.catch_all) == 1
+
+
+def test_every_declared_kind_is_actually_produced() -> None:
+    """Проверяет, что перечень порождаемого заработан, а не объявлен.
+
+    Без этой проверки правило разворачивается наизнанку: вид вписывают в
+    перечень, подписка проходит, обработчик молчит - то же самое молчание, но
+    теперь с разрешения. Поэтому каждый объявленный вид обязан вправду
+    возникнуть на снимках.
+
+    Returns:
+        None
+    """
+    from funora._chats import parse_chats_page
+    from funora._diff import diff_chats, diff_orders, diff_thread
+    from funora._orders import parse_orders_page
+    from funora._thread import parse_thread
+
+    when = datetime(2026, 8, 19, 12, 0, tzinfo=UTC)
+    account = "12345678"
+
+    def read(name: str) -> str:
+        """Читает снимок страницы.
+
+        Args:
+            name (str): Имя снимка без расширения.
+
+        Returns:
+            str: Разметка снимка.
+        """
+        return (FIXTURES / f"{name}.skeleton.txt").read_text(encoding="utf-8")
+
+    orders = parse_orders_page(read("orders-trade.logged.ru"), observed_at=when)
+    chats = parse_chats_page(read("chat.logged.ru"), observed_at=when)
+    thread = parse_thread(read("chat-thread.logged.ru"), observed_at=when)
+
+    produced = {
+        *(
+            event.type
+            for event in diff_thread(frozenset(), thread, account_id=account, chat_id="42")
+        ),
+        *(
+            event.type
+            for event in diff_chats(
+                {entry.node_id: "прежняя" for entry in chats.rows(accept_incomplete=True)},
+                chats,
+                account_id=account,
+            )
+        ),
+        *(event.type for event in diff_orders({}, orders, account_id=account)),
+        *(
+            event.type
+            for event in diff_orders(
+                dict.fromkeys(
+                    (entry.order_id for entry in orders.rows(accept_incomplete=True)),
+                    "выдуманное",
+                ),
+                orders,
+                account_id=account,
+            )
+        ),
+        primed(account, when, "account:" + account).type,
+    }
+
+    assert produced >= PRODUCIBLE, (
+        f"объявлено порождаемым, но не порождается: {PRODUCIBLE - produced} - "
+        "подписка на такой вид пройдёт, а обработчик промолчит"
+    )
+    assert produced <= PRODUCIBLE, (
+        f"порождается, но не объявлено: {produced - PRODUCIBLE} - "
+        "подписка на такой вид будет отвергнута зря"
+    )

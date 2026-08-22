@@ -32,7 +32,15 @@ from ._diff import Event
 from .errors import ConfigurationError, FunoraError, HandlerError
 from .events import EventType
 
-__all__ = ["Router", "Handler", "StepResult", "dispatch", "adispatch", "dispatch_core"]
+__all__ = [
+    "Router",
+    "Handler",
+    "StepResult",
+    "PRODUCIBLE",
+    "dispatch",
+    "adispatch",
+    "dispatch_core",
+]
 
 _log = logging.getLogger("funora.watch")
 
@@ -47,6 +55,31 @@ Invoke = tuple[Handler, Event]
 
 #: Событие, которым отмечается сохранение первого снимка.
 _PRIMED: Final[EventType] = EventType.WATCH_PRIMED
+
+
+#: Виды событий, которые эта реализация вправду порождает.
+#:
+#: Перечисление объявляет шестнадцать видов, реализация порождает пять. Прочие
+#: одиннадцать - не задел на будущее, а ловушка: обработчик на них принимался
+#: без возражений и не срабатывал ни разу, а молчание неотличимо от «ничего не
+#: произошло».
+#:
+#: Однажды это уже случилось с message.created - событие было объявлено, а цикл
+#: наблюдения не читал переписок вовсе. Починили тогда одно событие; правила,
+#: по которому этого не случится снова, не написали.
+#:
+#: Перечень обязан быть заработанным: проверка сверяет его с тем, что вправду
+#: порождается на снимках. Объявить вид и не порождать - то же молчание с другой
+#: стороны.
+PRODUCIBLE: Final[frozenset[EventType]] = frozenset(
+    {
+        EventType.MESSAGE_CREATED,
+        EventType.CHAT_UNREAD_CHANGED,
+        EventType.ORDER_CREATED,
+        EventType.ORDER_STATUS_CHANGED,
+        EventType.WATCH_PRIMED,
+    }
+)
 
 
 @dataclass
@@ -68,13 +101,34 @@ class Router:
     def on(self, event_type: EventType | None = None) -> Callable[[Handler], Handler]:
         """Регистрирует обработчик события.
 
+        Подписка на вид, которого реализация не порождает, отвергается вслух.
+        Промолчать значило бы завести обработчик, который не выполнится никогда,
+        - а его молчание неотличимо от «ничего не произошло». Продавец,
+        подписавшийся на отзывы, увидел бы ровно то же, что при отсутствии новых
+        отзывов, и узнал бы об ошибке в тот день, когда отзыв придёт.
+
+        Отказ происходит при регистрации, то есть при запуске. Строка в журнале
+        была бы тем же молчанием с отсрочкой: журнал читают после происшествия,
+        а не до.
+
+        Обработчик без указания вида отказа не получает: он просит поток
+        целиком и видит ровно то, что пришло.
+
         Args:
             event_type (EventType | None): Тип события. None означает все типы.
 
         Returns:
             Callable[[Handler], Handler]: Декоратор, возвращающий обработчик
             без изменений, чтобы его можно было вызвать и напрямую.
+
+        Raises:
+            ConfigurationError: Если вид события эта реализация не порождает.
         """
+        if event_type is not None and event_type not in PRODUCIBLE:
+            raise ConfigurationError(
+                f"эта реализация не порождает событий вида {event_type}; "
+                f"порождаются: {', '.join(sorted(str(kind) for kind in PRODUCIBLE))}"
+            )
 
         def register(handler: Handler) -> Handler:
             """Добавляет обработчик в реестр.
