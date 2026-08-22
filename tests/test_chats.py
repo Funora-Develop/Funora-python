@@ -239,3 +239,47 @@ def test_duplicate_dialog_ids_are_loud() -> None:
 
     assert page.completeness is not Completeness.COMPLETE
     assert any(d.code == "duplicate_identifiers" for d in page.defects)
+
+
+def test_dialog_without_a_link_is_not_observed_not_empty() -> None:
+    """Проверяет, что отсутствующий адрес диалога не выдаётся за пустой.
+
+    Строка опознаётся по атрибуту с идентификатором, и адрес в ней
+    необязателен: без него запись всё равно принимается. Голая строка отдала бы
+    пустую - неотличимую от адреса, который площадка вправду вернула пустым, и
+    подставилась бы в запрос.
+
+    Returns:
+        None
+    """
+    import re as _re
+
+    without = _re.sub(r'\shref="[^"]*"', "", _fixture())
+    page = _parse(without)
+    entry = page.rows(accept_incomplete=True)[0]
+
+    assert entry.href.presence is Presence.NOT_OBSERVED
+    assert entry.href.reason == "attribute_absent:href"
+    # Запись при этом принята: идентификатор нашёлся в атрибуте.
+    assert entry.node_id
+    assert page.rows_accepted == page.rows_total
+
+
+def test_blank_dialog_link_is_empty_not_absent() -> None:
+    """Проверяет разницу между «атрибута нет» и «атрибут пуст».
+
+    Разборщик отдаёт None и для атрибута без значения, и для пустого, так что
+    чтение через .get() свело бы оба случая с отсутствием атрибута. Отличать их
+    нужно затем же, зачем всё остальное в этом наборе: «площадка дала пустое» -
+    факт о странице, «атрибута нет» - о нашем незнании.
+
+    Returns:
+        None
+    """
+    import re as _re
+
+    blank = _re.sub(r'\shref="[^"]*"', ' href=""', _fixture())
+    entry = _parse(blank).rows(accept_incomplete=True)[0]
+
+    assert entry.href.presence is Presence.EMPTY
+    assert entry.href.presence is not Presence.NOT_OBSERVED

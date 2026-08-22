@@ -32,6 +32,7 @@ from typing import Final
 
 from selectolax.parser import HTMLParser, Node
 
+from ._extract import attribute as attribute_of
 from ._observed import Confidence, Observed
 from ._result import Completeness, Defect, Severity, collect_rows
 from .errors import IncompleteResultError, ProtocolChangedError
@@ -60,7 +61,8 @@ class ChatListEntry:
 
     Attributes:
         node_id (str): Идентификатор диалога.
-        href (str): Адрес переписки.
+        href (Observed[str]): Адрес переписки. Ненаблюдён, когда строка
+            опознана по атрибуту с идентификатором, а ссылки в ней нет.
         row_index (int): Порядковый номер строки, с нуля.
         last_message_position (Observed[str]): Позиция последнего сообщения в
             диалоге. Непрозрачна: сравнивать можно только на равенство.
@@ -75,7 +77,7 @@ class ChatListEntry:
     """
 
     node_id: str
-    href: str
+    href: Observed[str]
     row_index: int
     last_message_position: Observed[str]
     own_position: Observed[str]
@@ -174,11 +176,7 @@ def _position(row: Node, attribute: str) -> Observed[str]:
         проверяется: наблюдённые десять знаков - факт о сегодняшнем дне, а не
         правило, и переход площадки на одиннадцать не должен ломать разбор.
     """
-    raw = (row.attributes or {}).get(attribute)
-    if raw is None:
-        return Observed.missing(f"attribute_absent:{attribute}")
-    value = raw.strip()
-    return Observed.present(value) if value else Observed.empty("")
+    return attribute_of(row, attribute, attribute)
 
 
 def _parse_row(row: Node, index: int) -> tuple[ChatListEntry | None, list[Defect]]:
@@ -195,9 +193,13 @@ def _parse_row(row: Node, index: int) -> tuple[ChatListEntry | None, list[Defect
     defects: list[Defect] = []
 
     node_id = ((row.attributes or {}).get("data-id") or "").strip()
-    href = ((row.attributes or {}).get("href") or "").strip()
+    # Адрес наблюдаемый, а не голая строка. Идентификатор берётся из атрибута,
+    # если он есть, и строка со ссылкой принимается наравне со строкой без неё -
+    # то есть отсутствие адреса не отбрасывает запись. Голая строка отдала бы
+    # пустую, неотличимую от адреса, который площадка вправду вернула пустым.
+    href = attribute_of(row, "href", "href")
     if not node_id:
-        match = _NODE_IN_HREF.search(href)
+        match = _NODE_IN_HREF.search(href.get(""))
         node_id = match.group(1) if match else ""
 
     if not node_id:

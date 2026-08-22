@@ -12,6 +12,7 @@ from pathlib import Path
 
 from funora._signals import (
     ATTR_ALLOWLIST,
+    BLANK,
     ChangeKind,
     collect,
     compare,
@@ -202,3 +203,76 @@ def test_relations_handles_page_without_contacts() -> None:
     rel = relations("<html><body><div>пусто</div></body></html>")
     assert rel.contacts == 0
     assert "толковать нечего" in format_relations(rel)
+
+
+def test_attribute_without_a_value_is_visible_to_comparison() -> None:
+    """Проверяет, что атрибут без значения попадает в сравнение.
+
+    Разборщик отдаёт None и для `data-chat`, и для `data-chat=""`. Прежде такая
+    пара молча выбрасывалась, и режим сравнения о ней не говорил ничего:
+    атрибут, стоящий без значения в обоих чтениях, не попадал в отчёт вовсе.
+
+    Returns:
+        None
+    """
+    blank = _page("1000000001", "1000000001", "aa11bb22").replace(
+        'data-chat="aa11bb22"', "data-chat"
+    )
+    found = collect(blank)
+    assert any(attr == "data-chat" for _, attr in found), (
+        "атрибут без значения выпал из сбора - сравнение о нём не скажет ничего"
+    )
+
+
+def test_gaining_a_value_is_a_change_not_an_appearance() -> None:
+    """Проверяет, что появление значения не выдаётся за появление атрибута.
+
+    Разница не косметическая: режим сравнения существует затем, чтобы по нему
+    делали выводы о смысле атрибута. «Атрибут появился» и «у атрибута появилось
+    значение» ведут к разным выводам, а прежняя реализация давала первое на
+    втором.
+
+    Returns:
+        None
+    """
+    before = collect(
+        _page("1000000001", "1000000001", "aa11bb22").replace('data-chat="aa11bb22"', "data-chat")
+    )
+    after = collect(_page("1000000001", "1000000001", "aa11bb22"))
+
+    chat = [c for c in compare(before, after) if c.attr == "data-chat"]
+    assert chat, "атрибут вовсе не попал в сравнение"
+    assert chat[0].kind is ChangeKind.CHANGED
+    assert chat[0].kind is not ChangeKind.APPEARED
+
+
+def test_staying_without_a_value_is_not_a_change() -> None:
+    """Проверяет, что атрибут без значения в обоих чтениях сочтён неизменным.
+
+    Обозначение должно быть устойчивым: иначе отчёт показывал бы изменение там,
+    где ничего не менялось, и режим сравнения перестал бы быть пригодным.
+
+    Returns:
+        None
+    """
+    blank = _page("1000000001", "1000000001", "aa11bb22").replace(
+        'data-chat="aa11bb22"', "data-chat"
+    )
+    chat = [c for c in compare(collect(blank), collect(blank)) if c.attr == "data-chat"]
+    assert chat and chat[0].kind is ChangeKind.UNCHANGED
+
+
+def test_blank_mark_cannot_be_mistaken_for_a_value() -> None:
+    """Проверяет, что обозначение пустоты не совпадает с настоящим значением.
+
+    Знак выбран невозможный внутри значения: разборщики HTML заменяют нулевой
+    байт на символ замены. Проверка ставит его в разметку прямо и убеждается,
+    что до сбора он не доходит - иначе страница могла бы притвориться атрибутом
+    без значения.
+
+    Returns:
+        None
+    """
+    smuggled = _page("1000000001", "1000000001", BLANK)
+    values = set(collect(smuggled).values())
+    assert BLANK not in values
