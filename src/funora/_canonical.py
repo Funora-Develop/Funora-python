@@ -26,6 +26,7 @@ import unicodedata
 from datetime import UTC, datetime
 from typing import Any, Final
 
+from ._money import Money
 from .errors import ValidationError
 
 __all__ = [
@@ -160,6 +161,15 @@ def _prepare(value: Any, where: str) -> Any:
             "Выразите величину целым: деньги - минорными единицами, время - "
             "миллисекундами"
         )
+
+    if isinstance(value, Money):
+        # Порядок ключей задаёт правило 3, а не это перечисление: словарь
+        # сортируется по кодовым точкам при выводе.
+        return {
+            "amount_minor": value.amount_minor,
+            "currency": value.currency,
+            "scale": value.scale,
+        }
 
     if isinstance(value, datetime):
         # Момент выражается строкой канонической формы, а не отвергается: он

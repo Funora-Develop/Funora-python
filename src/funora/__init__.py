@@ -42,6 +42,7 @@ from ._diff import (
 )
 from ._gate import check_capability
 from ._host import host_of, is_safe_hop, same_host
+from ._money import Money
 from ._observed import Confidence, Observed, Presence
 from ._orders import (
     Completeness,
@@ -124,6 +125,7 @@ __all__ = [
     "Observation",
     "TransportSettings",
     # наблюдаемость
+    "Money",
     "Observed",
     "Presence",
     "Confidence",
