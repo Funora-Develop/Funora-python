@@ -182,3 +182,40 @@ def test_async_facade_mirrors_the_sync_one() -> None:
     surface = {n for n in vars(Client) if not n.startswith("_")}
     other_surface = {n for n in vars(AsyncClient) if not n.startswith("_")}
     assert surface == other_surface, f"клиенты разошлись: {surface ^ other_surface}"
+
+
+def test_documented_subscriptions_are_producible() -> None:
+    """Проверяет, что примеры не подписываются на непорождаемое событие.
+
+    Подписка на вид, которого реализация не порождает, отвергается при
+    регистрации. Пример в документации, делающий так, учит вызову, который
+    падает при запуске, - и это худший род устаревшей документации: он выглядит
+    рабочим ровно до первого запуска.
+
+    Проверка синтаксиса такой пример пропускает: он разбирается прекрасно.
+
+    Returns:
+        None
+    """
+    from funora._watch import PRODUCIBLE
+    from funora.events import EventType
+
+    named: list[tuple[str, str]] = []
+    for path in DOCS:
+        if not path.exists():
+            continue
+        for block in _CODE_BLOCK.findall(path.read_text(encoding="utf-8")):
+            for call in re.findall(r"\.on\(\s*EventType\.([A-Z_]+)", block):
+                named.append((path.name, call))
+
+    assert named, "в документации нет ни одного примера подписки - проверять нечего"
+
+    producible = {kind.name for kind in PRODUCIBLE}
+    for where, name in named:
+        assert name in EventType.__members__, (
+            f"{where}: примера ради названо EventType.{name}, а такого вида нет"
+        )
+        assert name in producible, (
+            f"{where}: пример подписывается на EventType.{name}, "
+            "а реализация такого вида не порождает - вызов будет отвергнут"
+        )
