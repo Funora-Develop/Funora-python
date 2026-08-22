@@ -35,6 +35,7 @@ from typing import Final
 from selectolax.parser import HTMLParser
 
 from ._host import host_of, same_host
+from .response_classes import STATUS_CLASS
 
 __all__ = [
     "ResponseClass",
@@ -186,11 +187,19 @@ DEFAULT_SIGNATURES: Final[tuple[Signature, ...]] = (
 )
 
 #: Коды, при которых тело разбирать бессмысленно.
+#:
+#: Таблица строится из порождённой, а не пишется здесь. Рукописная копия жила
+#: рядом с объявленной в spec/extraction/session.yaml и ничем с ней не
+#: сверялась: правка спецификации перестраивала бы порождённый файл, оставляя
+#: поведение прежним. Расхождение обнаружилось бы в работе - и ровно на той
+#: ошибке, от которой спецификация предостерегает отдельным разделом: код 429,
+#: принятый за блокировку, навсегда останавливает опрос.
+#:
+#: Причина собирается из кода: она уходит в таблицу «вердикт - ошибка», где
+#: ключи имеют вид http_401. Собирать её здесь дешевле, чем объявлять в
+#: спецификации второе имя для того же числа.
 _HARD_STATUS: Final[dict[int, tuple[ResponseClass, str]]] = {
-    401: (ResponseClass.LOGIN_REQUIRED, "http_401"),
-    403: (ResponseClass.BLOCKED, "http_403"),
-    429: (ResponseClass.RATE_LIMITED, "http_429"),
-    503: (ResponseClass.MAINTENANCE, "http_503"),
+    code: (ResponseClass(name), f"http_{code}") for code, name in STATUS_CLASS.items()
 }
 
 #: Максимум текста, по которому идёт поиск текстовых сигнатур. Ограничение

@@ -28,31 +28,14 @@ from __future__ import annotations
 import random as _random
 from collections.abc import Callable
 from dataclasses import dataclass
-from enum import StrEnum
 from typing import Final
 
 from ._verdicts import PROVISIONAL_ATTR
 from .errors import FunoraError
+from .operations import Safety
 from .retry import FALLBACK_POLICY, GLOBAL_MAX_ATTEMPTS, RETRY_POLICIES, RetryPolicy
 
 __all__ = ["Safety", "Attempt", "policy_for", "plan_attempt"]
-
-
-class Safety(StrEnum):
-    """Безопасность операции при повторе.
-
-    Значения взяты из spec/services: повтор допустим не для всякой операции, и
-    решение об этом принимается по объявлению, а не по догадке вызывающего.
-    """
-
-    #: Чтение. Повторять можно свободно в пределах бюджета.
-    SAFE = "safe"
-
-    #: Изменение, повтор которого требует ключа идемпотентности.
-    IDEMPOTENT = "idempotent"
-
-    #: Изменение, повтор которого может выполнить операцию дважды.
-    UNSAFE = "unsafe"
 
 
 @dataclass(frozen=True, slots=True)

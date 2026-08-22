@@ -626,3 +626,51 @@ def test_unparsable_body_is_not_called_a_markup_change(
     assert verdict.cls is ResponseClass.UNKNOWN
     assert verdict.reason == "body_unparsable"
     assert verdict.reason != "identity_marker_absent"
+
+
+def test_hard_status_table_comes_from_the_spec() -> None:
+    """Проверяет, что таблица кодов ответа не рукописная копия.
+
+    Она жила копией рядом с объявленной в spec/extraction/session.yaml и ничем с
+    ней не сверялась: правка спецификации перестраивала порождённый файл,
+    оставляя поведение прежним. Расхождение обнаружилось бы в работе - и ровно на
+    той ошибке, от которой спецификация предостерегает отдельным разделом: код
+    429, принятый за блокировку, навсегда останавливает опрос.
+
+    Returns:
+        None
+    """
+    from funora._classify import _HARD_STATUS
+    from funora.response_classes import STATUS_CLASS
+
+    assert set(_HARD_STATUS) == set(STATUS_CLASS), (
+        "коды в классификаторе разошлись с объявленными спецификацией"
+    )
+    for code, name in STATUS_CLASS.items():
+        assert _HARD_STATUS[code][0].value == name, (
+            f"код {code}: классификатор даёт {_HARD_STATUS[code][0].value}, спецификация - {name}"
+        )
+
+
+def test_rate_limit_is_not_blocked() -> None:
+    """Проверяет, что превышение частоты не считается блокировкой.
+
+    Спецификация посвящает этому отдельный раздел: при отображении 429 в blocked
+    первое же попадание в ограничение навсегда останавливает опрос, а вся
+    политика повторов остаётся недостижимым кодом. «Слишком быстро» - это не
+    «вам сюда нельзя».
+
+    Проверка стоит здесь, а не только в спецификации, потому что цена ошибки
+    выше цены дубля.
+
+    Returns:
+        None
+    """
+    verdict = classify(
+        status=429,
+        html="",
+        final_url=f"https://{HOST}/orders/trade",
+        expected_host=HOST,
+    )
+    assert verdict.cls is ResponseClass.RATE_LIMITED
+    assert verdict.cls is not ResponseClass.BLOCKED

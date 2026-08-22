@@ -27,7 +27,7 @@ from .errors import (
     UnexpectedResponseError,
 )
 
-__all__ = ["VERDICT_ERRORS", "RESPONSE_CLASSES"]
+__all__ = ["VERDICT_ERRORS", "RESPONSE_CLASSES", "STATUS_CLASS"]
 
 #: Классы ответа, объявленные спецификацией.
 #:
@@ -46,6 +46,21 @@ RESPONSE_CLASSES: Final[frozenset[str]] = frozenset(
         "unknown",
     }
 )
+
+#: Класс ответа по коду, когда тело разбирать бессмысленно.
+#:
+#: Прежде таблица жила рукописной копией в классификаторе. Правка
+#: спецификации не давала ни одного признака: сборка зелёная,
+#: спецификация зелёная, а расхождение обнаружилось бы в работе - и
+#: ровно на той ошибке, от которой спецификация предостерегает
+#: отдельным разделом: код 429, принятый за блокировку, навсегда
+#: останавливает опрос.
+STATUS_CLASS: Final[dict[int, str]] = {
+    401: "login_required",
+    403: "blocked",
+    429: "rate_limited",
+    503: "maintenance",
+}
 
 #: Пара «класс ответа, причина» и ошибка, которую она означает.
 VERDICT_ERRORS: Final[dict[tuple[str, str], type[Exception] | None]] = {
