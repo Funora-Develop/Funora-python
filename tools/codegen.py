@@ -636,6 +636,29 @@ def render_retry(spec: Path) -> str:
         str: Содержимое модуля.
     """
     doc = _load(spec, "spec/protocol/retry-policy.yaml")
+
+    rule = doc.get("fail_closed_rule") or {}
+    named = list(rule.get("applies_to") or [])
+    if not named:
+        raise SystemExit(
+            "spec/protocol/retry-policy.yaml: fail_closed_rule не называет ни одной "
+            "политики. Правило без области действия не применяется ни к чему"
+        )
+    lost = sorted(set(named) - set(doc["policies"]))
+    if lost:
+        raise SystemExit(
+            f"spec/protocol/retry-policy.yaml: правило полной остановки названо для "
+            f"{lost}, а таких политик в перечне нет. Проверка ловит и обратное: "
+            "перечень политик, разрезанный вставкой посередине, теряет всё, что "
+            "стояло ниже разреза, - и теряет молча"
+        )
+    declared = sorted(name for name, body in doc["policies"].items() if body.get("fail_closed"))
+    if declared != sorted(named):
+        raise SystemExit(
+            f"spec/protocol/retry-policy.yaml: признак fail_closed стоит у {declared}, "
+            f"а правило называет {sorted(named)}. Два перечня одного и того же "
+            "расходятся молча"
+        )
     policies: dict[str, Any] = doc["policies"]
     limits: dict[str, Any] = doc["limits"]
 

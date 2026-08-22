@@ -314,7 +314,14 @@ class Engine:
             прямое соединение к хосту из настроек.
     """
 
-    __slots__ = ("_budget", "_health_changes", "_identity", "_settings", "_state")
+    __slots__ = (
+        "_budget",
+        "_health_changes",
+        "_identity",
+        "_settings",
+        "_state",
+        "_stopped",
+    )
 
     def __init__(
         self,
@@ -328,6 +335,15 @@ class Engine:
         self._state = _State(opted_in=experimental)
         #: Смены состояния доступа, ждущие выдачи партией.
         self._health_changes: list[tuple[Health, Health, str]] = []
+
+        #: Ошибка, остановившая клиента, если он остановлен.
+        #:
+        #: Полная остановка, а не отказ одного запроса. Отказ в доступе и
+        #: страница проверки - не сбой, а ответ площадки на поведение клиента:
+        #: продолжать стучаться после них означает подтверждать подозрение.
+        #: Цена ошибки несимметрична - лишняя остановка стоит задержки, лишний
+        #: стук стоит аккаунта.
+        self._stopped: FunoraError | None = None
         self._identity = (
             identity
             if identity is not None
@@ -523,6 +539,7 @@ class Engine:
                 self.note_health(verdict)
                 error = error_for(verdict, session_ever_valid=self._state.session_ever_valid)
                 if error is not None:
+                    self.note_stop(error)
                     raise error
             except RateLimitedError as exc:
                 # Ограничение частоты - про источник целиком, а не про один
@@ -846,6 +863,59 @@ class Engine:
             "приостановлена" if target in WRITES_PAUSED_IN else "разрешена",
         )
 
+    def note_stop(self, error: FunoraError) -> None:
+        """Останавливает клиента, если политика ошибки объявила полную остановку.
+
+        Признак fail_closed стоит у отказа в доступе и у страницы проверки.
+        Обе - ответ площадки на поведение клиента, а не сбой связи, и повторять
+        их бессмысленно: короткое отступление тут запрещено прямо.
+
+        Args:
+            error (FunoraError): Ошибка, полученная от классификатора.
+
+        Returns:
+            None
+        """
+        policy = RETRY_POLICIES.get(getattr(error, "stable_id", ""))
+        if policy is None or not policy.fail_closed:
+            return
+        if self._stopped is not None:
+            return
+
+        self._stopped = error
+        _log.error(
+            "клиент остановлен: %s. Возобновление - только явным вызовом resume(): "
+            "истекающая остановка означала бы возврат на площадку, которая "
+            "отказала в доступе, без чьего-либо ведома",
+            type(error).__name__,
+        )
+
+    def resume(self) -> None:
+        """Снимает полную остановку.
+
+        Решение вернуться принимает человек: он один знает, разобрался ли с
+        причиной. Сама по себе остановка не истекает и по времени не снимается.
+
+        Returns:
+            None
+        """
+        if self._stopped is None:
+            return
+        _log.warning(
+            "остановка снята вручную: клиент снова пойдёт на площадку после %s",
+            type(self._stopped).__name__,
+        )
+        self._stopped = None
+
+    @property
+    def stopped(self) -> FunoraError | None:
+        """Возвращает ошибку, остановившую клиента.
+
+        Returns:
+            FunoraError | None: Ошибка либо None, если клиент работает.
+        """
+        return self._stopped
+
     def wait_out_cooldown(self) -> Generator[Request, Reply, None]:
         """Выжидает остывание идентичности, если оно идёт.
 
@@ -909,6 +979,11 @@ class Engine:
         # Budget.scale опускает потолок ведра, а скорость пополнения не трогает.
         # Значит без паузы клиент возвращался к прежнему темпу через несколько
         # секунд - ровно тогда, когда площадка сказала «слишком быстро».
+        if self._stopped is not None:
+            # Та же ошибка, что остановила клиента, а не новая и не общая:
+            # вызывающий обязан видеть причину, а не «клиент остановлен».
+            raise self._stopped
+
         yield from self.wait_out_cooldown()
 
         reservation = self._budget.require(

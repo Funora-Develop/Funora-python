@@ -28,6 +28,7 @@ from funora._transport import Observation, TransportSettings
 from funora.budget import MAX_WAIT_MS
 from funora.capabilities import Capability, CapabilityState
 from funora.errors import (
+    AccessBlockedError,
     BudgetExhaustedError,
     ConfigurationError,
     InvalidCredentialsError,
@@ -682,3 +683,65 @@ def test_the_header_reaches_the_identity(no_sleep: list[float]) -> None:
         f"{identity.cooldown_until - started:.0f} с. Значит отступил один "
         "запрос, а не аккаунт"
     )
+
+
+def test_blocked_stops_the_client_until_a_human_says_otherwise(
+    no_sleep: list[float],
+) -> None:
+    """Проверяет полную остановку по отказу в доступе.
+
+    Признак fail_closed стоял у двух политик со словами «опрос останавливается
+    полностью», и останавливать было нечему: реализация отказывала одним
+    запросом и продолжала работать. Следующий шаг цикла шёл на площадку заново.
+
+    Цена ошибки несимметрична: лишняя остановка стоит задержки, лишний стук
+    после отказа в доступе стоит аккаунта.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    blocked = _observation("", status=403)
+    good = _observation(_page("orders-trade.logged.ru"))
+    fetcher = _FakeFetcher([blocked, good, good])
+
+    with Client(transport=fetcher) as client:  # type: ignore[arg-type]
+        with pytest.raises(AccessBlockedError):
+            client.orders.list()
+
+        assert client.stopped is not None, "клиент не остановлен после отказа в доступе"
+        calls_after_block = fetcher.calls
+
+        # Второй вызов обязан отказать НЕ СХОДИВ.
+        with pytest.raises(AccessBlockedError):
+            client.orders.list()
+        assert fetcher.calls == calls_after_block, (
+            "клиент пошёл на площадку, которая только что отказала в доступе"
+        )
+
+        client.resume()
+        assert client.stopped is None, "остановка не снялась вручную"
+        client.orders.list()
+        assert fetcher.calls > calls_after_block, "после снятия клиент не пошёл"
+
+
+def test_an_ordinary_failure_does_not_stop_the_client(no_sleep: list[float]) -> None:
+    """Проверяет обратную половину: сбой связи клиента не останавливает.
+
+    Останавливающий на всём подряд неотличим от неработающего: сетевой отказ
+    одного запроса не повод прекращать работу до вмешательства человека.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    good = _observation(_page("orders-trade.logged.ru"))
+    limited = _observation("", status=429, retry_after_ms=1000)
+
+    with Client(transport=_FakeFetcher([limited, good])) as client:  # type: ignore[arg-type]
+        client.orders.list()
+        assert client.stopped is None, "ограничение частоты остановило клиента насовсем"
