@@ -67,6 +67,7 @@ from selectolax.parser import HTMLParser, Node
 
 from ._host import same_host
 from .skeleton_format import ACCEPTED_SKELETON_FORMATS
+from .skeleton_format import NUMBERED_SKELETON_FORMATS as GENERATED_NUMBERED_FORMATS
 from .skeleton_format import SKELETON_FORMAT as GENERATED_SKELETON_FORMAT
 
 __all__ = [
@@ -76,6 +77,7 @@ __all__ = [
     "SkeletonError",
     "SKELETON_FORMAT",
     "SUPPORTED_SKELETON_FORMATS",
+    "NUMBERED_SKELETON_FORMATS",
     "DEFAULT_OWN_HOST",
 ]
 
@@ -93,6 +95,14 @@ DEFAULT_OWN_HOST: Final[str] = "funpay.com"
 #: Величина берётся из порождённого файла, а не пишется здесь: формат снимков -
 #: общая проверочная база, и вторая реализация обязана строить такой же.
 SKELETON_FORMAT: Final[str] = GENERATED_SKELETON_FORMAT
+
+#: Версии, в которых идентификаторы различимы между собой.
+#:
+#: Нужны проверкам: снимок, снятый до нумерации, различимость восстановить не
+#: может, и требовать её от него нечестно. Перечень объявлен спецификацией, а не
+#: выведен из порядка версий - вывод по порядку сломался бы на первой же версии,
+#: поднятой по другой причине.
+NUMBERED_SKELETON_FORMATS: Final[frozenset[str]] = GENERATED_NUMBERED_FORMATS
 
 #: Форматы, которые проект умеет читать.
 #:
@@ -165,6 +175,17 @@ _SEG_TEXT: Final[str] = "{t}"
 _RE_LATIN = re.compile(r"[A-Za-z]")
 _RE_DIGIT = re.compile(r"[0-9]")
 
+#: Признак того, что сегмент пути - идентификатор, а не слово маршрута.
+#:
+#: Цифра либо ЗАГЛАВНАЯ буква. Второе заведено версией v6: идентификаторы
+#: площадки - восемь заглавных латинских букв без единой цифры, и первый же
+#: снимок страницы отдельного заказа принёс /orders/SBVZKXAF/ дословно.
+#:
+#: Граница проведена по регистру потому, что слова маршрута пишутся строчными по
+#: соглашению об адресах. Ошибаться правило будет в сторону лишней маскировки, и
+#: это верная сторона.
+_RE_OPAQUE = re.compile(r"[0-9A-Z]")
+
 
 class SkeletonError(RuntimeError):
     """Скелет не удалось построить или он не прошёл самопроверку."""
@@ -224,8 +245,9 @@ def mask_path(
     Правило разное для своего хоста и для чужого, и разница не в осторожности.
 
     На своём хосте форма пути сохраняется: по ней узнаётся назначение ссылки,
-    а сегменты состоят из служебных слов площадки. Идентификаторы там числовые
-    и заменяются подписью.
+    а сегменты состоят из служебных слов площадки. Идентификатор заменяется
+    подписью, и признак его - цифра либо заглавная буква: идентификаторы
+    площадки бывают и вовсе без цифр, восемью заглавными латинскими буквами.
 
     На чужом хосте маскируется весь путь. Ссылки на чужие адреса пишут люди в
     переписке, и в них живёт то, ради чего их и пишут: ``t.me/ivanpetrov``,
@@ -292,7 +314,7 @@ def mask_path(
         if foreign:
             out.append(_SEG_TEXT)
             continue
-        if _RE_DIGIT.search(part):
+        if _RE_OPAQUE.search(part):
             out.append(_numbered(part, ordinals))
         elif not part.isascii():
             out.append(_SEG_TEXT)
@@ -450,6 +472,12 @@ def _self_check(skeleton: str) -> None:
     """
     for line in skeleton.splitlines():
         body = line.strip()
+        if not body:
+            # Пустая строка появляется у сохранённого снимка в конце файла.
+            # Без этого условия готовую фикстуру нельзя перепроверить тем же
+            # кодом, которым она построена, - а перепроверять её придётся при
+            # каждой смене формата.
+            continue
         if _SIGNATURE_RE.match(body):
             continue
         if not body.startswith("<"):

@@ -76,9 +76,12 @@
     } catch {
       return { origin: '?', path: signature(raw), query: [] }
     }
+    // Цифра либо заглавная буква. Идентификаторы площадки бывают вовсе без
+    // цифр - восемь заглавных латинских букв, - и правило по одним цифрам
+    // пропускало их дословно.
     const path = url.pathname
       .split('/')
-      .map((part) => (/[0-9]/.test(part) ? '{n}' : part))
+      .map((part) => (/[0-9A-Z]/.test(part) ? '{n}' : part))
       .join('/')
     return {
       origin: url.origin,
@@ -99,14 +102,14 @@
     if (typeof FormData !== 'undefined' && body instanceof FormData) {
       const fields = {}
       for (const [key, value] of body.entries()) {
-        fields[key] = typeof value === 'string' ? signature(value) : 'file'
+        fields[key] = typeof value === 'string' ? shapeOfNested(value, 0) : 'file'
       }
       return { kind: 'form', fields }
     }
 
     if (typeof URLSearchParams !== 'undefined' && body instanceof URLSearchParams) {
       const fields = {}
-      for (const [key, value] of body.entries()) fields[key] = signature(value)
+      for (const [key, value] of body.entries()) fields[key] = shapeOfNested(value, 0)
       return { kind: 'form', fields }
     }
 
@@ -122,7 +125,7 @@
       if (text.includes('=')) {
         const fields = {}
         for (const [key, value] of new URLSearchParams(text).entries()) {
-          fields[key] = signature(value)
+          fields[key] = shapeOfNested(value, 0)
         }
         return { kind: 'form', fields }
       }
@@ -152,9 +155,35 @@
       for (const key of Object.keys(value).sort()) out[key] = shapeOfValue(value[key], level + 1)
       return out
     }
-    if (typeof value === 'string') return signature(value)
+    if (typeof value === 'string') return shapeOfNested(value, level)
     if (typeof value === 'number') return Number.isInteger(value) ? 'int' : 'float'
     return typeof value
+  }
+
+  /**
+   * Разбирает строку вглубь, если внутри неё лежит JSON.
+   *
+   * Без этого главное осталось бы неизвестным. Первое настоящее наблюдение
+   * показало, что отправка сообщения идёт полем формы, внутри которого JSON:
+   * снаружи видно только T125:acdps, и что там за поля - неизвестно.
+   *
+   * Значения при этом всё равно не сохраняются: вложенное проходит те же
+   * правила, что и внешнее.
+   *
+   * @param {string} text Значение поля.
+   * @param {number} level Текущая глубина.
+   * @returns {*} Форма вложенного JSON либо подпись строки.
+   */
+  function shapeOfNested(text, level) {
+    const trimmed = text.trim()
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        return { nested: shapeOfValue(JSON.parse(trimmed), level + 1) }
+      } catch {
+        /* не JSON - остаётся подписью */
+      }
+    }
+    return signature(text)
   }
 
   /**
@@ -242,9 +271,16 @@
 
   const nativeOpen = XMLHttpRequest.prototype.open
   const nativeSend = XMLHttpRequest.prototype.send
+  const nativeHeader = XMLHttpRequest.prototype.setRequestHeader
   XMLHttpRequest.prototype.open = function (method, url) {
-    this.__funora = { method, url }
+    this.__funora = { method, url, headers: {} }
     return nativeOpen.apply(this, arguments)
+  }
+  // Заголовки запроса прежде объявлялись пустыми: у XHR их не спросить после
+  // отправки. Собираются они при выставлении - ИМЕНАМИ, значение не берётся.
+  XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
+    if (this.__funora) this.__funora.headers[String(name)] = ''
+    return nativeHeader.apply(this, arguments)
   }
   XMLHttpRequest.prototype.send = function (body) {
     const mine = this.__funora || {}
@@ -253,7 +289,7 @@
         record(
           mine.method,
           mine.url,
-          null,
+          mine.headers,
           body,
           this.status,
           (this.getAllResponseHeaders() || '')
@@ -320,14 +356,33 @@
      */
     currency() {
       const found = {}
-      const money = /(?:^|[\s ])([\d  .,]{1,20})\s*([^\s\d\w.,]{1,3})(?:$|[\s ])/gu
-      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+      // Знак валюты по Unicode либо трёхбуквенный код рядом с числом.
+      // Прежнее выражение брало любой не-словесный знак и притаскивало из
+      // скриптов фигурные скобки, а из переписки - обрывки слов. Обрывок в
+      // один-два знака ничего не раскрывает, но и делать ему в записи нечего.
+      const money = /[\d\u00a0 .,]\s*(\p{Sc}|[A-Z]{3}\b)/gu
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+        acceptNode(node) {
+          const holder = node.parentElement
+          if (!holder) return NodeFilter.FILTER_REJECT
+          const tag = holder.tagName.toLowerCase()
+          if (tag === 'script' || tag === 'style' || tag === 'noscript') {
+            return NodeFilter.FILTER_REJECT
+          }
+          // Переписка не смотрится вовсе: знак валюты там если и есть, то в
+          // чужом тексте, а разметку цены он не описывает.
+          if (holder.closest('.chat-msg-text, .chat-message, .message')) {
+            return NodeFilter.FILTER_REJECT
+          }
+          return NodeFilter.FILTER_ACCEPT
+        },
+      })
       let node = walker.nextNode()
       while (node) {
         const text = node.nodeValue || ''
         let match = money.exec(text)
         while (match) {
-          const symbol = match[2]
+          const symbol = match[1]
           if (!found[symbol]) found[symbol] = { count: 0, near: [] }
           found[symbol].count += 1
           const holder = node.parentElement
@@ -345,7 +400,8 @@
         }
         node = walker.nextNode()
       }
-      return send('currency', location.pathname.replace(/[^a-z]/gi, '-'), {
+      const named = maskUrl(location.href).path.replace(/[^a-z]+/gi, '-').replace(/^-|-$/g, '')
+      return send('currency', named || 'root', {
         page: maskUrl(location.href),
         lang: document.documentElement.lang || '',
         symbols: found,

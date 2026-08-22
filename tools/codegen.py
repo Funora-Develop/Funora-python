@@ -1874,6 +1874,7 @@ def render_skeleton(spec: Path) -> str:
 
     current = doc.get("format")
     accepted = list(doc.get("accepted_formats") or [])
+    numbered = list(doc.get("numbered_formats") or [])
     classes = dict((doc.get("text_signature") or {}).get("character_classes") or {})
 
     if not current:
@@ -1889,6 +1890,19 @@ def render_skeleton(spec: Path) -> str:
             "spec/conformance/skeleton-format.yaml: классы знаков не объявлены. "
             "Подпись текста складывается из них, и две реализации с разными "
             "наборами дадут разные подписи одному тексту"
+        )
+    unknown = [name for name in numbered if name not in accepted]
+    if unknown:
+        raise SystemExit(
+            f"spec/conformance/skeleton-format.yaml: нумерующими объявлены {unknown}, "
+            "которых нет среди принимаемых. Проверка различимости искала бы снимки "
+            "версии, которую читать нельзя, и не находила ни одного"
+        )
+    if current not in numbered:
+        raise SystemExit(
+            f"spec/conformance/skeleton-format.yaml: текущий формат {current!r} не "
+            "объявлен нумерующим. Нумерация заведена в v4 и с тех пор не отменялась; "
+            "если она вправду отменена, это надо сказать здесь словами"
         )
 
     extra = (
@@ -1911,7 +1925,12 @@ def render_skeleton(spec: Path) -> str:
     ]
 
     out.append("__all__ = [\n")
-    for name in ("SKELETON_FORMAT", "ACCEPTED_SKELETON_FORMATS", "CHARACTER_CLASSES"):
+    for name in (
+        "SKELETON_FORMAT",
+        "ACCEPTED_SKELETON_FORMATS",
+        "NUMBERED_SKELETON_FORMATS",
+        "CHARACTER_CLASSES",
+    ):
         out.append(f'    "{name}",\n')
     out.append("]\n")
 
@@ -1926,6 +1945,19 @@ def render_skeleton(spec: Path) -> str:
     out.append("ACCEPTED_SKELETON_FORMATS: Final[frozenset[str]] = frozenset(\n")
     out.append("    {\n")
     for name in accepted:
+        out.append(f'        "{name}",\n')
+    out.append("    }\n")
+    out.append(")\n")
+
+    out.append("\n#: Версии, в которых идентификаторы различимы между собой.\n")
+    out.append("#:\n")
+    out.append("#: Пока они схлопывались в одну подпись, всякая проверка курсора,\n")
+    out.append("#: гашения и порождения событий проходила впустую и выглядела при\n")
+    out.append("#: этом пройденной. Требовать различимости от снимка версии v3\n")
+    out.append("#: нечестно - восстановить её он не может, - а от прочих обязательно.\n")
+    out.append("NUMBERED_SKELETON_FORMATS: Final[frozenset[str]] = frozenset(\n")
+    out.append("    {\n")
+    for name in numbered:
         out.append(f'        "{name}",\n')
     out.append("    }\n")
     out.append(")\n")

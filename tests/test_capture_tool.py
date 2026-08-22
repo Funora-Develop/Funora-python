@@ -255,6 +255,36 @@ def test_the_record_never_carries_a_value() -> None:
     )
 
 
+def test_a_json_string_inside_a_field_is_opened() -> None:
+    """Требует разбирать вглубь поле, внутри которого лежит JSON.
+
+    Без этого главное осталось бы неизвестным. Первое настоящее наблюдение
+    показало, что отправка сообщения идёт полем формы, внутри которого JSON:
+    снаружи видно только подпись, и что там за поля - неизвестно. Именно эти
+    имена и нужны, чтобы завести операцию отправки.
+
+    Значения при этом не сохраняются: вложенное проходит те же правила.
+
+    Returns:
+        None
+    """
+    body = (
+        "new URLSearchParams({"
+        "objects: JSON.stringify([{type:'chat_node', id:12345, tag:'a1b2c3d4'}]),"
+        "request: JSON.stringify({action:'chat_message', "
+        "data:{node:'users-1-2', content:'Привет, Иван'}})"
+        "})"
+    )
+    shape = _in_node(f"shapeOf({body})")
+    text = json.dumps(shape, ensure_ascii=False)
+
+    assert "action" in text and "content" in text, (
+        f"вложенный JSON не разобран, имена полей потеряны: {text}"
+    )
+    for secret in ("Привет", "Иван", "a1b2c3d4", "users-1-2", "12345", "chat_message"):
+        assert secret not in text, f"«{secret}» уцелел в записи: {text}"
+
+
 def test_the_dangerous_headers_are_dropped_by_name() -> None:
     """Проверяет, что куки и авторизация не попадают даже именем.
 

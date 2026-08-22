@@ -20,7 +20,7 @@ from selectolax.parser import HTMLParser
 
 from funora._classify import ResponseClass, classify
 from funora._skeleton import (
-    SKELETON_FORMAT,
+    NUMBERED_SKELETON_FORMATS,
     SUPPORTED_SKELETON_FORMATS,
     SkeletonError,
     _self_check,
@@ -277,8 +277,14 @@ def test_rows_are_distinguishable_in_current_format() -> None:
     проходила впустую - и выглядела при этом пройденной. Дважды на это
     наступали.
 
-    Проверка идёт по снимкам текущего формата: снятые прежними версиями
-    различимость восстановить не могут, и требовать её от них нечестно.
+    Проверка идёт по снимкам НУМЕРУЮЩИХ версий, а не одной текущей. Снятые до
+    нумерации различимость восстановить не могут, и требовать её от них
+    нечестно; снятые после - обязаны, сколько бы версий с тех пор ни прошло.
+
+    Прежде здесь стояло равенство текущему формату, и первый же подъём версии
+    по другой причине оставил проверку без единого снимка. Она честно упала на
+    «проверять нечего» - но это и была вся её защита: сравнение с одной версией
+    отменяет проверку при каждом подъёме.
 
     Returns:
         None
@@ -286,7 +292,7 @@ def test_rows_are_distinguishable_in_current_format() -> None:
     checked = 0
     for name in sorted(EXPECTED):
         data = json.loads((PAGES / f"{name}.provenance.json").read_text(encoding="utf-8"))
-        if data["format"] != SKELETON_FORMAT:
+        if data["format"] not in NUMBERED_SKELETON_FORMATS:
             continue
 
         tree = HTMLParser(_read(name))
@@ -301,7 +307,7 @@ def test_rows_are_distinguishable_in_current_format() -> None:
             )
             checked += 1
 
-    assert checked, "ни одного снимка текущего формата со строками - проверять нечего"
+    assert checked, "ни одного снимка нумерующей версии со строками - проверять нечего"
 
 
 #: Пары «что подсунули - что должно случиться».

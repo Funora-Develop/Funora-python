@@ -21,12 +21,13 @@ from typing import Final
 __all__ = [
     "SKELETON_FORMAT",
     "ACCEPTED_SKELETON_FORMATS",
+    "NUMBERED_SKELETON_FORMATS",
     "CHARACTER_CLASSES",
 ]
 
 
 #: Версия формата, которой снимаются новые скелеты.
-SKELETON_FORMAT: Final[str] = "structural-skeleton-v5"
+SKELETON_FORMAT: Final[str] = "structural-skeleton-v6"
 
 #: Версии, которые разрешено читать.
 #:
@@ -38,6 +39,21 @@ ACCEPTED_SKELETON_FORMATS: Final[frozenset[str]] = frozenset(
         "structural-skeleton-v3",
         "structural-skeleton-v4",
         "structural-skeleton-v5",
+        "structural-skeleton-v6",
+    }
+)
+
+#: Версии, в которых идентификаторы различимы между собой.
+#:
+#: Пока они схлопывались в одну подпись, всякая проверка курсора,
+#: гашения и порождения событий проходила впустую и выглядела при
+#: этом пройденной. Требовать различимости от снимка версии v3
+#: нечестно - восстановить её он не может, - а от прочих обязательно.
+NUMBERED_SKELETON_FORMATS: Final[frozenset[str]] = frozenset(
+    {
+        "structural-skeleton-v4",
+        "structural-skeleton-v5",
+        "structural-skeleton-v6",
     }
 )
 
