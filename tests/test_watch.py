@@ -1838,3 +1838,156 @@ def test_attempt_survives_a_restart(no_sleep: list[float], tmp_path: Path) -> No
     assert second[0] > max(first), (
         f"после перезапуска номер попытки {second[0]} не продолжил ряд {first} - счётчик обнулился"
     )
+
+
+def test_failure_on_the_first_batch_does_not_silence_the_watch(
+    no_sleep: list[float],
+) -> None:
+    """Проверяет, что отказ на приветствии не убивает наблюдение навсегда.
+
+    Самая дорогая из найденных потерь. Признак «поздоровались» поднимался ДО
+    раздачи, и обработчик, упавший на первой партии, забирал с собой всё: курсор
+    не двигался, потому что партия не принята; приветствие второй раз не
+    собиралось, потому что признак уже поднят; а несдвинутый курсор держит
+    холодный старт, при котором diff_* молчат по правилу первого чтения.
+
+    Цикл продолжал работать, ходить на площадку и тратить бюджет - и не
+    порождал больше ни одного события. Ни исключения, ни строки в журнале.
+
+    Отказ на первой партии - не выдуманный случай: первое, что делает
+    обработчик, это обращается к своей базе, а первое обращение и падает, если
+    база ещё не поднялась.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    orders, chats = _page("orders-trade.logged.ru"), _page("chat.logged.ru")
+    grown = _renamed_first_order(orders)
+
+    seen: list[EventType] = []
+    router = Router()
+
+    @router.on()
+    def handle(event: Event) -> None:
+        """Падает на первом приветствии и принимает всё остальное.
+
+        Args:
+            event (Event): Событие.
+
+        Returns:
+            None
+
+        Raises:
+            ValueError: На первом приветствии.
+        """
+        seen.append(event.type)
+        if event.type is EventType.WATCH_PRIMED and seen.count(EventType.WATCH_PRIMED) == 1:
+            raise ValueError("база ещё не поднялась")
+
+    transport = _Cycle([orders, chats, orders, chats, grown, chats])
+    with Client(transport=transport) as client:  # type: ignore[arg-type]
+        client.watch(router, max_iterations=3)
+
+    assert seen.count(EventType.WATCH_PRIMED) == 2, (
+        "приветствие не пришло второй раз - признак «поздоровались» поднят "
+        "до раздачи, и наблюдение замолчало навсегда"
+    )
+    assert EventType.ORDER_CREATED in seen, (
+        "после принятого приветствия наблюдение так и не заработало: курсор "
+        "остался на холодном старте"
+    )
+
+
+def test_greeting_is_not_repeated_after_it_was_taken(no_sleep: list[float]) -> None:
+    """Проверяет, что принятое приветствие не приходит снова.
+
+    Обратная сторона починки. Признак, поднимаемый по факту доставки, легко
+    сделать не поднимающимся вовсе - и тогда приветствие уходит каждый шаг, а
+    события данных не уходят никогда: тот самый случай, из-за которого признак
+    когда-то и появился.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    orders, chats = _page("orders-trade.logged.ru"), _page("chat.logged.ru")
+
+    seen: list[EventType] = []
+    router = Router()
+    router.on()(lambda event: seen.append(event.type))
+
+    with Client(transport=_Cycle([orders, chats])) as client:  # type: ignore[arg-type]
+        client.watch(router, max_iterations=3)
+
+    assert seen.count(EventType.WATCH_PRIMED) == 1, (
+        f"приветствие пришло {seen.count(EventType.WATCH_PRIMED)} раз за три шага"
+    )
+
+
+def test_incomplete_thread_tells_the_handler(no_sleep: list[float]) -> None:
+    """Проверяет, что неполно прочитанная переписка не проходит молча.
+
+    Объявлялись только списки, и это была половина правила. Для торгового бота
+    переписка - главное место: неполно прочитанная означает, что часть сообщений
+    покупателя не увидели вовсе, а событий по прочитанной части при этом пришло
+    сколько-то, и выглядят они как вся переписка.
+
+    Событие несёт ссылку на диалог: неполон не весь снимок, а одна переписка, и
+    без ссылки получатель не узнает, какая из полусотни прочитана наполовину.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    dialogs = _numeric_dialogs(_page("chat.logged.ru"))
+    thread = _page("chat-thread.logged.ru")
+    # Отметка времени убирается у всех сообщений: повреждение поднимается до
+    # уровня страницы только когда поле пропало везде.
+    broken = thread.replace('class="chat-msg-date"', 'class="chat-msg-gone"')
+    assert broken != thread, "порча не применилась - проверка бессмысленна"
+
+    _, events = _follow_run(
+        [dialogs, _moved(dialogs, "777")],
+        2,
+        [broken, broken],
+    )
+
+    notices = [
+        event
+        for event in events
+        if event.type is EventType.SNAPSHOT_INCOMPLETE and event.payload.get("entity") == "thread"
+    ]
+    assert notices, "неполно прочитанная переписка прошла молча"
+    assert notices[0].payload.get("entity_ref"), (
+        "событие не называет диалог - получатель не узнает, какая переписка прочитана наполовину"
+    )
+
+
+def test_complete_thread_says_nothing(no_sleep: list[float]) -> None:
+    """Проверяет, что целиком прочитанная переписка события о неполноте не даёт.
+
+    Без этой проверки правило вырождается в «сообщать всегда», и получатель
+    привыкает не читать.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    dialogs = _numeric_dialogs(_page("chat.logged.ru"))
+
+    _, events = _follow_run([dialogs, _moved(dialogs, "777")], 2)
+
+    assert not [
+        event
+        for event in events
+        if event.type is EventType.SNAPSHOT_INCOMPLETE and event.payload.get("entity") == "thread"
+    ]

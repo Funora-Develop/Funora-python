@@ -538,6 +538,7 @@ def incomplete(
     reason: str,
     rows_total: int,
     rows_accepted: int,
+    entity_ref: str | None = None,
 ) -> Event:
     """Собирает событие о неполно собранном снимке.
 
@@ -564,6 +565,9 @@ def incomplete(
         reason (str): Машиночитаемая причина неполноты со страницы.
         rows_total (int): Сколько кандидатов в строки нашлось.
         rows_accepted (int): Сколько строк принято.
+        entity_ref (str | None): К какой сущности относится неполнота, если она
+            не про список целиком. У переписки это диалог: без ссылки получатель
+            не узнает, какой из полусотни прочитан наполовину.
 
     Returns:
         Event: Событие snapshot.incomplete.
@@ -572,7 +576,9 @@ def incomplete(
         account_id=account_id,
         event_type=_INCOMPLETE,
         entity_id=account_id,
-        revision=f"{entity}{_PART_SEP}{reason}{_PART_SEP}{rows_accepted}/{rows_total}",
+        revision=_PART_SEP.join(
+            (entity, entity_ref or "", reason, f"{rows_accepted}/{rows_total}")
+        ),
         observed_at=observed_at,
         key_field="watch_id",
         payload={
@@ -582,6 +588,12 @@ def incomplete(
             # там она обязана оставаться самодостаточной.
             "watch_id": account_id,
             "entity": entity,
+            # Ключ появляется только когда неполнота относится к отдельной
+            # сущности. Класть сюда None было бы неверно: None в этом контракте
+            # означает ненаблюдённое, а у списка наблюдать нечего - у него нет
+            # отдельной сущности, к которой неполноту можно отнести. Поле
+            # применимо или неприменимо, и это выражается наличием.
+            **({"entity_ref": entity_ref} if entity_ref is not None else {}),
             # Чтение однослойное: страница запрошена одна и получена одна. Поля
             # сохранены, потому что неполнота бывает и постраничной, а получатель
             # обязан уметь различать роды по одному и тому же событию. Здесь

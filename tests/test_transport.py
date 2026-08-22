@@ -15,11 +15,12 @@ from __future__ import annotations
 import socket
 import threading
 from collections.abc import Iterator
+from dataclasses import replace
 
 import pytest
 
 from funora._secret import Secret
-from funora._transport import Fetcher, TransportSettings
+from funora._transport import Fetcher, Observation, TransportSettings
 from funora.errors import FunoraError, NetworkError, RemoteServerError
 
 #: Тело, которым отвечает подставной сервер.
@@ -310,3 +311,90 @@ def test_network_failure_becomes_a_funora_error(secret: Secret) -> None:
 
     assert isinstance(exc.value, FunoraError)
     assert NetworkError.retryable, "сетевой отказ обязан быть повторяемым"
+
+
+def test_compression_is_asked_off() -> None:
+    """Проверяет, что клиент просит сервер не сжимать ответ.
+
+    Это не про экономию, а про единственную защиту от обрыва тела. Библиотека
+    распаковывает прозрачно, а Content-Length объявляет длину СЖАТОГО тела:
+    проверка целостности сравнивала распакованную длину с объявленной сжатой -
+    двести тысяч байт против двухсот пятидесяти - и проходила всегда, в том
+    числе на оборванном ответе.
+
+    Returns:
+        None
+    """
+    from funora._transport import _client_kwargs
+
+    headers = _client_kwargs(TransportSettings())["headers"]
+    assert headers.get("Accept-Encoding") == "identity", (
+        "сжатие не отключено - проверка целостности снова мертва"
+    )
+
+
+def test_integrity_check_does_not_compare_the_incomparable() -> None:
+    """Проверяет, что сжатый ответ не объявляется целым по длине.
+
+    Сервер вправе не послушаться просьбы. Тогда сравнивать нечего, и честнее
+    сказать об этом, чем сравнить несравнимое и объявить целостность
+    подтверждённой.
+
+    Returns:
+        None
+    """
+    from funora._engine import check_integrity
+
+    # Тело короче объявленного, но пришло сжатым: сравнение бессмысленно.
+    packed = Observation(
+        status=200,
+        final_url="https://funpay.com/orders/trade",
+        html="<html></html>",
+        elapsed_ms=1,
+        redirects=0,
+        content_length=100,
+        declared_length=100000,
+        content_encoding="gzip",
+    )
+    check_integrity(packed)  # не поднимает: сравнивать нечего
+
+    # То же тело без сжатия - обрыв, и он громкий.
+    plain = replace(packed, content_encoding="")
+    with pytest.raises(NetworkError, match="не целиком"):
+        check_integrity(plain)
+
+
+def test_decompressed_body_has_its_own_limit() -> None:
+    """Проверяет, что у распакованного тела свой предел.
+
+    Сжатый ответ в мегабайт разворачивается в сотни. Один предел на двоих ловит
+    только тот случай, который и так виден: тело, большое ещё до распаковки.
+
+    Returns:
+        None
+    """
+    from funora.budget import MAX_DECOMPRESSED_BYTES, MAX_RESPONSE_BYTES
+
+    assert MAX_DECOMPRESSED_BYTES > MAX_RESPONSE_BYTES, (
+        "предел распакованного не больше предела полученного - тогда он ничего не добавляет"
+    )
+    settings = TransportSettings()
+    assert settings.max_decompressed_bytes == MAX_DECOMPRESSED_BYTES
+    assert settings.max_response_bytes == MAX_RESPONSE_BYTES
+
+
+def test_transport_limits_come_from_the_spec() -> None:
+    """Проверяет, что пределы транспорта не литералы.
+
+    Прежде они были числами «по мотивам» спецификации, и её правка меняла
+    порождённый файл, не меняя поведения: предел переходов, размера ответа и
+    числа соединений оставался прежним. Молча.
+
+    Returns:
+        None
+    """
+    from funora.budget import MAX_CONNECTIONS_PER_HOST, MAX_REDIRECTS
+
+    settings = TransportSettings()
+    assert settings.max_redirects == MAX_REDIRECTS
+    assert settings.max_connections == MAX_CONNECTIONS_PER_HOST

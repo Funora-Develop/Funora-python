@@ -156,6 +156,12 @@ def check_integrity(observation: Observation) -> None:
     получает половину заказов и ноль повреждений. Это правдоподобный неверный
     ответ, о неверности которого узнать неоткуда.
 
+    Проверка работает только на несжатом теле, и клиент поэтому просит сервер
+    не сжимать. Библиотека распаковывает прозрачно, а Content-Length объявляет
+    длину сжатого тела: сравнение распакованной длины с объявленной сжатой
+    проходило всегда - двести тысяч байт против двухсот пятидесяти, - в том
+    числе на оборванном ответе.
+
     Args:
         observation (Observation): Результат обращения.
 
@@ -166,6 +172,17 @@ def check_integrity(observation: Observation) -> None:
         NetworkError: Если полученная длина меньше объявленной.
     """
     declared = observation.declared_length
+    if observation.content_encoding not in ("", "identity"):
+        # Сравнивать нечего: объявленная длина относится к сжатому телу, а
+        # полученная - к распакованному. Клиент просит не сжимать; если сервер
+        # просьбу не выполнил, честнее сказать об этом, чем сравнить несравнимое
+        # и объявить целостность подтверждённой.
+        _log.warning(
+            "тело пришло сжатым (%s) вопреки просьбе: целостность не проверена, "
+            "обрыв на такой странице выглядел бы как изменение разметки",
+            observation.content_encoding,
+        )
+        return
     if declared is None or observation.content_length >= declared:
         return
     raise NetworkError(
@@ -465,6 +482,27 @@ class Engine:
                 continue
 
             followed.append(node_id)
+            if thread.completeness is not Completeness.COMPLETE:
+                # Неполно прочитанная переписка объявляется так же, как неполно
+                # прочитанный список. Прежде объявлялись только списки, и это
+                # была половина правила: для торгового бота переписка - главное
+                # место, а неполно прочитанная означает, что часть сообщений
+                # покупателя не увидели вовсе.
+                #
+                # Событие несёт ссылку на диалог: неполон не весь снимок, а одна
+                # переписка, и без ссылки получатель не узнает, какая из
+                # полусотни прочитана наполовину.
+                events.append(
+                    incomplete(
+                        account_id,
+                        thread.observed_at,
+                        entity="thread",
+                        entity_ref=node_id,
+                        reason=thread.reason,
+                        rows_total=thread.rows_total,
+                        rows_accepted=thread.rows_accepted,
+                    )
+                )
             events.extend(
                 diff_thread(
                     known.get(node_id),
@@ -706,6 +744,7 @@ class Engine:
                     account_id,
                     page.observed_at,
                     entity=name,
+                    entity_ref=None,
                     reason=page.reason,
                     rows_total=page.rows_total,
                     rows_accepted=page.rows_accepted,
@@ -739,6 +778,7 @@ class Engine:
             fresh = (*head, *dedup.filter(messages, now))
 
             batch = fresh
+            greeting: Event | None = None
             if not greeted:
                 # Холодный старт молчит о данных и говорит один раз о себе:
                 # иначе первый запуск дал бы лавину «изменений» по всему, что
@@ -752,11 +792,15 @@ class Engine:
                 # выбрасывались, а вместо них каждый шаг уходило одно и то же
                 # приветствие. Наблюдение за перепиской замолкало целиком из-за
                 # состояния чужой страницы - молча.
-                greeted = True
-                batch = (
-                    primed(account_id, orders.observed_at, ("orders", "chats")),
-                    *fresh,
-                )
+                # Признак поднимается ПОСЛЕ раздачи, а не здесь. Поднятый
+                # заранее, он терял приветствие навсегда: обработчик падал на
+                # первой партии, курсор не двигался, а приветствие второй раз не
+                # собиралось. И это не единственная потеря - несдвинутый курсор
+                # держит холодный старт, при котором diff_* молчат по правилу
+                # первого чтения. Наблюдение замолкало целиком и навсегда, при
+                # живом цикле и без единой строки в журнале.
+                greeting = primed(account_id, orders.observed_at, ("orders", "chats"))
+                batch = (greeting, *fresh)
 
             # Номер попытки проставляется здесь, а не в строителе событий:
             # строитель не знает, доставлялось ли это событие раньше, - знает
@@ -778,6 +822,11 @@ class Engine:
             result = reply
 
             dedup.commit(result.delivered, now)
+            if greeting is not None and greeting.id in {event.id for event in result.delivered}:
+                # Поздоровались только тогда, когда приветствие дошло. Иначе
+                # второго раза не будет: приветствие собирается один раз за
+                # признак, а не за партию.
+                greeted = True
             # Доставленное выбывает: гашение повторов больше его не пропустит,
             # и держать номер попытки не для чего.
             for event in result.delivered:

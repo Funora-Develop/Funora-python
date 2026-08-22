@@ -25,6 +25,12 @@ __all__ = [
     "MAX_WAIT_MS",
     "COUNTS_RETRIES",
     "COUNTS_REDIRECTS",
+    "MAX_QUEUE_DEPTH_PER_KEY",
+    "MAX_CONCURRENT_HANDLERS",
+    "HANDLER_TIMEOUT_MS",
+    "MAX_CONNECTIONS_PER_HOST",
+    "MAX_RESPONSE_BYTES",
+    "MAX_DECOMPRESSED_BYTES",
     "MAX_REDIRECTS",
     "Scheduling",
     "SCHEDULING",
@@ -83,6 +89,26 @@ COUNTS_RETRIES: Final[bool] = True
 COUNTS_REDIRECTS: Final[bool] = True
 
 #: Предел числа переходов на один запрос.
+
+#: Сколько событий помещается в очередь одного ключа упорядочивания, штук.
+MAX_QUEUE_DEPTH_PER_KEY: Final[int] = 128
+
+#: Сколько обработчиков выполняется одновременно, штук.
+MAX_CONCURRENT_HANDLERS: Final[int] = 8
+
+#: Сколько ждать обработчик, прежде чем счесть его зависшим, миллисекунды.
+HANDLER_TIMEOUT_MS: Final[int] = 30000
+
+#: Сколько соединений с одним хостом держать одновременно, штук.
+MAX_CONNECTIONS_PER_HOST: Final[int] = 4
+
+#: Предел размера полученного тела, байты.
+MAX_RESPONSE_BYTES: Final[int] = 8388608
+
+#: Предел размера тела после распаковки, байты.
+MAX_DECOMPRESSED_BYTES: Final[int] = 33554432
+
+#: Предел числа переходов при ручном следовании, штук.
 MAX_REDIRECTS: Final[int] = 5
 
 
