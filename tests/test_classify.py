@@ -387,3 +387,103 @@ def test_unknown_page_still_uses_text_signatures() -> None:
     ):
         html = f"<html><body><h1>{phrase}</h1></body></html>"
         assert _c(html=html).cls is expected
+
+
+def test_every_builtin_selector_is_usable() -> None:
+    """Проверяет, что каждый встроенный селектор вправду применяется.
+
+    Непригодный селектор пропускается на живой странице - иначе опечатка
+    превратилась бы в отказ читать площадку. Цена этой мягкости в том, что
+    сломанный селектор выключает свою подпись насовсем: страница входа
+    перестаёт узнаваться, вердикт уходит в «разметка изменилась», и виноватой
+    выглядит площадка.
+
+    Значит, поймать сломанный селектор надо здесь, до выпуска, а не там.
+
+    Returns:
+        None
+    """
+    from selectolax.parser import HTMLParser
+
+    from funora._classify import DEFAULT_CONTENT_MARKERS, DEFAULT_SIGNATURES
+
+    tree = HTMLParser("<html><body><div></div></body></html>")
+
+    selectors = [
+        *DEFAULT_CONTENT_MARKERS,
+        *(selector for sig in DEFAULT_SIGNATURES for selector in sig.css),
+    ]
+    assert len(selectors) > 5, "селекторов не набралось - проверять нечего"
+
+    for selector in selectors:
+        try:
+            tree.css_first(selector)
+        except Exception as exc:  # noqa: BLE001 - имя виноватого важнее типа
+            pytest.fail(f"селектор {selector!r} непригоден: {type(exc).__name__}")
+
+
+def test_unusable_selector_is_logged_not_swallowed(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Проверяет, что непригодный селектор оставляет след в журнале.
+
+    Молча пропущенный селектор выключает свою подпись насовсем, и узнать об этом
+    неоткуда: вердикт выглядит правдоподобно, просто он не тот.
+
+    Args:
+        caplog (pytest.LogCaptureFixture): Перехват журнала.
+
+    Returns:
+        None
+    """
+    broken = Signature(
+        name="сломанная",
+        verdict=ResponseClass.LOGIN_REQUIRED,
+        css=("::=не селектор=::",),
+        provisional=False,
+    )
+
+    with caplog.at_level("WARNING", logger="funora.classify"):
+        verdict = classify(
+            status=200,
+            html="<html><body><div class='content-account'></div></body></html>",
+            final_url=f"https://{HOST}/orders/trade",
+            expected_host=HOST,
+            signatures=(broken,),
+            identity_css=None,
+        )
+
+    assert verdict.cls is not ResponseClass.LOGIN_REQUIRED
+    assert any("сломанная" in record.getMessage() for record in caplog.records), (
+        "непригодный селектор исчез молча - подпись выключена, и узнать неоткуда"
+    )
+
+
+def test_unusable_selector_does_not_break_classification() -> None:
+    """Проверяет, что непригодный селектор не роняет разбор целиком.
+
+    Классификация идёт по живой странице, и уронить её из-за одного выражения
+    значило бы превратить опечатку в отказ читать площадку вовсе. Остальные
+    селекторы подписи обязаны отработать.
+
+    Returns:
+        None
+    """
+    mixed = Signature(
+        name="наполовину_сломанная",
+        verdict=ResponseClass.LOGIN_REQUIRED,
+        css=("::=не селектор=::", ".menu-item-login"),
+        provisional=False,
+    )
+
+    verdict = classify(
+        status=200,
+        html="<html><body><a class='menu-item-login'>вход</a></body></html>",
+        final_url=f"https://{HOST}/orders/trade",
+        expected_host=HOST,
+        signatures=(mixed,),
+        identity_css=None,
+    )
+
+    assert verdict.cls is ResponseClass.LOGIN_REQUIRED
+    assert verdict.detail == {"selector": ".menu-item-login"}

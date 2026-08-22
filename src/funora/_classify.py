@@ -26,6 +26,7 @@ provisional=False. Признаки проверки, блокировки и т
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -135,6 +136,8 @@ DEFAULT_IDENTITY_CSS: Final[str] = ".navbar-toggle-logged"
 #: Признаки проверки, блокировки и технических работ остаются умозрительными:
 #: таких страниц мы ещё не видели, и придумывать их точный вид хуже, чем честно
 #: вернуть unknown.
+_log = logging.getLogger("funora.classify")
+
 DEFAULT_SIGNATURES: Final[tuple[Signature, ...]] = (
     Signature(
         name="guest_navbar",
@@ -237,6 +240,39 @@ def _page_text(html: str) -> str:
     return (body.text(separator=" ") or "").lower()
 
 
+def _matches(tree: HTMLParser, selector: str, where: str) -> bool:
+    """Применяет селектор, не давая непригодному уронить классификацию.
+
+    Непригодный селектор пропускается, а не роняет разбор: классификация идёт по
+    живой странице, и уронить её из-за одного выражения значило бы превратить
+    опечатку в отказ читать площадку вовсе.
+
+    Но и молча пропускать нельзя. Молча пропущенный селектор выключает свою
+    подпись насовсем: страница входа перестаёт узнаваться, вердикт уходит в
+    «разметка изменилась», и виноватой выглядит площадка. Отсюда строка в
+    журнале - на каждое применение по разу, зато с именем виноватого.
+
+    Args:
+        tree (HTMLParser): Разобранный документ.
+        selector (str): Выражение CSS.
+        where (str): Откуда селектор взят - для строки журнала.
+
+    Returns:
+        bool: True, если селектор нашёл узел. False, если не нашёл либо
+        оказался непригодным.
+    """
+    try:
+        return tree.css_first(selector) is not None
+    except Exception as exc:
+        _log.warning(
+            "селектор %r из %s не применился (%s); подпись работает без него",
+            selector,
+            where,
+            type(exc).__name__,
+        )
+        return False
+
+
 def _is_known_page(tree: HTMLParser | None, markers: tuple[str, ...]) -> bool:
     """Сообщает, узнаётся ли страница как отданная приложением.
 
@@ -249,13 +285,7 @@ def _is_known_page(tree: HTMLParser | None, markers: tuple[str, ...]) -> bool:
     """
     if tree is None:
         return False
-    for selector in markers:
-        try:
-            if tree.css_first(selector) is not None:
-                return True
-        except Exception:
-            continue
-    return False
+    return any(_matches(tree, selector, "признаков страниц приложения") for selector in markers)
 
 
 def classify(
@@ -335,17 +365,14 @@ def classify(
     for sig in signatures:
         if tree is not None:
             for selector in sig.css:
-                try:
-                    if tree.css_first(selector) is not None:
-                        return Verdict(
-                            cls=sig.verdict,
-                            reason=f"signature:{sig.name}",
-                            matched=sig.name,
-                            provisional=sig.provisional,
-                            detail={"selector": selector},
-                        )
-                except Exception:
-                    continue
+                if _matches(tree, selector, f"подписи {sig.name}"):
+                    return Verdict(
+                        cls=sig.verdict,
+                        reason=f"signature:{sig.name}",
+                        matched=sig.name,
+                        provisional=sig.provisional,
+                        detail={"selector": selector},
+                    )
         if sig.patterns and not known:
             if text is None:
                 text = _page_text(html)
