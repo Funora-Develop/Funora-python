@@ -652,3 +652,26 @@ def test_blank_attribute_is_empty_not_a_link() -> None:
     entry = _parse(blank).rows(accept_incomplete=True)[0]
     assert entry.counterparty_href.presence is Presence.EMPTY
     assert entry.counterparty_href.presence is not Presence.PRESENT
+
+
+def test_duplicate_order_ids_are_loud() -> None:
+    """Проверяет, что одинаковые идентификаторы заказов заметны.
+
+    Курсор хранит заказы словарём, и два одинаковых схлопываются в один. Событие
+    о втором не породится никогда, а число записей молча разойдётся с числом
+    строк.
+
+    Returns:
+        None
+    """
+    import re as _re
+
+    same = _re.sub(
+        r'href="https://funpay\.com/orders/[^"]*"',
+        'href="https://funpay.com/orders/ОДИН/"',
+        _fixture(),
+    )
+    page = _parse(same)
+
+    assert page.completeness is not Completeness.COMPLETE
+    assert any(d.code == "duplicate_identifiers" for d in page.defects)

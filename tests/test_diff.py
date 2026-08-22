@@ -583,3 +583,112 @@ def _with_ids_orders() -> str:
         str: Разметка списка заказов.
     """
     return _raw()
+
+
+def _read_marker(html: str, mark: str) -> str:
+    """Двигает отметку прочтения первого диалога, не трогая позицию сообщения.
+
+    Так и выглядит прочтение: последнее сообщение осталось прежним, а отметка
+    прочтения аккаунта переехала. Признак непрочитанного выводится расхождением
+    этих двух позиций.
+
+    Args:
+        html (str): Разметка списка диалогов.
+        mark (str): Чем пометить новую отметку прочтения.
+
+    Returns:
+        str: Разметка с изменившимся признаком у первого диалога.
+    """
+    return html.replace('data-user-msg="T10:d#1"', f'data-user-msg="T10:d#{mark}"', 1)
+
+
+def test_reading_a_dialog_produces_an_event() -> None:
+    """Проверяет, что смена признака непрочитанного порождает событие.
+
+    Событие называется «изменилось непрочитанное», а замечало только сдвиг
+    позиции последнего сообщения. Прочтение диалога позицию не двигает - и
+    события не давало вовсе, при том что признак лежал прямо в нагрузке.
+
+    Returns:
+        None
+    """
+    unread = _chats(_read_marker(_raw("chat.logged.ru"), "999"))
+    first = unread.rows()[0]
+    assert first.unread.value is True, "порча не сделала диалог непрочитанным"
+
+    # Прочитали: отметка вернулась к позиции сообщения, само сообщение прежнее.
+    read = _chats(_raw("chat.logged.ru"))
+    events = diff_chats(chats_cursor(unread), read, account_id=ACCOUNT)
+
+    about = [e for e in events if e.entity_id == first.node_id]
+    assert about, "прочтение диалога не дало события"
+    assert about[0].payload["unread"] is False
+
+
+def test_reading_event_is_not_eaten_by_dedup() -> None:
+    """Проверяет, что у события о прочтении свой отпечаток.
+
+    Вторая половина той же починки. Версией сущности была позиция последнего
+    сообщения, а прочтение её не двигает - событие о прочтении получило бы
+    отпечаток уже доставленного и было бы съедено гашением повторов. Снова
+    молча.
+
+    Returns:
+        None
+    """
+    unread = _chats(_read_marker(_raw("chat.logged.ru"), "999"))
+    read = _chats(_raw("chat.logged.ru"))
+    node = unread.rows()[0].node_id
+
+    became_unread = diff_chats(chats_cursor(read), unread, account_id=ACCOUNT)
+    became_read = diff_chats(chats_cursor(unread), read, account_id=ACCOUNT)
+
+    one = next(e.id for e in became_unread if e.entity_id == node)
+    two = next(e.id for e in became_read if e.entity_id == node)
+    assert one != two, "у двух разных состояний диалога совпали отпечатки"
+
+
+def test_learning_to_infer_unread_is_not_a_change() -> None:
+    """Проверяет, что появление вывода не выдаётся за изменение диалога.
+
+    Признак непрочитанного выводится из двух позиций, и одна из них может быть
+    ненаблюдённой. Переход из невыведенного в выведенный говорит, что мы
+    научились выводить, а не что диалог переменился. То же правило, что у
+    состояния заказа.
+
+    Returns:
+        None
+    """
+    whole = _raw("chat.logged.ru")
+    # Отметка прочтения переехала в другой атрибут: вывод сделать не из чего.
+    blind = whole.replace("data-user-msg=", "data-was-user-msg=")
+
+    page_blind = _chats(blind)
+    assert not page_blind.rows(accept_incomplete=True)[0].unread.is_observed
+
+    events = diff_chats(chats_cursor(page_blind), _chats(whole), account_id=ACCOUNT)
+    assert events == (), "появление вывода выдано за изменение диалога"
+
+
+def test_cursor_of_the_previous_format_does_not_flood() -> None:
+    """Проверяет, что курсор прежней редакции не даёт лавину событий.
+
+    Курсор переживает перезапуск, и сохранённый прежней редакцией содержит голые
+    позиции без флага. Прочитанный буквально, он не совпал бы ни с одним новым
+    состоянием - и первое же чтение после обновления выдало бы по событию на
+    каждый из полусотни диалогов.
+
+    Returns:
+        None
+    """
+    page = _chats()
+    legacy = {
+        entry.node_id: entry.last_message_position.value
+        for entry in page.rows()
+        if entry.last_message_position.is_observed
+    }
+    assert legacy, "курсор прежней формы не собрался"
+
+    assert diff_chats(legacy, page, account_id=ACCOUNT) == (), (
+        "курсор прежней редакции дал события на ровном месте"
+    )

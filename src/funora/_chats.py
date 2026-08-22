@@ -318,6 +318,28 @@ def parse_chats_page(html: str, *, observed_at: datetime) -> ChatsPage:
             "Это изменение разметки, а не пустой список"
         )
 
+    # Дубли идентификаторов - повреждение уровня страницы. Курсор наблюдения
+    # хранит их множеством либо словарём, и два одинаковых схлопываются в один:
+    # число записей молча расходится с числом строк, а вызывающий получает
+    # список, в котором позиций меньше, чем было на странице.
+    #
+    # Проверка стала возможна только после того, как формат снимков научился
+    # различать идентификаторы: прежде маска схлопывала их сама, и проверка
+    # срабатывала бы на каждой фикстуре.
+    ids = [entry.node_id for entry in entries]
+    if len(set(ids)) != len(ids):
+        defects.append(
+            Defect(
+                severity=Severity.PAGE,
+                code="duplicate_identifiers",
+                detail=(
+                    f"строк {len(ids)}, различимых идентификаторов {len(set(ids))}: "
+                    "часть записей схлопнется в курсоре"
+                ),
+                field_name="node_id",
+            )
+        )
+
     for name in _PAGE_LEVEL_FIELDS:
         if entries and all(not getattr(entry, name).is_observed for entry in entries):
             defects.append(

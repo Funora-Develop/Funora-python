@@ -470,11 +470,24 @@ async def test_thread_following_works_through_the_async_driver(no_sleep: list[fl
     """
     import re
 
-    dialogs = re.sub(
-        r'data-id="[^"]*"',
-        lambda _m: f'data-id="{1000 + len(_m.string[: _m.start()]) % 7}"',
-        _page("chat.logged.ru"),
-    )
+    # Номера обязаны быть различимы: одинаковые схлопнулись бы в курсоре, и
+    # разбор объявил бы страницу повреждённой - справедливо, но проверка была бы
+    # уже не про то.
+    counter = [1000]
+
+    def numbered(_match: re.Match[str]) -> str:
+        """Выдаёт следующий числовой идентификатор диалога.
+
+        Args:
+            _match (re.Match[str]): Совпадение. Не используется.
+
+        Returns:
+            str: Атрибут с уникальным значением.
+        """
+        counter[0] += 1
+        return f'data-id="{counter[0]}"'
+
+    dialogs = re.sub(r'data-id="[^"]*"', numbered, _page("chat.logged.ru"))
     node_id = re.search(r'data-id="(\d+)"', dialogs).group(1)
     moved = dialogs.replace('data-node-msg="T10:d#1"', 'data-node-msg="T10:d#777"', 1)
     again = dialogs.replace('data-node-msg="T10:d#1"', 'data-node-msg="T10:d#888"', 1)
