@@ -61,6 +61,7 @@ from typing import ClassVar, Final
 #: прочитанным. Ровно такая незаметность и была причиной завести реестр.
 SOURCES: Final[frozenset[str]] = frozenset(
     {
+        "spec/conformance/skeleton-format.yaml",
         "spec/capabilities.yaml",
         "spec/errors/errors.yaml",
         "spec/events/delivery.yaml",
@@ -1574,6 +1575,90 @@ def _selectors(spec: Path) -> tuple[dict[str, str], dict[str, tuple[str, ...]]]:
     return found, {name: tuple(items) for name, items in groups.items()}
 
 
+def render_skeleton(spec: Path) -> str:
+    """Строит модуль с форматом структурного скелета.
+
+    Args:
+        spec (Path): Корень рабочей копии Funora-spec.
+
+    Returns:
+        str: Содержимое skeleton_format.py.
+
+    Raises:
+        SystemExit: Если объявление неполно.
+    """
+    doc = _load(spec, "spec/conformance/skeleton-format.yaml")
+
+    current = doc.get("format")
+    accepted = list(doc.get("accepted_formats") or [])
+    classes = dict((doc.get("text_signature") or {}).get("character_classes") or {})
+
+    if not current:
+        raise SystemExit("spec/conformance/skeleton-format.yaml: версия формата не объявлена")
+    if current not in accepted:
+        raise SystemExit(
+            f"spec/conformance/skeleton-format.yaml: текущий формат {current!r} не "
+            "перечислен среди принимаемых. Снимок, снятый этой же версией, был бы "
+            "отвергнут ею самой"
+        )
+    if not classes:
+        raise SystemExit(
+            "spec/conformance/skeleton-format.yaml: классы знаков не объявлены. "
+            "Подпись текста складывается из них, и две реализации с разными "
+            "наборами дадут разные подписи одному тексту"
+        )
+
+    extra = (
+        "Формат снимков страниц. Снимки - общая проверочная база: по ним\n"
+        "сверяется, что объявленный селектор вправду присутствует на\n"
+        "наблюдённой странице.\n"
+        "\n"
+        "Версия формата и набор классов знаков порождаются, а не пишутся здесь.\n"
+        "Прежде версия была литералом в _skeleton.py, а описание формата жило\n"
+        "только в README фикстур эталонной реализации: вторая реализация не\n"
+        "могла ни построить такой же скелет, ни проверить, что построила.\n"
+    )
+
+    out = [
+        HEADER.format(
+            title="Формат структурного скелета страницы.",
+            source="spec/conformance/skeleton-format.yaml",
+            extra=extra,
+        ).replace("from typing import ClassVar, Final", "from typing import Final")
+    ]
+
+    out.append("__all__ = [\n")
+    for name in ("SKELETON_FORMAT", "ACCEPTED_SKELETON_FORMATS", "CHARACTER_CLASSES"):
+        out.append(f'    "{name}",\n')
+    out.append("]\n")
+
+    out.append("\n\n#: Версия формата, которой снимаются новые скелеты.\n")
+    out.append(f'SKELETON_FORMAT: Final[str] = "{current}"\n')
+
+    out.append("\n#: Версии, которые разрешено читать.\n")
+    out.append("#:\n")
+    out.append("#: Старые версии принимаются, а не отвергаются: снимок стоит\n")
+    out.append("#: живого запроса под сессией, и переснять его бывает нечем -\n")
+    out.append("#: истечение сессии воспроизводится не по желанию.\n")
+    out.append("ACCEPTED_SKELETON_FORMATS: Final[frozenset[str]] = frozenset(\n")
+    out.append("    {\n")
+    for name in accepted:
+        out.append(f'        "{name}",\n')
+    out.append("    }\n")
+    out.append(")\n")
+
+    out.append("\n#: Классы знаков, из которых складывается подпись текста.\n")
+    out.append("#:\n")
+    out.append("#: Две реализации с разными наборами дадут разные подписи одному\n")
+    out.append("#: тексту, и снимок одной перестанет годиться другой.\n")
+    out.append("CHARACTER_CLASSES: Final[dict[str, str]] = {\n")
+    for key in sorted(classes):
+        out.append(f'    "{key}": {classes[key]!r},\n')
+    out.append("}\n")
+
+    return "".join(out)
+
+
 def render_extraction(spec: Path) -> str:
     """Порождает словари извлечения: статусы заказа и присутствие контрагента.
 
@@ -1743,6 +1828,7 @@ TARGETS: Final[dict[str, Callable[[Path], str]]] = {
     "budget.py": render_budget,
     "events.py": render_events,
     "extraction.py": render_extraction,
+    "skeleton_format.py": render_skeleton,
     "operations.py": render_operations,
     "contract.py": render_contract,
 }

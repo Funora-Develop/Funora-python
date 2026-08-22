@@ -66,6 +66,8 @@ from urllib.parse import urlparse
 from selectolax.parser import HTMLParser, Node
 
 from ._host import same_host
+from .skeleton_format import ACCEPTED_SKELETON_FORMATS
+from .skeleton_format import SKELETON_FORMAT as GENERATED_SKELETON_FORMAT
 
 __all__ = [
     "skeletonize",
@@ -88,7 +90,9 @@ DEFAULT_OWN_HOST: Final[str] = "funpay.com"
 #: строку запроса и на значения атрибутов: без них пятьдесят диалогов страницы
 #: оставались неразличимы - идентификатор диалога лежит и там, и там, но не в
 #: пути.
-SKELETON_FORMAT: Final[str] = "structural-skeleton-v5"
+#: Величина берётся из порождённого файла, а не пишется здесь: формат снимков -
+#: общая проверочная база, и вторая реализация обязана строить такой же.
+SKELETON_FORMAT: Final[str] = GENERATED_SKELETON_FORMAT
 
 #: Форматы, которые проект умеет читать.
 #:
@@ -96,13 +100,7 @@ SKELETON_FORMAT: Final[str] = "structural-skeleton-v5"
 #: нумерация восстанавливает различимость только при захвате, а из уже
 #: замаскированного файла исходные значения не вернуть. Файлы прежних версий
 #: остаются пригодными для всего, что не зависит от различимости.
-SUPPORTED_SKELETON_FORMATS: Final[frozenset[str]] = frozenset(
-    {
-        "structural-skeleton-v3",
-        "structural-skeleton-v4",
-        "structural-skeleton-v5",
-    }
-)
+SUPPORTED_SKELETON_FORMATS: Final[frozenset[str]] = ACCEPTED_SKELETON_FORMATS
 
 #: Атрибуты, значение которых обрабатывается как путь.
 #:
