@@ -26,7 +26,7 @@ from funora._diff import Event
 from funora._engine import Engine, Pause
 from funora._poll import Schedule
 from funora._transport import Observation, TransportSettings
-from funora._watch import PRODUCIBLE, Router, dispatch, primed
+from funora._watch import PRODUCIBLE, Router, dispatch, incomplete, primed
 from funora.errors import (
     AccessBlockedError,
     ConfigurationError,
@@ -1510,6 +1510,15 @@ def test_every_declared_kind_is_actually_produced() -> None:
             )
         ),
         primed(account, when, "account:" + account).type,
+        incomplete(
+            account,
+            when,
+            "account:" + account,
+            entity="orders",
+            reason="page_defects",
+            rows_total=8,
+            rows_accepted=8,
+        ).type,
     }
 
     assert produced >= PRODUCIBLE, (
@@ -1520,3 +1529,157 @@ def test_every_declared_kind_is_actually_produced() -> None:
         f"порождается, но не объявлено: {produced - PRODUCIBLE} - "
         "подписка на такой вид будет отвергнута зря"
     )
+
+
+def _orders_missing_a_field() -> str:
+    """Портит снимок заказов так, чтобы разбор объявил неполноту.
+
+    Ячейка состояния убирается во всех строках: убрать её у части недостаточно,
+    повреждение повышается до уровня страницы только когда поле пропало везде.
+
+    Returns:
+        str: Разметка с неполнотой уровня страницы.
+    """
+    html = _page("orders-trade.logged.ru")
+    for carrier in ("text-primary", "text-success"):
+        html = html.replace('<div class="tc-status ' + carrier + '">', '<div class="tc-gone">')
+    return html
+
+
+def test_incomplete_read_tells_the_handler(no_sleep: list[float]) -> None:
+    """Проверяет, что неполное чтение доходит до обработчика.
+
+    Цикл умел обращаться с неполным чтением и молчал о нём. Курсор он не двигал
+    - это верно и защищает будущее: выпавшие строки не будут сочтены
+    исчезнувшими. Настоящее несдвинутый курсор не защищает никак: события по
+    прочитанному порождаются, и обработчик принимает их за полную картину.
+
+    Для торгового бота это значит обработать часть заказов как все.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    seen: list[Event] = []
+    router = Router()
+    router.on()(seen.append)
+
+    transport = _Cycle([_orders_missing_a_field(), _page("chat.logged.ru")])
+    with Client(transport=transport) as client:  # type: ignore[arg-type]
+        client.watch(router, max_iterations=1)
+
+    notices = [event for event in seen if event.type is EventType.SNAPSHOT_INCOMPLETE]
+    assert notices, "неполное чтение прошло молча"
+
+    payload = notices[0].payload
+    assert payload["entity"] == "orders"
+    assert payload["rows_accepted"] <= payload["rows_total"]
+    assert payload["reason_code"], "причина неполноты не названа"
+
+
+def test_complete_read_says_nothing_about_incompleteness(no_sleep: list[float]) -> None:
+    """Проверяет, что полное чтение события о неполноте не даёт.
+
+    Без этой проверки правило вырождается в «сообщать всегда», и получатель
+    привыкает не читать.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    seen: list[Event] = []
+    router = Router()
+    router.on()(seen.append)
+
+    transport = _Cycle([_page("orders-trade.logged.ru"), _page("chat.logged.ru")])
+    with Client(transport=transport) as client:  # type: ignore[arg-type]
+        client.watch(router, max_iterations=1)
+
+    assert not [e for e in seen if e.type is EventType.SNAPSHOT_INCOMPLETE]
+
+
+def test_the_same_incompleteness_does_not_repeat_every_step(no_sleep: list[float]) -> None:
+    """Проверяет, что неизменная неполнота не приходит на каждом шаге.
+
+    Неполнота держится, пока площадка не поправит вёрстку, - то есть шагами и
+    часами. Событие на каждом шаге превратило бы её в шум, а шум перестают
+    читать. Гашение повторов делает это само, потому что отпечаток строится из
+    сущности, причины и числа принятых строк.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    seen: list[Event] = []
+    router = Router()
+    router.on()(seen.append)
+
+    broken = _orders_missing_a_field()
+    transport = _Cycle([broken, _page("chat.logged.ru")])
+    with Client(transport=transport) as client:  # type: ignore[arg-type]
+        client.watch(router, max_iterations=3)
+
+    notices = [e for e in seen if e.type is EventType.SNAPSHOT_INCOMPLETE]
+    assert len(notices) == 1, (
+        f"о той же неполноте сообщено {len(notices)} раз за три шага - это шум"
+    )
+
+
+def test_incompleteness_that_grew_is_reported_again() -> None:
+    """Проверяет, что изменившаяся неполнота доходит заново.
+
+    Переход от «двух строк не хватает» к «не хватает двадцати» - новость, и
+    гасить её вместе с прежней нельзя. Проверяется на самих отпечатках: провести
+    это через цикл значило бы собирать две разные порчи одной страницы, а
+    проверяется здесь правило отпечатка.
+
+    Returns:
+        None
+    """
+    when = datetime(2026, 8, 19, 12, 0, tzinfo=UTC)
+    first = incomplete(
+        "acc",
+        when,
+        "account:acc",
+        entity="orders",
+        reason="page_defects",
+        rows_total=8,
+        rows_accepted=6,
+    )
+    grew = incomplete(
+        "acc",
+        when,
+        "account:acc",
+        entity="orders",
+        reason="page_defects",
+        rows_total=8,
+        rows_accepted=2,
+    )
+    same = incomplete(
+        "acc",
+        when,
+        "account:acc",
+        entity="orders",
+        reason="page_defects",
+        rows_total=8,
+        rows_accepted=6,
+    )
+    other = incomplete(
+        "acc",
+        when,
+        "account:acc",
+        entity="chats",
+        reason="page_defects",
+        rows_total=8,
+        rows_accepted=6,
+    )
+
+    assert first.id == same.id, "та же неполнота обязана гаситься как повтор"
+    assert first.id != grew.id, "выросшая неполнота обязана дойти заново"
+    assert first.id != other.id, "неполнота другого списка - другое событие"
