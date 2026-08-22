@@ -142,6 +142,9 @@ SELECTOR_GROUPS: Final[dict[str, tuple[str, ...]]] = {
         '.g-recaptcha',
         '.h-captcha',
         'script[src*="captcha"]',
+    ),
+    "session.markers.challenge_widget_on_login": (
+        '.cf-turnstile',
         '[data-sitekey]',
     ),
     "session.markers.guest": (

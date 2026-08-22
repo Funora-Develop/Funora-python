@@ -163,6 +163,11 @@ def test_every_generated_selector_is_read() -> None:
         # Признаки вошедшего: разбор довольствуется первым, остальные
         # вспомогательные и объявлены как подтверждающие.
         "session.markers.logged_in",
+        # Запись наблюдения, а не правило для кода: виджет проверки стоит на
+        # ОБЫЧНОЙ странице входа, поэтому подписью проверки быть не может.
+        # Поведение закреплено в tests/test_classify.py - гостевая страница
+        # обязана давать login_required, а не challenge.
+        "session.markers.challenge_widget_on_login",
     }
 
     unexpected = [key for key in silent if key not in known_silent]

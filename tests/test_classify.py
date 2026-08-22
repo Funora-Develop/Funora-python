@@ -8,9 +8,22 @@
 
 from __future__ import annotations
 
-import pytest
+from pathlib import Path
 
-from funora._classify import DEFAULT_CONTENT_MARKERS, ResponseClass, Signature, classify
+import pytest
+from selectolax.parser import HTMLParser
+
+from funora._classify import (
+    DEFAULT_CONTENT_MARKERS,
+    DEFAULT_IDENTITY_CSS,
+    ResponseClass,
+    Signature,
+    classify,
+)
+from funora.extraction import SELECTOR_GROUPS
+
+#: Каталог со снимками страниц.
+FIXTURES = Path(__file__).resolve().parent / "fixtures" / "pages"
 
 HOST = "funpay.com"
 
@@ -803,4 +816,58 @@ def test_pipeline_order_matches_the_spec() -> None:
             received_length=4,
         ).reason
         == "body_truncated"
+    )
+
+
+def test_login_page_with_a_challenge_widget_is_not_a_challenge() -> None:
+    """Проверяет, что виджет проверки на странице входа не даёт вердикт challenge.
+
+    Площадка держит Turnstile прямо в форме входа: в снимке
+    orders-trade.guest.ru стоит ``<div class="cf-turnstile" data-sitekey="...">``.
+    Страница при этом обычная - истёкшая сессия, а не стена проверки.
+
+    Разница в действии. Вердикт challenge останавливает автоматику и ждёт
+    человека у браузера; login_required говорит, что пора обновить ключ. Спутав
+    их, клиент встанет там, где должен был сказать, что делать.
+
+    Прежде от ошибки спасал только порядок подписей: шапка гостя проверялась
+    раньше. Опираться на порядок там, где можно опереться на наблюдение, не
+    следует, и признаки виджета из подписи проверки убраны.
+
+    Проверка идёт с двух сторон. Вердикт - чтобы поведение было закреплено. И
+    прямо по разметке: ни один признак проверки не смеет находиться на обычной
+    странице входа. Второе ловит возврат признака одним шагом, а не двумя, -
+    вердикт при нынешнем порядке подписей остался бы верным и промолчал.
+
+    Returns:
+        None
+    """
+    raw = (FIXTURES / "orders-trade.guest.ru.skeleton.txt").read_text(encoding="utf-8")
+    assert "data-sitekey" in raw, "снимок больше не несёт виджета проверки"
+
+    verdict = classify(
+        status=200,
+        final_url="https://funpay.com/orders/trade",
+        html=raw,
+        expected_host="funpay.com",
+        identity_css=DEFAULT_IDENTITY_CSS,
+    )
+
+    assert verdict.cls is ResponseClass.LOGIN_REQUIRED, (
+        f"обычная страница входа получила вердикт {verdict.cls}. Виджет проверки "
+        "стоит на ней штатно, и принимать его за стену проверки значит "
+        "останавливать автоматику там, где надо обновить ключ"
+    )
+
+    tree = HTMLParser(raw)
+    caught = [
+        selector
+        for selector in SELECTOR_GROUPS["session.markers.challenge"]
+        if tree.css_first(selector) is not None
+    ]
+    assert not caught, (
+        f"признаки проверки {caught} найдены на обычной странице входа. Такой "
+        "признак не различает «площадка требует проверку» и «сессия истекла», "
+        "а вердикты у них разные: первый останавливает автоматику, второй "
+        "говорит человеку обновить ключ"
     )
