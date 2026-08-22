@@ -459,7 +459,9 @@ class Engine:
                 # Не списывать вовсе нельзя - спецификация требует считать
                 # отправленные запросы, и цепочка переходов оказалась бы
                 # бесплатной ровно тогда, когда площадка нас куда-то гоняет.
-                yield from self.settle(observation.requests_sent - 1)
+                yield from self.settle(
+                    observation.requests_sent - 1, _class_of(capability)
+                )
                 retry_after_ms = observation.retry_after_ms
                 # Целостность проверяется ВНУТРИ классификатора, вторым шагом
                 # после кода ответа. Прежде она стояла здесь, то есть первой, и
@@ -844,7 +846,9 @@ class Engine:
                 f"(ведро {again.bucket}). Запрос не отправлен"
             )
 
-    def settle(self, count: int) -> Generator[Request, Reply, None]:
+    def settle(
+        self, count: int, request_class: RequestClass = RequestClass.INTERACTIVE
+    ) -> Generator[Request, Reply, None]:
         """Доплачивает бюджет за запросы, которые уже ушли.
 
         Метод нужен переходам. Их число заранее неизвестно, поэтому бюджет за
@@ -870,7 +874,7 @@ class Engine:
             None
         """
         for _ in range(max(0, count)):
-            reservation = self._budget.reserve(monotonic())
+            reservation = self._budget.reserve(monotonic(), request_class=request_class)
             if reservation.granted:
                 continue
 
@@ -880,7 +884,9 @@ class Engine:
             # клиентом и тот успел раньше. Настаивать дальше нельзя: долг не
             # растёт, а зациклиться на нём хуже, чем недосчитать один токен и
             # сказать об этом вслух.
-            if not self._budget.reserve(monotonic()).granted:
+            if not self._budget.reserve(
+                monotonic(), request_class=request_class
+            ).granted:
                 _log.warning(
                     "бюджет не доплачен за уже отправленный запрос: ведро %s занято",
                     reservation.bucket,

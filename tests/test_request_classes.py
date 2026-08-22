@@ -151,3 +151,71 @@ def test_interactive_is_never_the_one_who_yields() -> None:
 
     assert budget._floor_for(RequestClass.INTERACTIVE, NOW) == 0.0
     assert budget._floor_for(RequestClass.MONITORING, NOW) > 0.0
+
+
+def test_redirect_debt_does_not_make_a_stranger_look_demanding() -> None:
+    """Проверяет, что долг за переходы не поднимает порог чужим классам.
+
+    Запросы, ушедшие вслед за первым - переходы по редиректам и повторы, -
+    относятся к классу той операции, которая их вызвала. Иного разумного ответа
+    нет: класс есть свойство операции, а переход - её продолжение.
+
+    Проверка появилась после настоящего регресса. Долг списывался без класса,
+    то есть по умолчанию как interactive, и тем самым помечал самый защищённый
+    класс претендующим. Цикл обновлений, прошедший через три перехода, на
+    минуту поднимал порог допуска себе же и наблюдению за рынком - будто
+    покупателю кто-то отвечал. Ровно то, от чего написано условие о спросе.
+
+    Returns:
+        None
+    """
+    budget = Budget()
+    assert budget._floor_for(RequestClass.POLL, NOW) == 0.0
+
+    # Три перехода, оплаченные классом той операции, что их вызвала.
+    for _ in range(3):
+        budget.reserve(NOW, 1.0, RequestClass.POLL)
+
+    assert budget._floor_for(RequestClass.POLL, NOW) == 0.0, (
+        "цикл обновлений поднял порог сам себе, заплатив за собственные переходы"
+    )
+    assert budget._floor_for(RequestClass.MONITORING, NOW) > 0.0, (
+        "наблюдение обязано уступать циклу обновлений: тот вправду ходил"
+    )
+    assert budget._floor_for(RequestClass.AUTOMATION, NOW) == 0.0, (
+        "автоматика уступает классу, который не приходил"
+    )
+
+
+def test_settle_charges_the_debt_to_the_calling_class() -> None:
+    """Проверяет, что долг за переходы идёт через ядро верным классом.
+
+    Предыдущая проверка смотрит на бюджет напрямую и потому не видит, каким
+    классом платит САМО ЯДРО. Именно там и был регресс: settle списывал долг
+    без класса.
+
+    Returns:
+        None
+    """
+    from funora._budget import Budget as EngineBudget
+    from funora._engine import Engine
+    from funora._transport import TransportSettings
+
+    budget = EngineBudget()
+    engine = Engine(TransportSettings(), budget)
+
+    # Три ушедших вслед запроса от лица цикла обновлений.
+    steps = engine.settle(3, RequestClass.POLL)
+    reply = None
+    while True:
+        try:
+            steps.send(reply)
+        except StopIteration:
+            break
+        reply = None
+
+    assert RequestClass.POLL in budget._demanded_at, "долг не списан вовсе"
+    assert RequestClass.INTERACTIVE not in budget._demanded_at, (
+        "ядро записало долг за переходы на interactive. На минуту это поднимет "
+        "порог допуска всем прочим классам - будто покупателю кто-то отвечал"
+    )
