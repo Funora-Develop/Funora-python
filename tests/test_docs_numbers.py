@@ -165,7 +165,8 @@ def test_docs_name_only_existing_fixtures() -> None:
     Returns:
         None
     """
-    available = {path.name.split(".skeleton")[0] for path in (ROOT / "tests" / "fixtures" / "pages").glob("*.skeleton.txt")}
+    pages = ROOT / "tests" / "fixtures" / "pages"
+    available = {path.name.split(".skeleton")[0] for path in pages.glob("*.skeleton.txt")}
     pattern = re.compile(r"`([a-z][a-z0-9-]*(?:\.[a-z0-9-]+)*\.(?:logged|guest)\.[a-z]{2})`")
 
     missing: list[str] = []
