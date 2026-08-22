@@ -33,6 +33,7 @@ from .budget import HANDLER_TIMEOUT_MS, MAX_CONCURRENT_HANDLERS
 from .errors import (
     ConfigurationError,
     FunoraError,
+    HandlerCancelledError,
     HandlerError,
     HandlerTimeoutError,
 )
@@ -418,6 +419,31 @@ async def _adispatch_serially(router: Router, events: tuple[Event, ...]) -> Step
             )
             timeout.__cause__ = exc
             reply = timeout
+        except asyncio.CancelledError as exc:
+            # CancelledError - потомок BaseException, а не Exception, поэтому
+            # ветка ниже её не ловила и она пробивала раздачу насквозь: партия
+            # теряла и доставленное, и недоставленное, курсор не сохранялся.
+            #
+            # Но проглотить её целиком нельзя. Отмена, пришедшая ИЗВНЕ, - это
+            # отмена всей задачи, и съев её, мы сделали бы задачу неотменяемой.
+            # Различить два случая позволяет счётчик отмен самой задачи: он
+            # больше нуля ровно тогда, когда отменяют нас, а не когда отменился
+            # обработчик.
+            task = asyncio.current_task()
+            if task is not None and task.cancelling() > 0:
+                raise
+            _log.warning(
+                "обработчик отменился на событии %s (ключ %s)",
+                event.type,
+                event.ordering_key,
+                exc_info=exc,
+            )
+            cancelled = HandlerCancelledError(
+                f"обработчик {getattr(handler, '__name__', handler)!r} отменён "
+                f"на событии {event.type} с ключом {event.ordering_key}"
+            )
+            cancelled.__cause__ = exc
+            reply = cancelled
         except Exception as exc:  # noqa: BLE001
             reply = exc
 

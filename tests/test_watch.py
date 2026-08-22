@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -27,11 +28,12 @@ from funora._diff import Event
 from funora._engine import Engine, Pause
 from funora._poll import Schedule
 from funora._transport import Observation, TransportSettings
-from funora._watch import PRODUCIBLE, Router, dispatch, incomplete, loss, primed
+from funora._watch import PRODUCIBLE, Router, adispatch, dispatch, incomplete, loss, primed
 from funora.errors import (
     AccessBlockedError,
     ConfigurationError,
     FunoraError,
+    HandlerCancelledError,
     HandlerError,
     RateLimitedError,
     SessionExpiredError,
@@ -322,6 +324,61 @@ def test_handler_failure_keeps_its_traceback_in_the_log(
     assert failures, "отказ обработчика не попал в журнал вовсе"
     assert failures[0].exc_info is not None, "в журнале нет трассировки"
     assert "опечатка в обработчике" in caplog.text
+
+
+def test_cancelled_handler_is_a_failure_not_a_crash() -> None:
+    """Проверяет, что отменившийся обработчик не пробивает раздачу насквозь.
+
+    CancelledError - потомок BaseException, а не Exception, поэтому общая ветка
+    её не ловила и она уходила мимо раздачи. Вместе с ней терялась вся партия:
+    и доставленное, и недоставленное, - а курсор не сохранялся.
+
+    Returns:
+        None
+    """
+    router = Router()
+
+    @router.on(EventType.ORDER_CREATED)
+    async def handle(event: Event) -> None:
+        raise asyncio.CancelledError
+
+    result = asyncio.run(adispatch(router, (_event(1),)))
+
+    assert result.fatal is None
+    assert isinstance(result.errors[0], HandlerCancelledError)
+    assert isinstance(result.errors[0].__cause__, asyncio.CancelledError)
+    assert result.failed == (_event(1),)
+
+
+def test_cancelling_the_task_still_cancels_it() -> None:
+    """Проверяет, что отмена задачи извне проходит насквозь.
+
+    Обратная половина, и без неё правка была бы хуже болезни: проглотив чужую
+    отмену, раздача сделала бы задачу неотменяемой - обработчик продолжал бы
+    работу после того, как её попросили прекратить.
+
+    Returns:
+        None
+    """
+    router = Router()
+    started = asyncio.Event()
+
+    @router.on(EventType.ORDER_CREATED)
+    async def handle(event: Event) -> None:
+        started.set()
+        await asyncio.sleep(60)
+
+    async def scenario() -> bool:
+        task = asyncio.ensure_future(adispatch(router, (_event(1),)))
+        await started.wait()
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            return True
+        return False
+
+    assert asyncio.run(scenario()), "отмена задачи была проглочена раздачей"
 
 
 def _page(name: str) -> str:
