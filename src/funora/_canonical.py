@@ -23,12 +23,14 @@ from __future__ import annotations
 import json
 import math
 import unicodedata
+from datetime import UTC, datetime
 from typing import Any, Final
 
 from .errors import ValidationError
 
 __all__ = [
     "canonical_dumps",
+    "canonical_instant",
     "canonical_normalize",
 ]
 
@@ -59,6 +61,42 @@ def canonical_normalize(text: str) -> str:
         str: Та же строка в форме NFC.
     """
     return unicodedata.normalize("NFC", text)
+
+
+def canonical_instant(value: datetime) -> str:
+    """Приводит момент к канонической форме.
+
+    Правило 13: RFC 3339 в UTC, суффикс Z, ровно три знака миллисекунд. Три, а
+    не шесть и не сколько получится: длина части после точки меняет байты, а
+    байты входят в хэш.
+
+    Доля миллисекунды ОТБРАСЫВАЕТСЯ, а не округляется. Округление вправе
+    сдвинуть момент вперёд - объявить, что наблюдение случилось позже, чем
+    случилось. Отбрасывание сдвигает назад, то есть говорит «не позже чем», и
+    это единственная сторона, в которую метке времени ошибаться безопасно.
+
+    Args:
+        value (datetime): Момент. Со смещением, отличным от Z, переводится в
+            UTC: смещение - законная запись того же момента.
+
+    Returns:
+        str: Каноническая запись момента.
+
+    Raises:
+        ValidationError: Если у момента нет часового пояса. Счесть его UTC либо
+            местным - домысел, а цена домысла здесь до суток разницы:
+            наблюдение окажется в будущем либо в прошлом, и отпечаток события
+            разойдётся у двух реализаций, работающих в разных поясах.
+    """
+    if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
+        raise ValidationError(
+            f"момент {value!r} без часового пояса. Счесть его UTC либо местным - "
+            "домысел ценой до суток разницы; передайте момент с поясом"
+        )
+
+    moment = value.astimezone(UTC)
+    stamp = moment.strftime("%Y-%m-%dT%H:%M:%S")
+    return f"{stamp}.{moment.microsecond // 1000:03d}Z"
 
 
 def _reject(value: Any, where: str) -> None:
@@ -122,6 +160,11 @@ def _prepare(value: Any, where: str) -> Any:
             "Выразите величину целым: деньги - минорными единицами, время - "
             "миллисекундами"
         )
+
+    if isinstance(value, datetime):
+        # Момент выражается строкой канонической формы, а не отвергается: он
+        # объявлен доменным типом, и правило его вида - часть той же формы.
+        return canonical_instant(value)
 
     if isinstance(value, str):
         return canonical_normalize(value)

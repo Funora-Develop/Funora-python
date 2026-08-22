@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import unicodedata
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +57,25 @@ def _have_spec() -> bool:
 pytestmark = pytest.mark.skipif(not _have_spec(), reason=NO_SPEC)
 
 
+def _materialise(value: Any) -> Any:
+    """Превращает обёртку вектора в настоящее значение.
+
+    JSON своего типа для времени не имеет, поэтому момент в векторе несёт ключ
+    $instant со строкой RFC 3339. Реализация обязана разобрать её и подставить
+    под именем поля - иначе вектор проверял бы сериализацию строки, а не
+    момента.
+
+    Args:
+        value (Any): Значение из вектора.
+
+    Returns:
+        Any: Значение, годное для canonical_dumps.
+    """
+    if isinstance(value, dict) and set(value) == {"$instant"}:
+        return {"observed_at": datetime.fromisoformat(value["$instant"])}
+    return value
+
+
 def _serialize_accept() -> list[tuple[str, Any, str]]:
     """Собирает векторы сериализации, которые обязаны пройти.
 
@@ -65,7 +85,8 @@ def _serialize_accept() -> list[tuple[str, Any, str]]:
     if not _have_spec():
         return []
     return [
-        (v["name"], v["input"], v["expected"]) for v in _vectors()["serialize"]["accept"]
+        (v["name"], _materialise(v["input"]), v["expected"])
+        for v in _vectors()["serialize"]["accept"]
     ]
 
 
@@ -77,7 +98,9 @@ def _serialize_reject() -> list[tuple[str, Any]]:
     """
     if not _have_spec():
         return []
-    return [(v["name"], v["input"]) for v in _vectors()["serialize"]["reject"]]
+    return [
+        (v["name"], _materialise(v["input"])) for v in _vectors()["serialize"]["reject"]
+    ]
 
 
 def _fingerprint_accept() -> list[tuple[str, dict[str, str], str | None, str | None]]:
@@ -307,4 +330,97 @@ def test_vectors_belong_to_the_current_form() -> None:
         f"векторы объявлены формой {declared}, а пакет собран формой "
         f"{CANONICAL_FORM_VERSION}. Либо векторы отстали от правил, либо "
         "правила подняли, не тронув векторы"
+    )
+
+
+def test_the_same_moment_gives_the_same_bytes_in_any_timezone() -> None:
+    """Проверяет, что часовой пояс машины не меняет вывод.
+
+    Вектор объявлялся обязательным и не существовал: спецификация требовала
+    прогнать одну фикстуру под TZ=UTC и под другим поясом с побайтовым
+    совпадением, а форматировать момент реализация не умела вовсе.
+
+    Пояс машины виден только через astimezone и strftime, и ошибиться тут легко
+    ровно одним способом - вывести местное время вместо UTC. Тогда два воркера
+    одного продавца в разных странах дали бы одному наблюдению разные байты.
+
+    Returns:
+        None
+    """
+    import os
+    import time
+
+    moment = datetime(2026, 8, 18, 4, 12, 33, 123456, tzinfo=UTC)
+    outputs: list[str] = []
+
+    previous = os.environ.get("TZ")
+    try:
+        for zone in ("UTC", "Asia/Yekaterinburg", "America/Sao_Paulo"):
+            os.environ["TZ"] = zone
+            if hasattr(time, "tzset"):
+                time.tzset()
+            outputs.append(canonical_dumps({"observed_at": moment}))
+    finally:
+        if previous is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = previous
+        if hasattr(time, "tzset"):
+            time.tzset()
+
+    assert len(set(outputs)) == 1, (
+        f"часовой пояс машины изменил вывод: {sorted(set(outputs))}"
+    )
+    assert outputs[0] == '{"observed_at":"2026-08-18T04:12:33.123Z"}'
+
+
+def test_a_naive_moment_is_refused() -> None:
+    """Проверяет, что момент без пояса отвергается, а не додумывается.
+
+    Счесть его UTC либо местным - домысел ценой до суток разницы: наблюдение
+    окажется в будущем либо в прошлом, и отпечаток события разойдётся у двух
+    реализаций, работающих в разных поясах.
+
+    Returns:
+        None
+    """
+    with pytest.raises(ValidationError, match="часового пояса"):
+        canonical_dumps({"observed_at": datetime(2026, 8, 18, 4, 12, 33)})
+
+
+def test_serialization_is_idempotent() -> None:
+    """Проверяет, что повторная сериализация ничего не меняет.
+
+    Свойство объявлено в файле векторов. Форма, меняющая значение при повторном
+    применении, не форма: снимок, прошедший через две реализации, отличался бы
+    от снимка, прошедшего через одну.
+
+    Returns:
+        None
+    """
+    for vector in _vectors()["serialize"]["accept"]:
+        once = canonical_dumps(_materialise(vector["input"]))
+        twice = canonical_dumps(json.loads(once))
+        assert once == twice, (
+            f"вектор «{vector['name']}»: повторная сериализация дала другое.\n"
+            f"  первый раз: {once}\n"
+            f"  второй раз: {twice}"
+        )
+
+
+def test_declared_properties_are_all_checked() -> None:
+    """Проверяет, что каждое объявленное свойство кем-то проверяется.
+
+    Свойство, объявленное в файле векторов и не проверяемое ничем, - то же
+    молчащее объявление, что и всё остальное здесь.
+
+    Returns:
+        None
+    """
+    declared = set(_vectors().get("properties", {})) - {"_"}
+    checked = {"timezone_independence", "normalization_idempotence"}
+
+    assert declared == checked, (
+        f"объявлены свойства {sorted(declared)}, проверяются {sorted(checked)}. "
+        "Разошлись: " + str(sorted(declared ^ checked))
     )
