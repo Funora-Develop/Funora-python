@@ -71,8 +71,10 @@ def test_roundtrip(tmp_path: Path) -> None:
         None
     """
     state = StateFile(tmp_path / "state.json")
-    state.save({"dedup": {"chat:1": {"a": 1.0}}})
-    assert state.load() == {"dedup": {"chat:1": {"a": 1.0}}}
+    # Метки целые, а не дробные: каноническая форма запрещает числа с
+    # плавающей точкой, а файл состояния объявляет себя ею.
+    state.save({"dedup": {"chat:1": {"a": WALL}}})
+    assert state.load() == {"dedup": {"chat:1": {"a": WALL}}}
 
 
 def test_write_is_atomic(tmp_path: Path) -> None:

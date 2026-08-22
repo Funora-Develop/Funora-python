@@ -1029,6 +1029,7 @@ def render_events(spec: Path) -> str:
         "MIN_ENTRIES_PER_KEY",
         "EVENT_LANE",
         "REVISION_APPEARED",
+        "REVISION_SEPARATOR",
         "LANE_DROPPABLE",
         "DEDUP_TTL_MS",
     ):
@@ -1173,6 +1174,25 @@ def render_events(spec: Path) -> str:
     out.append("#: повторном чтении того же списка, то есть отменила бы гашение\n")
     out.append("#: повторов для самого частого события.\n")
     out.append('REVISION_APPEARED: Final[str] = "appeared"\n')
+
+    separator = (doc.get("revision_source") or {}).get("part_separator")
+    if separator != "U+001E":
+        raise SystemExit(
+            "spec/events/delivery.yaml: разделитель частей версии обязан быть "
+            f"объявлен как U+001E, объявлено {separator!r}. Он не должен "
+            "совпадать с разделителем отпечатка U+001F: иначе составная версия "
+            "кладёт разделитель отпечатка внутрь его же части"
+        )
+    out.append("\n\n#: Чем склеиваются части составной версии сущности.\n")
+    out.append("#:\n")
+    out.append("#: Величина контрактная, а не внутренняя. Отпечаток строится из\n")
+    out.append("#: версии, поэтому две реализации, взявшие разные знаки, разойдутся\n")
+    out.append("#: в отпечатке на каждом событии с составной версией.\n")
+    out.append("#:\n")
+    out.append("#: U+001E, а не U+001F: второй склеивает сам отпечаток, и совпади\n")
+    out.append("#: они - составная версия положила бы разделитель отпечатка внутрь\n")
+    out.append("#: его же части. Склейка перестала бы различать четвёрки полей.\n")
+    out.append('REVISION_SEPARATOR: Final[str] = "\\x1e"\n')
 
 
     out.append("\n#: Можно ли выбрасывать события полосы при переполнении.\n")

@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
+from ._canonical import canonical_dumps
 from .contract import ADAPTER_FAMILY as _ADAPTER_FAMILY
 from .contract import CANONICAL_FORM_VERSION
 from .errors import CursorIncompatibleError, StateSchemaIncompatibleError
@@ -166,7 +167,11 @@ class StateFile:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_suffix(self.path.suffix + ".tmp")
 
-        body = json.dumps(
+        # Каноническая форма, а не json.dumps с умолчаниями. Прежде файл
+        # штамповал в себя canonical_form_version и писался с пробелами после
+        # двоеточия и запятой, с числами с плавающей точкой и без нормализации
+        # Unicode: то есть утверждал про себя то, чего никто не делал.
+        body = canonical_dumps(
             {
                 "format": STATE_FORMAT,
                 "adapter_family": ADAPTER_FAMILY,
@@ -177,9 +182,7 @@ class StateFile:
                 # на пригодность - можно только надеяться.
                 "canonical_form_version": CANONICAL_FORM_VERSION,
                 "payload": payload,
-            },
-            ensure_ascii=False,
-            sort_keys=True,
+            }
         )
         temporary.write_text(body, encoding="utf-8", newline="\n")
         os.replace(temporary, self.path)

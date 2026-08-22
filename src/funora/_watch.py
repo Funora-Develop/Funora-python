@@ -37,7 +37,7 @@ from .errors import (
     HandlerError,
     HandlerTimeoutError,
 )
-from .events import ORDERING_KEY, EventType
+from .events import ORDERING_KEY, REVISION_SEPARATOR, EventType
 
 __all__ = [
     "Router",
@@ -78,7 +78,11 @@ _COLD_START: Final[str] = "cold_start"
 #:
 #: Управляющий знак, а не двоеточие: причина неполноты приходит со страницы
 #: и содержать двоеточие вправе.
-_PART_SEP: Final[str] = "\x1f"
+#:
+#: Величина берётся из порождённого файла. Прежде здесь стоял литерал U+001F -
+#: тот же знак, которым склеивается сам отпечаток, - и составная версия
+#: клала разделитель отпечатка внутрь его же части.
+_PART_SEP: Final[str] = REVISION_SEPARATOR
 
 
 #: Виды событий, которые эта реализация вправду порождает.

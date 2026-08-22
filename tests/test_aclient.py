@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
@@ -352,7 +353,12 @@ async def test_failed_handler_keeps_the_cursor_in_both(
         await client.watch(router, max_iterations=1, schedule=Schedule(), state_path=state)
 
     saved = state.read_text(encoding="utf-8")
-    assert '"orders": null' in saved, "курсор сдвинулся вопреки упавшему обработчику"
+    # Разбираем, а не ищем подстроку: вид записи задаёт каноническая форма, и
+    # проверка по пробелу после двоеточия ломалась бы вместе с ней.
+    stored = json.loads(saved)
+    assert stored["payload"]["cursor"]["orders"] is None, (
+        "курсор сдвинулся вопреки упавшему обработчику"
+    )
 
 
 def test_async_handler_in_a_sync_client_is_loud() -> None:
