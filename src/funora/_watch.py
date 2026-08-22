@@ -287,6 +287,7 @@ def dispatch_core(
                     event.type,
                     event.ordering_key,
                     type(exc).__name__,
+                    exc_info=exc,
                 )
                 break
             broke = True
@@ -297,11 +298,17 @@ def dispatch_core(
             )
             error.__cause__ = exc
             errors.append(error)
+            # exc_info обязателен. Трассировка сохранена в error.__cause__ и
+            # никуда дальше не идёт: движок читает у результата delivered,
+            # advance, fatal и длину failed, а errors не читает никто. Без неё
+            # в журнале остаётся имя класса без единой строки о том, ГДЕ упало,
+            # а событие приходит снова каждый шаг - и так по кругу.
             _log.warning(
                 "обработчик упал на событии %s (ключ %s): %s",
                 event.type,
                 event.ordering_key,
                 type(exc).__name__,
+                exc_info=exc,
             )
             break
 
@@ -402,6 +409,7 @@ async def _adispatch_serially(router: Router, events: tuple[Event, ...]) -> Step
                 HANDLER_TIMEOUT_MS,
                 event.type,
                 event.ordering_key,
+                exc_info=exc,
             )
             timeout = HandlerTimeoutError(
                 f"обработчик {getattr(handler, '__name__', handler)!r} не уложился "

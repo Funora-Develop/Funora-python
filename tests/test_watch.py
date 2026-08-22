@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import logging
 import json
 import re
 from dataclasses import replace
@@ -225,6 +226,100 @@ def test_ordinary_handler_bug_is_not_fatal() -> None:
     result = dispatch(router, (_event(1),))
     assert result.fatal is None
     assert isinstance(result.errors[0], HandlerError)
+
+
+def test_handler_failure_reaches_the_caller(no_sleep: list[float]) -> None:
+    """Проверяет, что причина отказа обработчика доходит до вызывающего.
+
+    Прежде она не доходила никуда. Итог раздачи держит отказы в поле errors, а
+    ядро читает у него delivered, advance, fatal и длину failed - errors не
+    читал никто. В журнале оставалась строка «курсор не сдвинут: обработчик не
+    принял N событий» без единого слова о том, что случилось, а событие
+    приходило снова каждый шаг. Бесконечно.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    orders, chats = _page("orders-trade.logged.ru"), _page("chat.logged.ru")
+    router = Router()
+
+    @router.on()
+    def handle(event: Event) -> None:
+        raise ValueError("опечатка в обработчике")
+
+    caught: list[HandlerError] = []
+    with Client(transport=_Cycle([orders, chats])) as client:  # type: ignore[arg-type]
+        client.watch(router, max_iterations=1, on_handler_error=caught.append)
+
+    assert len(caught) == 1
+    assert isinstance(caught[0], HandlerError)
+    # Причина обязана быть на месте: без неё вызывающий знает, что упало, и не
+    # знает почему, - а это ровно то состояние, из которого правку не сделать.
+    assert isinstance(caught[0].__cause__, ValueError)
+    assert str(caught[0].__cause__) == "опечатка в обработчике"
+
+
+def test_working_handler_reports_nothing(no_sleep: list[float]) -> None:
+    """Проверяет, что исправный обработчик не поднимает ложной тревоги.
+
+    Обратная половина: приёмник, срабатывающий всегда, неотличим от
+    несрабатывающего никогда.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    orders, chats = _page("orders-trade.logged.ru"), _page("chat.logged.ru")
+    router = Router()
+    seen: list[EventType] = []
+
+    @router.on()
+    def handle(event: Event) -> None:
+        seen.append(event.type)
+
+    caught: list[HandlerError] = []
+    with Client(transport=_Cycle([orders, chats])) as client:  # type: ignore[arg-type]
+        client.watch(router, max_iterations=1, on_handler_error=caught.append)
+
+    assert seen == [EventType.WATCH_PRIMED]
+    assert caught == []
+
+
+def test_handler_failure_keeps_its_traceback_in_the_log(
+    no_sleep: list[float], caplog: pytest.LogCaptureFixture
+) -> None:
+    """Проверяет, что в журнал уходит трассировка, а не одно имя класса.
+
+    Вызывающий, не передавший on_handler_error, обязан узнать причину хотя бы
+    из журнала. Прежде там стояло имя класса исключения и больше ничего.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+        caplog (pytest.LogCaptureFixture): Перехват журнала.
+
+    Returns:
+        None
+    """
+    orders, chats = _page("orders-trade.logged.ru"), _page("chat.logged.ru")
+    router = Router()
+
+    @router.on()
+    def handle(event: Event) -> None:
+        raise ValueError("опечатка в обработчике")
+
+    with caplog.at_level(logging.WARNING, logger="funora"):
+        with Client(transport=_Cycle([orders, chats])) as client:  # type: ignore[arg-type]
+            client.watch(router, max_iterations=1)
+
+    failures = [rec for rec in caplog.records if "обработчик упал" in rec.getMessage()]
+    assert failures, "отказ обработчика не попал в журнал вовсе"
+    assert failures[0].exc_info is not None, "в журнале нет трассировки"
+    assert "опечатка в обработчике" in caplog.text
 
 
 def _page(name: str) -> str:

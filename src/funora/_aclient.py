@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
@@ -37,7 +37,7 @@ from ._thread import Thread
 from ._transport import AsyncFetcher, TransportSettings
 from ._watch import Router, adispatch
 from .capabilities import Capability, CapabilityState
-from .errors import ConfigurationError, FunoraError
+from .errors import ConfigurationError, FunoraError, HandlerError
 
 if TYPE_CHECKING:
     from ._transport import Observation
@@ -233,6 +233,7 @@ class AsyncClient:
         state_path: Path | None = None,
         max_threads_per_step: int = 5,
         concurrency: int = 1,
+        on_handler_error: Callable[[HandlerError], None] | None = None,
     ) -> None:
         """Ведёт наблюдение: опрашивает площадку и раздаёт события обработчикам.
 
@@ -288,6 +289,7 @@ class AsyncClient:
         *,
         router: Router | None = None,
         concurrency: int = 1,
+        on_handler_error: Callable[[HandlerError], None] | None = None,
     ) -> T:
         """Прокручивает ядро, выполняя то, о чём оно просит.
 
@@ -333,6 +335,17 @@ class AsyncClient:
                         "ядро просит раздать события, но реестр обработчиков не передан"
                     )
                 reply = await adispatch(router, request.events, concurrency=concurrency)
+                # Итог раздачи дальше уходит ядру, а ядро читает у него
+                # delivered, advance, fatal и длину failed. Причина отказа
+                # живёт только здесь, и не отдать её сейчас значит потерять
+                # насовсем.
+                if on_handler_error is not None:
+                    # Имя намеренно не failure: так зовут переменную, которой
+                    # цикл бросает ошибку ВНУТРЬ ядра. Затерев её здесь, мы
+                    # отправили бы отказ обработчика в ядро как условие
+                    # площадки и уронили бы наблюдение вместо жалобы.
+                    for handler_error in reply.errors:
+                        on_handler_error(handler_error)
 
     async def _fetch(self, path: str) -> Observation:
         """Выполняет одно обращение к площадке.
