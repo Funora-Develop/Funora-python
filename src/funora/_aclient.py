@@ -29,6 +29,7 @@ from ._chats import ChatsPage
 from ._engine import Deliver, Engine, Fetch, Pause, Reply, Request
 from ._host import host_of
 from ._identity import REGISTRY
+from ._observed import Observed
 from ._orders import OrdersPage
 from ._poll import Schedule
 from ._proxies import DEFAULT_ACCOUNT, Proxy, ProxyPool
@@ -211,6 +212,21 @@ class AsyncClient:
             None
         """
         await self._fetcher.close()
+
+    @property
+    def locale(self) -> Observed[str]:
+        """Возвращает локаль интерфейса, как её отдала площадка.
+
+        Локаль привязана к аккаунту, а не к адресу: переключить её запросом
+        нельзя. Разбор от смены языка не ломается - он структурный, - но поля,
+        приходящие текстом (описание заказа, подпись времени, имя собеседника),
+        возвращаются на этом языке.
+
+        Returns:
+            Observed[str]: Локаль либо причина, по которой её не видно. До
+            первого чтения - не наблюдалась.
+        """
+        return self.engine._state.locale
 
     @property
     def stopped(self) -> FunoraError | None:

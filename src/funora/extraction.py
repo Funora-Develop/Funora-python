@@ -110,6 +110,7 @@ SELECTORS: Final[dict[str, str]] = {
     "orders.fields.time_text": '.tc-date-time',
     "orders.row": 'a.tc-item',
     "orders.rows_container": '.dyn-table-body',
+    "session.locale": 'html[lang]',
 }
 
 

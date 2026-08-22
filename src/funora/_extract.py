@@ -15,9 +15,10 @@
 
 from __future__ import annotations
 
-from selectolax.parser import Node
+from selectolax.parser import HTMLParser, Node
 
 from ._observed import Observed
+from .extraction import SELECTORS
 
 __all__ = ["attribute"]
 
@@ -61,3 +62,26 @@ def attribute(node: Node | None, name: str, field_name: str) -> Observed[str]:
 
     value = raw.strip()
     return Observed.present(value) if value else Observed.empty("")
+
+
+def observe_locale(html: str) -> Observed[str]:
+    """Читает локаль интерфейса со страницы.
+
+    Локаль привязана к аккаунту, а не к адресу: запрос с префиксом /en/ отдаёт
+    ту же страницу на том же языке. Переключить её запросом нельзя, и
+    единственное, что остаётся, - узнать, какая она.
+
+    Прежде не узнавали вовсе. Страница на чужой локали разбиралась молча, и
+    вызывающий получал английские тексты, полагая их русскими: поля, которые
+    приходят текстом - описание заказа, подпись времени, имя собеседника, -
+    возвращаются на том языке, на котором их отдала площадка.
+
+    Args:
+        html (str): Разметка страницы.
+
+    Returns:
+        Observed[str]: Локаль либо причина, по которой её не видно. Три исхода
+        различаются, как и у всякого чтения атрибута.
+    """
+    node = HTMLParser(html).css_first(SELECTORS["session.locale"])
+    return attribute(node, "lang", "locale")

@@ -51,9 +51,11 @@ from ._diff import (
     orders_cursor,
     thread_cursor,
 )
+from ._extract import observe_locale
 from ._gate import check_capability
 from ._host import host_of
 from ._identity import REGISTRY, Identity, identity_of
+from ._observed import Observed
 from ._orders import Completeness, OrdersPage, parse_orders_page
 from ._poll import Deduplicator, Schedule
 from ._retry import plan_attempt
@@ -69,6 +71,7 @@ from .budget import (
     RequestClass,
 )
 from .capabilities import CAPABILITY_INITIAL, Capability, CapabilityState
+from .contract import SUPPORTED_LOCALES
 from .errors import (
     AuthenticationError,
     BudgetError,
@@ -158,6 +161,10 @@ class _State:
             явно.
         health (Health): Состояние доступа к площадке. От него зависит,
             приостановлена ли автоматика записи.
+        locale (Observed[str]): Локаль интерфейса, как её отдала площадка.
+            Чтения не отменяет: разбор структурный и от смены языка не
+            ломается. Но поля, приходящие текстом, возвращаются на этом языке,
+            и вызывающий вправе знать, на каком.
     """
 
     capabilities: dict[Capability, CapabilityState] = field(
@@ -166,6 +173,7 @@ class _State:
     session_ever_valid: bool = False
     opted_in: frozenset[Capability] = frozenset()
     health: Health = INITIAL_HEALTH
+    locale: Observed[str] = field(default_factory=lambda: Observed.missing("not_read_yet"))
 
 
 def check_integrity(observation: Observation) -> None:
@@ -536,6 +544,7 @@ class Engine:
                     received_length=observation.content_length,
                     content_encoding=observation.content_encoding,
                 )
+                self.note_locale(observation.html)
                 self.note_health(verdict)
                 error = error_for(verdict, session_ever_valid=self._state.session_ever_valid)
                 if error is not None:
@@ -828,6 +837,45 @@ class Engine:
             target,
             reason,
             "приостановлена" if target in WRITES_PAUSED_IN else "разрешена",
+        )
+
+    def note_locale(self, html: str) -> None:
+        """Запоминает локаль страницы и сверяет её с объявленными.
+
+        Локаль вне перечня НЕ отменяет чтение: разбор опирается на классы
+        разметки, а не на текст. Отказать из-за неё значило бы отвергнуть
+        страницу, которую реализация читает целиком и верно.
+
+        Опускается возможность protocol.locale - она и означает «интерфейс на
+        той локали, для которой у адаптера есть шаблоны».
+
+        Args:
+            html (str): Разметка прочитанной страницы.
+
+        Returns:
+            None
+        """
+        observed = observe_locale(html)
+        if not observed.is_observed:
+            self._state.locale = observed
+            return
+
+        known = self._state.locale.or_none()
+        self._state.locale = observed
+        if observed.value == known:
+            return
+
+        if observed.value in SUPPORTED_LOCALES:
+            self._state.capabilities[Capability.PROTOCOL_LOCALE] = CapabilityState.SUPPORTED
+            return
+
+        self._state.capabilities[Capability.PROTOCOL_LOCALE] = CapabilityState.UNSUPPORTED
+        _log.warning(
+            "интерфейс отдан на локали %r, объявлены %s. Разбор от этого не "
+            "ломается - он структурный, - но поля, приходящие текстом, придут "
+            "на этом языке",
+            observed.value,
+            ", ".join(SUPPORTED_LOCALES),
         )
 
     def note_health(self, verdict: Verdict) -> None:

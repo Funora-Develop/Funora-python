@@ -745,3 +745,26 @@ def test_an_ordinary_failure_does_not_stop_the_client(no_sleep: list[float]) -> 
     with Client(transport=_FakeFetcher([limited, good])) as client:  # type: ignore[arg-type]
         client.orders.list()
         assert client.stopped is None, "ограничение частоты остановило клиента насовсем"
+
+
+def test_reading_a_page_observes_its_locale(no_sleep: list[float]) -> None:
+    """Проверяет, что локаль читается на настоящем пути чтения.
+
+    Отдельная проверка на функцию доказывает, что читать умеем. Эта - что
+    вправду читаем: связка «прочитали страницу - узнали локаль» слабое место,
+    и без неё функция осталась бы вызываемой ниоткуда.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    page = _page("orders-trade.logged.ru")
+    with Client(transport=_FakeFetcher([_observation(page)])) as client:  # type: ignore[arg-type]
+        assert not client.locale.is_observed, "локаль известна до первого чтения"
+        client.orders.list()
+
+        assert client.locale.is_observed, (
+            "страница прочитана, а локаль так и не наблюдалась"
+        )
