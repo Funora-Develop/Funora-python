@@ -20,7 +20,7 @@ import pytest
 from funora._diff import Event
 from funora._poll import Deduplicator
 from funora._state import ADAPTER_FAMILY, STATE_FORMAT, StateFile
-from funora.errors import StateSchemaIncompatibleError
+from funora.errors import CursorIncompatibleError, StateSchemaIncompatibleError
 from funora.events import EventType
 
 
@@ -139,6 +139,11 @@ def test_foreign_adapter_family_is_loud(tmp_path: Path) -> None:
     Совпадение идентификаторов было бы случайным, а последствия - молчаливым
     гашением чужих событий.
 
+    Класс ошибки именно CursorIncompatibleError, и это не придирка к номеру.
+    Спецификация делит два случая по тому, что делать: чужая версия схемы файла
+    лечится выходом новой версии SDK, чужое семейство - никогда. Курсор, снятый
+    с другой площадки, совместимым не станет.
+
     Args:
         tmp_path (Path): Временный каталог.
 
@@ -151,7 +156,7 @@ def test_foreign_adapter_family_is_loud(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    with pytest.raises(StateSchemaIncompatibleError):
+    with pytest.raises(CursorIncompatibleError):
         StateFile(path).load()
 
 
@@ -279,5 +284,5 @@ def test_state_of_another_canonical_form_is_refused(tmp_path: Path) -> None:
     raw["canonical_form_version"] = CANONICAL_FORM_VERSION + 1
     path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
 
-    with pytest.raises(StateSchemaIncompatibleError, match="канонической формой"):
+    with pytest.raises(CursorIncompatibleError, match="канонической формой"):
         StateFile(path).load()

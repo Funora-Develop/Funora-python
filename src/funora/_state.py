@@ -31,7 +31,7 @@ from typing import Any, Final
 
 from .contract import ADAPTER_FAMILY as _ADAPTER_FAMILY
 from .contract import CANONICAL_FORM_VERSION
-from .errors import StateSchemaIncompatibleError
+from .errors import CursorIncompatibleError, StateSchemaIncompatibleError
 
 __all__ = ["StateFile", "STATE_FORMAT"]
 
@@ -81,10 +81,12 @@ class StateFile:
             нет: первый запуск - штатное событие.
 
         Raises:
-            StateSchemaIncompatibleError: Если файл записан другой версией
-                формата либо другим семейством адаптера. Молчаливый старт с
-                нуля здесь неотличим от штатной работы и приводит к повторной
-                обработке всего, что уже обработано.
+            StateSchemaIncompatibleError: Если файл не читается вовсе либо
+                записан другой версией схемы файла.
+            CursorIncompatibleError: Если сохранённая позиция снята с другого
+                семейства адаптера либо собрана другой канонической формой.
+                Молчаливый старт с нуля здесь неотличим от штатной работы и
+                приводит к повторной обработке всего, что уже обработано.
         """
         if not self.path.is_file():
             return {}
@@ -110,16 +112,27 @@ class StateFile:
                 f"ожидался {STATE_FORMAT!r}"
             )
 
+        # Семейство адаптера и каноническая форма - про КУРСОР, а версия схемы
+        # файла выше - про файл. Спецификация делит их прямо: 1801 говорит
+        # «курсор принадлежит другой версии формата или другому семейству
+        # адаптера», 1802 - «версия схемы сохранённого состояния не
+        # поддерживается». Обе ветки ниже подпадают под первое и возбуждали
+        # второе.
+        #
+        # Разница не в номере. Она в том, что делать: чужая схема файла лечится
+        # выходом новой версии SDK, чужое семейство - никогда. Курсор, снятый с
+        # другой площадки, не станет совместимым от обновления.
         stored_family = raw.get("adapter_family")
         if stored_family != ADAPTER_FAMILY:
-            raise StateSchemaIncompatibleError(
+            raise CursorIncompatibleError(
                 f"файл состояния {self.path} снят с семейства {stored_family!r}, "
-                f"ожидалось {ADAPTER_FAMILY!r}"
+                f"ожидалось {ADAPTER_FAMILY!r}. Сохранённая позиция принадлежит "
+                "другой площадке и совместимой не станет"
             )
 
         stored_canonical = raw.get("canonical_form_version")
         if stored_canonical is not None and stored_canonical != CANONICAL_FORM_VERSION:
-            raise StateSchemaIncompatibleError(
+            raise CursorIncompatibleError(
                 f"файл состояния {self.path} записан канонической формой "
                 f"{stored_canonical!r}, ожидалась {CANONICAL_FORM_VERSION!r}. "
                 "Сохранённые отпечатки собраны по другим правилам и не совпадут "
