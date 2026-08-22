@@ -10,8 +10,8 @@
 
 from __future__ import annotations
 
-import logging
 import json
+import logging
 import re
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -312,9 +312,11 @@ def test_handler_failure_keeps_its_traceback_in_the_log(
     def handle(event: Event) -> None:
         raise ValueError("опечатка в обработчике")
 
-    with caplog.at_level(logging.WARNING, logger="funora"):
-        with Client(transport=_Cycle([orders, chats])) as client:  # type: ignore[arg-type]
-            client.watch(router, max_iterations=1)
+    with (
+        caplog.at_level(logging.WARNING, logger="funora"),
+        Client(transport=_Cycle([orders, chats])) as client,  # type: ignore[arg-type]
+    ):
+        client.watch(router, max_iterations=1)
 
     failures = [rec for rec in caplog.records if "обработчик упал" in rec.getMessage()]
     assert failures, "отказ обработчика не попал в журнал вовсе"

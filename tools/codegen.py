@@ -1426,12 +1426,22 @@ def render_operations(spec: Path) -> str:
     out.append("        safety (Safety): Безопасность при повторе.\n")
     out.append("        request_class (str): Класс запроса для бюджета.\n")
     out.append("        returns (str): Тип результата, как объявлен спецификацией.\n")
+    out.append("        errors (tuple[str, ...]): Устойчивые идентификаторы ошибок,\n")
+    out.append("            которыми операция вправе завершиться. Ровно то, что\n")
+    out.append("            вызывающий выписывает в except.\n")
+    out.append("\n")
+    out.append("            Перечень объявлен спецификацией на каждую операцию и до\n")
+    out.append("            сих пор до пакета не доходил: генератор принимал ключ\n")
+    out.append("            errors и выбрасывал его. Расхождение между обещанным и\n")
+    out.append("            возбуждаемым не ловило ничто, и вызывающий, выписавший\n")
+    out.append("            except по контракту, ловил не всё.\n")
     out.append('    """\n\n')
     out.append("    name: str\n")
     out.append("    capability: str\n")
     out.append("    safety: Safety\n")
     out.append("    request_class: str\n")
     out.append("    returns: str\n")
+    out.append("    errors: tuple[str, ...]\n")
 
     out.append("\n\n#: Операции служб по идентификатору.\n")
     out.append("OPERATIONS: Final[dict[str, Operation]] = {\n")
@@ -1443,6 +1453,24 @@ def render_operations(spec: Path) -> str:
         out.append(f"        safety=Safety.{body['safety'].upper()},\n")
         out.append(f'        request_class="{body["request_class"]}",\n')
         out.append(f'        returns="{body["returns"]}",\n')
+        # Пустой перечень и отсутствующий - разные вещи. Пустой говорит «эта
+        # операция не отказывает», и это утверждение, за которое отвечают.
+        # Отсутствующий не говорит ничего, и вызывающему нечего выписать в
+        # except: он либо поймает лишнее, либо не поймает нужное.
+        if "errors" not in body:
+            raise SystemExit(
+                f"spec/services: операция {name} не объявляет, какими ошибками она "
+                "вправе завершиться. Если операция не отказывает никогда, напишите "
+                "errors: [] явно - молчание тут неотличимо от забывчивости"
+            )
+        declared_errors = body["errors"] or []
+        if declared_errors:
+            out.append("        errors=(\n")
+            for code in declared_errors:
+                out.append(f'            "{code}",\n')
+            out.append("        ),\n")
+        else:
+            out.append("        errors=(),\n")
         out.append("    ),\n")
     out.append("}\n")
 
