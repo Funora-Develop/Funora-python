@@ -692,3 +692,191 @@ def test_cursor_of_the_previous_format_does_not_flood() -> None:
     assert diff_chats(legacy, page, account_id=ACCOUNT) == (), (
         "курсор прежней редакции дал события на ровном месте"
     )
+
+
+def _free_text_on_pages() -> set[str]:
+    """Собирает со снимков всё, что на страницу пишут люди.
+
+    Собираются поля, значение которых - произвольный текст: сообщение, имя
+    собеседника, начало последнего сообщения, название лота. Позиции,
+    идентификаторы и состояния сюда не входят: они не свободный текст, и класть
+    их в нагрузку нормально.
+
+    Returns:
+        set[str]: Непустые значения свободнотекстовых полей со всех снимков.
+    """
+    free: set[str] = set()
+
+    for message in _thread().messages(accept_incomplete=True):
+        for field in (message.text, message.author_name, message.time_text, message.time_full_text):
+            if field.is_observed and field.value:
+                free.add(field.value)
+        if message.external_links.is_observed:
+            free.update(message.external_links.value)
+
+    for entry in _chats().rows(accept_incomplete=True):
+        for field in (entry.counterparty_name, entry.preview_text, entry.time_text):
+            if field.is_observed and field.value:
+                free.add(field.value)
+
+    for order in _orders().rows(accept_incomplete=True):
+        for field in (
+            order.description_text,
+            order.category_text,
+            order.counterparty_name,
+            order.time_text,
+        ):
+            if field.is_observed and field.value:
+                free.add(field.value)
+
+    return free
+
+
+def _all_payload_strings() -> list[tuple[str, str, object]]:
+    """Собирает нагрузку всех событий, какие снимки способны породить.
+
+    Курсор нигде не None: при None обе функции списков возвращают пустоту -
+    первое чтение событий не даёт, чтобы не выдать полсотни диалогов разом. Я на
+    этом и попался: собиратель звали с None, событий двух видов из четырёх не
+    возникало вовсе, и проверка нагрузки их не смотрела. Отсюда же и утверждение
+    ниже - оно держит именно этот промах.
+
+    Returns:
+        list[tuple[str, str, object]]: Тип события, имя поля нагрузки, значение.
+    """
+    thread = _thread()
+    chats = _chats()
+    orders = _orders()
+
+    # Пустой словарь, а не None: заказы известны как множество, и пустое
+    # множество делает все заказы страницы новыми.
+    created = diff_orders({}, orders, account_id=ACCOUNT)
+    changed = diff_orders(
+        dict.fromkeys(
+            (entry.order_id for entry in orders.rows(accept_incomplete=True)),
+            "выдуманное-состояние",
+        ),
+        orders,
+        account_id=ACCOUNT,
+    )
+    moved = diff_chats(
+        {entry.node_id: "прежняя-позиция" for entry in chats.rows(accept_incomplete=True)},
+        chats,
+        account_id=ACCOUNT,
+    )
+    messages = diff_thread(frozenset(), thread, account_id=ACCOUNT, chat_id="42")
+
+    events = [*messages, *moved, *created, *changed]
+    # Перечислены те виды, что порождает этот модуль. Остальные объявлены
+    # спецификацией, но порождаются другими слоями либо ещё никем: сверяться со
+    # всем перечислением значило бы завести проверку, которая падает всегда.
+    expected = {
+        EventType.MESSAGE_CREATED,
+        EventType.CHAT_UNREAD_CHANGED,
+        EventType.ORDER_CREATED,
+        EventType.ORDER_STATUS_CHANGED,
+    }
+    kinds = {event.type for event in events}
+    assert kinds == expected, (
+        f"собрались не все виды событий: не хватает {expected - kinds} - "
+        "нагрузка недостающих останется непроверенной"
+    )
+
+    return [
+        (str(event.type), name, value) for event in events for name, value in event.payload.items()
+    ]
+
+
+def test_payload_carries_no_free_text_from_the_page() -> None:
+    """Проверяет, что нагрузка события не выносит написанное людьми.
+
+    Событие уходит обработчику, а оттуда - в журнал, в очередь, в чужую систему.
+    Текст сообщения, имя собеседника и название лота туда попадать не должны:
+    вызывающий, которому они нужны, читает страницу сам и знает, что делает.
+
+    Проверка нужна не ради сегодняшнего кода - сегодня он чист. Она нужна ради
+    той правки, в которой кто-нибудь допишет в нагрузку `text`, потому что так
+    удобнее, и ни одна проверка этого не заметит. Число ссылок в нагрузке есть,
+    сами ссылки - нет, и ровно эту границу проверка и держит.
+
+    Returns:
+        None
+    """
+    free = _free_text_on_pages()
+    assert len(free) > 5, "со снимков не собралось свободного текста - проверять нечего"
+
+    for event_type, name, value in _all_payload_strings():
+        if not isinstance(value, str):
+            continue
+        assert value not in free, f"нагрузка {event_type} несёт в поле {name!r} текст со страницы"
+
+
+def test_payload_carries_no_long_text_at_all() -> None:
+    """Проверяет то же правило способом, не зависящим от разбора.
+
+    Предыдущая проверка сверяется с тем, что прочитал разбор, и потому слепа к
+    тексту, который в нагрузку попал бы иначе - куском разметки, срезом строки,
+    склейкой. Здесь проверяется грубый признак: в нагрузке нет длинных строк.
+
+    Все нынешние строковые поля нагрузки - идентификаторы, состояния, адреса и
+    названия перечислений. Длинных среди них нет и быть не должно.
+
+    Returns:
+        None
+    """
+    limit = 120
+    for event_type, name, value in _all_payload_strings():
+        if not isinstance(value, str):
+            continue
+        assert len(value) <= limit, (
+            f"нагрузка {event_type} несёт в поле {name!r} строку длиной {len(value)}"
+        )
+
+
+def test_created_order_payload_describes_its_own_row() -> None:
+    """Проверяет, что адрес и номер строки в нагрузке - той самой строки.
+
+    Нагрузка события о новом заказе несёт адрес и порядковый номер строки, и
+    сверять их было нечем: проверки смотрели на идентификатор сущности, а эти
+    два поля брались на веру. Подстановка адреса соседней строки прошла бы
+    незамеченной, а обработчик по такому адресу открыл бы чужой заказ.
+
+    Returns:
+        None
+    """
+    page = _orders()
+    events = diff_orders({}, page, account_id=ACCOUNT)
+    assert len(events) > 2, "снимок обязан дать больше двух новых заказов"
+
+    rows = {entry.order_id: entry for entry in page.rows(accept_incomplete=True)}
+    seen_rows = set()
+    for event in events:
+        entry = rows[event.entity_id]
+        assert event.payload["href"] == entry.href
+        assert event.payload["row_index"] == entry.row_index
+        seen_rows.add(event.payload["row_index"])
+
+    # Номера строк различны: одинаковый номер у всех прошёл бы посимвольную
+    # сверку выше, если бы её мутировали на «первую строку для всех».
+    assert len(seen_rows) == len(events)
+
+
+def test_status_change_payload_describes_its_own_row() -> None:
+    """Проверяет то же для события о смене состояния заказа.
+
+    Returns:
+        None
+    """
+    page = _orders()
+    known = dict.fromkeys(
+        (entry.order_id for entry in page.rows(accept_incomplete=True)),
+        "выдуманное-состояние",
+    )
+    events = diff_orders(known, page, account_id=ACCOUNT)
+    assert len(events) > 2
+
+    rows = {entry.order_id: entry for entry in page.rows(accept_incomplete=True)}
+    for event in events:
+        assert event.payload["href"] == rows[event.entity_id].href
+        assert event.payload["from"] == "выдуманное-состояние"
+        assert event.payload["to"] == str(rows[event.entity_id].status.value)
