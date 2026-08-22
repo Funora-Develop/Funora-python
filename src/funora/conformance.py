@@ -23,12 +23,13 @@ import json
 import os
 import re
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
 
 from ._canonical import canonical_dumps
-from ._diff import _fingerprint
+from ._diff import Event, _fingerprint
+from ._poll import Deduplicator
 from .contract import RUNNER_PROTOCOL
 from .errors import ConfigurationError, FunoraError, ValidationError
 from .events import EventType
@@ -37,6 +38,27 @@ __all__ = ["PROTOCOL", "answer", "main"]
 
 #: Версия протокола, по которой отвечает эта реализация.
 PROTOCOL: Final[int] = RUNNER_PROTOCOL
+
+
+def _spec_file(name: str) -> Path:
+    """Указывает путь к файлу набора в рабочей копии спецификации.
+
+    Args:
+        name (str): Имя файла в каталоге spec/conformance.
+
+    Returns:
+        Path: Путь к файлу.
+
+    Raises:
+        ConfigurationError: Если рабочая копия спецификации не найдена.
+    """
+    root = os.environ.get("FUNORA_SPEC_DIR")
+    if not root:
+        raise ConfigurationError(
+            "переменная FUNORA_SPEC_DIR не задана: файл набора искать негде. "
+            "Протокол передаёт вход ссылкой, и прочесть его обязана реализация"
+        )
+    return Path(root) / "spec" / "conformance" / name
 
 
 def _vectors() -> dict[str, Any]:
@@ -56,13 +78,7 @@ def _vectors() -> dict[str, Any]:
     Raises:
         ConfigurationError: Если рабочая копия спецификации не найдена.
     """
-    root = os.environ.get("FUNORA_SPEC_DIR")
-    if not root:
-        raise ConfigurationError(
-            "переменная FUNORA_SPEC_DIR не задана: файл набора искать негде. "
-            "Протокол передаёт вход ссылкой, и прочесть его обязана реализация"
-        )
-    path = Path(root) / "spec" / "conformance" / "canonical-form.vectors.json"
+    path = _spec_file("canonical-form.vectors.json")
     parsed: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
     return parsed
 
@@ -127,6 +143,137 @@ def _digest(fields: dict[str, str]) -> str:
     )
 
 
+def _scenario(reference: str) -> dict[str, Any]:
+    """Достаёт сценарий набора resume по ссылке вида «scenarios[3]».
+
+    Args:
+        reference (str): Ссылка на сценарий.
+
+    Returns:
+        dict[str, Any]: Сценарий целиком.
+
+    Raises:
+        ValidationError: Если ссылка не разбирается либо ведёт в пустоту.
+    """
+    match = re.fullmatch(r"scenarios\[(\d+)\]", reference)
+    if match is None:
+        raise ValidationError(f"ссылка на сценарий {reference!r} не разбирается")
+
+    path = _spec_file("resume.vectors.json")
+    document = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        scenario: dict[str, Any] = document["scenarios"][int(match.group(1))]
+    except (KeyError, IndexError) as error:
+        raise ValidationError(
+            f"ссылка {reference!r} ведёт в пустоту: {type(error).__name__}"
+        ) from error
+    return scenario
+
+
+def _event(event_id: str, key: str) -> Event:
+    """Собирает событие с заданным идентификатором и ключом упорядочивания.
+
+    Гашение смотрит только на эти два поля, остальное конверту нужно для формы.
+    Подставлять сюда настоящий отпечаток нельзя: сценарий задаёт тождество
+    событий сам, а посчитанный отпечаток сделал бы «a» из разных сценариев
+    одним и тем же событием.
+
+    Args:
+        event_id (str): Идентификатор события из сценария.
+        key (str): Ключ упорядочивания.
+
+    Returns:
+        Event: Событие в конверте.
+    """
+    return Event(
+        id=event_id,
+        type=EventType.MESSAGE_CREATED,
+        account_id="a1",
+        ordering_key=key,
+        entity_id=event_id,
+        observed_at=datetime(2023, 11, 14, 22, 13, 20, tzinfo=UTC),
+        origin="structural",
+        payload={},
+    )
+
+
+def _run_scenario(scenario: dict[str, Any]) -> list[list[str]]:
+    """Прогоняет сценарий гашения и возвращает дошедшее по шагам.
+
+    Время шага задано стенными часами, а перезапуск объявляет аптайм нового
+    процесса. Внутренние часы получаются из этих двух величин: показание
+    секундомера равно аптайму на момент перезапуска плюс всё, что с тех пор
+    прошло по стенным часам.
+
+    Ради того сценарий и написан. Реализация, сохранившая метки показанием
+    своего секундомера, здесь разойдётся с ожидаемым: у нового процесса начало
+    отсчёта своё, и прочитает он не то, что записал.
+
+    Args:
+        scenario (dict[str, Any]): Сценарий: ttl_ms и перечень шагов.
+
+    Returns:
+        list[list[str]]: Для каждого шага - идентификаторы событий, прошедших
+        сквозь гашение, в порядке предложения. Шаг перезапуска даёт пустой
+        перечень.
+
+    Raises:
+        ValidationError: Если сценарий начинается с перезапуска: неизвестно, на
+            какой момент стенных часов сохранять состояние.
+    """
+    dedup = Deduplicator(ttl_ms=scenario["ttl_ms"])
+    # Аптайм первого процесса ненулевой нарочно. При нуле показание секундомера
+    # совпало бы с прошедшим по стенным часам, и реализация, перепутавшая одно с
+    # другим, случайно дала бы верный ответ - мутация это показала.
+    uptime_base = float(scenario.get("uptime_s", 604800))
+    wall_base: int | None = None
+    wall_now: int | None = None
+    delivered: list[list[str]] = []
+
+    def monotonic(at_ms: int) -> float:
+        """Переводит момент стенных часов в показание секундомера процесса.
+
+        Args:
+            at_ms (int): Момент по стенным часам, миллисекунды от эпохи.
+
+        Returns:
+            float: Показание секундомера, секунды.
+        """
+        assert wall_base is not None
+        return uptime_base + (at_ms - wall_base) / 1000
+
+    for step in scenario["steps"]:
+        restart = step.get("restart")
+        if restart is not None:
+            if wall_now is None:
+                raise ValidationError(
+                    "сценарий начинается с перезапуска: неизвестно, на какой "
+                    "момент стенных часов сохранять состояние"
+                )
+            state = dedup.snapshot(monotonic(wall_now), wall_ms=wall_now)
+            dedup = Deduplicator(ttl_ms=scenario["ttl_ms"])
+            uptime_base = float(restart["uptime_s"])
+            wall_base = wall_now
+            dedup.restore(state, uptime_base, wall_ms=wall_now)
+            delivered.append([])
+            continue
+
+        wall_now = step["at_ms"]
+        if wall_base is None:
+            wall_base = wall_now
+        now = monotonic(wall_now)
+
+        key = step.get("key", "k")
+        offered = tuple(_event(one, key) for one in step["offer"])
+        fresh = dedup.filter(offered, now)
+        delivered.append([one.id for one in fresh])
+
+        accepted = set(step.get("commit", ()))
+        dedup.commit(tuple(one for one in fresh if one.id in accepted), now)
+
+    return delivered
+
+
 def answer(case: dict[str, Any]) -> dict[str, Any]:
     """Отвечает на один случай набора.
 
@@ -148,6 +295,15 @@ def answer(case: dict[str, Any]) -> dict[str, Any]:
         if kind == "fingerprint":
             got = _digest(_resolve(case["vector"]))
             return _compare(case_id, got, case.get("expected"))
+
+        if kind == "resume":
+            # Сверяет раннер: реализация возвращает, что дошло на каждом шаге, а
+            # ожидаемого не знает - иначе она сверяла бы себя сама.
+            return {
+                "id": case_id,
+                "outcome": "pass",
+                "steps": _run_scenario(_scenario(case["vector"])),
+            }
 
         if kind in ("serialize_refuses", "fingerprint_refuses"):
             worker = canonical_dumps if kind == "serialize_refuses" else _digest
@@ -216,10 +372,19 @@ def _compare(case_id: str, got: str, expected: str | None) -> dict[str, Any]:
 def main() -> int:
     """Читает случаи с ввода и пишет ответы на вывод.
 
+    Кодировка потоков задаётся явно. По умолчанию Python берёт её у системы, и
+    на Windows это оказалась cp1251: раннер получал вопросительные знаки вместо
+    кириллицы и показывал отказ там, где реализация права. Транспорт, портящий
+    проверяемое, хуже отсутствия транспорта - протокол объявляет UTF-8, и
+    полагаться тут на настройки машины нельзя.
+
     Returns:
         int: Ноль всегда. Решение о коде возврата принимает раннер: он один
         видит весь набор и отличает отказ от пропуска.
     """
+    sys.stdin.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+    sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+
     for line in sys.stdin:
         stripped = line.strip()
         if not stripped:
