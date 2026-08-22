@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Generator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic
@@ -42,6 +42,7 @@ from ._chats import ChatsPage, parse_chats_page
 from ._classify import DEFAULT_IDENTITY_CSS, classify
 from ._diff import (
     UNREAD_STATUS,
+    Delivery,
     Event,
     chats_cursor,
     diff_chats,
@@ -59,7 +60,8 @@ from ._state import StateFile
 from ._thread import Thread, parse_thread
 from ._transport import Observation, TransportSettings
 from ._verdicts import error_for
-from ._watch import Router, StepResult, incomplete, primed
+from ._watch import Router, StepResult, incomplete, loss, primed
+from .budget import MAX_QUEUE_DEPTH_PER_KEY
 from .capabilities import CAPABILITY_INITIAL, Capability, CapabilityState
 from .errors import (
     AuthenticationError,
@@ -155,6 +157,12 @@ def check_integrity(observation: Observation) -> None:
     получает половину заказов и ноль повреждений. Это правдоподобный неверный
     ответ, о неверности которого узнать неоткуда.
 
+    Проверка работает только на несжатом теле, и клиент поэтому просит сервер
+    не сжимать. Библиотека распаковывает прозрачно, а Content-Length объявляет
+    длину сжатого тела: сравнение распакованной длины с объявленной сжатой
+    проходило всегда - двести тысяч байт против двухсот пятидесяти, - в том
+    числе на оборванном ответе.
+
     Args:
         observation (Observation): Результат обращения.
 
@@ -165,6 +173,17 @@ def check_integrity(observation: Observation) -> None:
         NetworkError: Если полученная длина меньше объявленной.
     """
     declared = observation.declared_length
+    if observation.content_encoding not in ("", "identity"):
+        # Сравнивать нечего: объявленная длина относится к сжатому телу, а
+        # полученная - к распакованному. Клиент просит не сжимать; если сервер
+        # просьбу не выполнил, честнее сказать об этом, чем сравнить несравнимое
+        # и объявить целостность подтверждённой.
+        _log.warning(
+            "тело пришло сжатым (%s) вопреки просьбе: целостность не проверена, "
+            "обрыв на такой странице выглядел бы как изменение разметки",
+            observation.content_encoding,
+        )
+        return
     if declared is None or observation.content_length >= declared:
         return
     raise NetworkError(
@@ -464,6 +483,27 @@ class Engine:
                 continue
 
             followed.append(node_id)
+            if thread.completeness is not Completeness.COMPLETE:
+                # Неполно прочитанная переписка объявляется так же, как неполно
+                # прочитанный список. Прежде объявлялись только списки, и это
+                # была половина правила: для торгового бота переписка - главное
+                # место, а неполно прочитанная означает, что часть сообщений
+                # покупателя не увидели вовсе.
+                #
+                # Событие несёт ссылку на диалог: неполон не весь снимок, а одна
+                # переписка, и без ссылки получатель не узнает, какая из
+                # полусотни прочитана наполовину.
+                events.append(
+                    incomplete(
+                        account_id,
+                        thread.observed_at,
+                        entity="thread",
+                        entity_ref=node_id,
+                        reason=thread.reason,
+                        rows_total=thread.rows_total,
+                        rows_accepted=thread.rows_accepted,
+                    )
+                )
             events.extend(
                 diff_thread(
                     known.get(node_id),
@@ -633,6 +673,10 @@ class Engine:
         known_chats: dict[str, str] | None = None
         known_threads: dict[str, frozenset[str]] = {}
         pending: list[str] = []
+        # Сколько раз каждое событие уже пробовали доставить. Пустой словарь -
+        # штатное состояние: записи заводятся только на события, которые
+        # обработчик не принял.
+        attempts: dict[str, int] = {}
         greeted = False
 
         if state is not None:
@@ -665,6 +709,13 @@ class Engine:
             # дочитаться, не дочитался бы уже никогда: событие о нём доставлено,
             # курсор диалогов сдвинут, и повода вернуться к нему больше нет.
             pending = list(cursor.get("pending_threads") or [])
+            restored_attempts = stored.get("attempts")
+            if isinstance(restored_attempts, dict):
+                attempts = {
+                    str(key): int(value)
+                    for key, value in restored_attempts.items()
+                    if isinstance(value, int) and value > 0
+                }
             # Здоровались ли уже. Восстановленный курсор любого из списков
             # означает, что здоровались: watch.primed - событие о начале
             # наблюдения, а не о начале процесса.
@@ -693,8 +744,8 @@ class Engine:
                 incomplete(
                     account_id,
                     page.observed_at,
-                    "account:" + account_id,
                     entity=name,
+                    entity_ref=None,
                     reason=page.reason,
                     rows_total=page.rows_total,
                     rows_accepted=page.rows_accepted,
@@ -719,15 +770,43 @@ class Engine:
                 if event.id in delivered_ids and event.entity_id not in pending:
                     pending.append(event.entity_id)
 
+            # Очередь ограничена, и предел объявлен спецификацией. Он нужен:
+            # очередь пополняется на каждом изменении диалога, а вычерпывается
+            # по несколько штук за шаг - у продавца с полусотней активных
+            # переписок она растёт быстрее, чем убывает.
+            #
+            # Выброшенное объявляется вслух. Ограничить и промолчать - худший
+            # исход из возможных: сообщение покупателя не будет прочитано
+            # никогда, и узнать об этом неоткуда.
+            #
+            # Выбрасывается ХВОСТ, а не голова: в голове самые давние диалоги, и
+            # они ждут дольше всех. Выбросить их значило бы гарантировать, что
+            # именно они не дочитаются никогда.
+            dropped = 0
+            if len(pending) > MAX_QUEUE_DEPTH_PER_KEY:
+                dropped = len(pending) - MAX_QUEUE_DEPTH_PER_KEY
+                del pending[MAX_QUEUE_DEPTH_PER_KEY:]
+                _log.warning(
+                    "очередь дочитывания переполнена: %d диалогов выпало, предел %d",
+                    dropped,
+                    MAX_QUEUE_DEPTH_PER_KEY,
+                )
+
             messages, thread_cursors, followed = yield from self._follow(
                 pending,
                 known_threads,
                 account_id=account_id,
                 limit=max_threads_per_step,
             )
-            fresh = (*head, *dedup.filter(messages, now))
+            losses = (
+                (loss(account_id, orders.observed_at, lost=dropped, reason="queue_overflow"),)
+                if dropped
+                else ()
+            )
+            fresh = (*head, *dedup.filter((*losses, *messages), now))
 
             batch = fresh
+            greeting: Event | None = None
             if not greeted:
                 # Холодный старт молчит о данных и говорит один раз о себе:
                 # иначе первый запуск дал бы лавину «изменений» по всему, что
@@ -741,8 +820,29 @@ class Engine:
                 # выбрасывались, а вместо них каждый шаг уходило одно и то же
                 # приветствие. Наблюдение за перепиской замолкало целиком из-за
                 # состояния чужой страницы - молча.
-                greeted = True
-                batch = (primed(account_id, orders.observed_at, "account:" + account_id), *fresh)
+                # Признак поднимается ПОСЛЕ раздачи, а не здесь. Поднятый
+                # заранее, он терял приветствие навсегда: обработчик падал на
+                # первой партии, курсор не двигался, а приветствие второй раз не
+                # собиралось. И это не единственная потеря - несдвинутый курсор
+                # держит холодный старт, при котором diff_* молчат по правилу
+                # первого чтения. Наблюдение замолкало целиком и навсегда, при
+                # живом цикле и без единой строки в журнале.
+                greeting = primed(account_id, orders.observed_at, ("orders", "chats"))
+                batch = (greeting, *fresh)
+
+            # Номер попытки проставляется здесь, а не в строителе событий:
+            # строитель не знает, доставлялось ли это событие раньше, - знает
+            # цикл. Доставка объявлена как минимум однократной, и событие, на
+            # котором обработчик упал, приходит снова тем же отпечатком; без
+            # номера попытки обработчик не отличит повтор от нового события.
+            #
+            # Счётчик пересобирается по партии целиком, а не накапливается:
+            # событие, переставшее порождаться (список изменился, курсор ушёл
+            # вперёд), само выпадает из счётчика, и он не растёт без предела.
+            attempts = {event.id: attempts.get(event.id, 0) + 1 for event in batch}
+            batch = tuple(
+                replace(event, delivery=Delivery(attempt=attempts[event.id])) for event in batch
+            )
 
             reply = yield Deliver(batch)
             if not isinstance(reply, StepResult):
@@ -750,6 +850,15 @@ class Engine:
             result = reply
 
             dedup.commit(result.delivered, now)
+            if greeting is not None and greeting.id in {event.id for event in result.delivered}:
+                # Поздоровались только тогда, когда приветствие дошло. Иначе
+                # второго раза не будет: приветствие собирается один раз за
+                # признак, а не за партию.
+                greeted = True
+            # Доставленное выбывает: гашение повторов больше его не пропустит,
+            # и держать номер попытки не для чего.
+            for event in result.delivered:
+                attempts.pop(event.id, None)
 
             # Курсор снимается только с полного чтения. Снятый с неполного, он
             # потерял бы выпавшие строки, и при следующем чтении они выглядели
@@ -782,6 +891,12 @@ class Engine:
                 state.save(
                     {
                         "dedup": dedup.snapshot(),
+                        # Номера попыток переживают перезапуск вместе с гашением.
+                        # Иначе перезапуск обнулял бы их, и событие, падавшее
+                        # пятый раз, приходило бы с номером один - то есть
+                        # выглядело бы новым ровно тогда, когда обработчику
+                        # важнее всего знать, что оно не новое.
+                        "attempts": attempts,
                         "cursor": {
                             "orders": known_orders,
                             "chats": known_chats,

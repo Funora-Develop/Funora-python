@@ -34,6 +34,7 @@ def _event(event_id: str, key: str = "chat:1") -> Event:
     return Event(
         id=event_id,
         type=EventType.MESSAGE_CREATED,
+        account_id="12345678",
         ordering_key=key,
         entity_id="1",
         observed_at=datetime(2026, 8, 19, tzinfo=UTC),

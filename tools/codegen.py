@@ -597,6 +597,12 @@ def render_budget(spec: Path) -> str:
         "MAX_WAIT_MS",
         "COUNTS_RETRIES",
         "COUNTS_REDIRECTS",
+        "MAX_QUEUE_DEPTH_PER_KEY",
+        "MAX_CONCURRENT_HANDLERS",
+        "HANDLER_TIMEOUT_MS",
+        "MAX_CONNECTIONS_PER_HOST",
+        "MAX_RESPONSE_BYTES",
+        "MAX_DECOMPRESSED_BYTES",
         "MAX_REDIRECTS",
         "Scheduling",
         "SCHEDULING",
@@ -642,7 +648,68 @@ def render_budget(spec: Path) -> str:
     out.append(f"COUNTS_REDIRECTS: Final[bool] = {bool(doc['counting']['counts_redirects'])}\n")
 
     out.append("\n#: Предел числа переходов на один запрос.\n")
-    out.append(f"MAX_REDIRECTS: Final[int] = {limits['max_redirects']}\n")
+    # Каждое число из раздела limits попадает в модуль. Прежде попадало одно из
+    # семи, а остальные оседали литералами в транспорте и в цикле - то есть
+    # правка спецификации меняла порождённый файл и не меняла поведение. Молча.
+    #
+    # Ключи перечислены поимённо, а не обходятся циклом, потому что каждому нужна
+    # своя единица измерения в комментарии. Неизвестный ключ - отказ: раздел
+    # дописали, а генератор об этом не знает, и знать об этом должен человек.
+    known_limits = {
+        "max_queue_depth_per_key": (
+            "MAX_QUEUE_DEPTH_PER_KEY",
+            "int",
+            "Сколько событий помещается в очередь одного ключа упорядочивания, штук.",
+        ),
+        "max_concurrent_handlers": (
+            "MAX_CONCURRENT_HANDLERS",
+            "int",
+            "Сколько обработчиков выполняется одновременно, штук.",
+        ),
+        "handler_timeout_ms": (
+            "HANDLER_TIMEOUT_MS",
+            "int",
+            "Сколько ждать обработчик, прежде чем счесть его зависшим, миллисекунды.",
+        ),
+        "max_connections_per_host": (
+            "MAX_CONNECTIONS_PER_HOST",
+            "int",
+            "Сколько соединений с одним хостом держать одновременно, штук.",
+        ),
+        "max_response_bytes": (
+            "MAX_RESPONSE_BYTES",
+            "int",
+            "Предел размера полученного тела, байты.",
+        ),
+        "max_decompressed_bytes": (
+            "MAX_DECOMPRESSED_BYTES",
+            "int",
+            "Предел размера тела после распаковки, байты.",
+        ),
+        "max_redirects": (
+            "MAX_REDIRECTS",
+            "int",
+            "Предел числа переходов при ручном следовании, штук.",
+        ),
+    }
+    unknown = sorted(
+        key
+        for key in limits
+        if key not in known_limits and not key.endswith("_rule") and not key.endswith("_note")
+    )
+    if unknown:
+        raise SystemExit(
+            f"spec/runtime/budget.yaml: раздел limits содержит {unknown}, "
+            "а генератор о них не знает. Молча уронить их значило бы завести "
+            "число в контракте, которого нет в реализации: правка спецификации "
+            "меняла бы порождённый файл и не меняла поведение"
+        )
+
+    for key, (const_name, kind, note) in known_limits.items():
+        if key not in limits:
+            raise SystemExit(f"spec/runtime/budget.yaml: в разделе limits нет {key}")
+        out.append(f"\n#: {note}\n")
+        out.append(f"{const_name}: Final[{kind}] = {limits[key]}\n")
 
     schedule = doc["scheduling"]
     out.append("\n\n@dataclass(frozen=True, slots=True)\n")
@@ -725,7 +792,16 @@ def render_events(spec: Path) -> str:
     ]
 
     out.append("__all__ = [\n")
-    for name in ("EventType", "ORDERING_KEY", "FINGERPRINT_FIELDS", "DEDUP_TTL_MS"):
+    for name in (
+        "EventType",
+        "ORDERING_KEY",
+        "FINGERPRINT_FIELDS",
+        "FINGERPRINT_SEPARATOR",
+        "FINGERPRINT_HASH",
+        "FINGERPRINT_DIGEST_BYTES",
+        "FINGERPRINT_LENGTH",
+        "DEDUP_TTL_MS",
+    ):
         out.append(f'    "{name}",\n')
     out.append("]\n")
 
@@ -755,6 +831,38 @@ def render_events(spec: Path) -> str:
     for field_name in identity["fingerprint_from"]:
         out.append(f'    "{field_name}",\n')
     out.append(")\n")
+
+    algorithm: dict[str, Any] = doc["fingerprint_algorithm"]
+    if algorithm.get("separator") != "U+001F":
+        raise SystemExit(
+            "spec/events/delivery.yaml: разделитель отпечатка обязан быть U+001F - "
+            "все части приходят снаружи, и печатный разделитель рано или поздно "
+            "встретится внутри части, склеив две разные четвёрки в одну строку"
+        )
+
+    out.append("\n#: Чем разделяются части при склейке перед хэшированием.\n")
+    out.append("#:\n")
+    out.append("#: Управляющий знак, а не печатный: все части приходят снаружи, и любой\n")
+    out.append("#: печатный разделитель рано или поздно встретится внутри части. Тогда две\n")
+    out.append("#: разные четвёрки склеятся в одну строку, и два разных события получат\n")
+    out.append("#: один отпечаток - молча.\n")
+    out.append('FINGERPRINT_SEPARATOR: Final[str] = "\\x1f"\n')
+
+    out.append("\n#: Имя алгоритма хэширования из hashlib.\n")
+    out.append("#:\n")
+    out.append("#: Выбор не про стойкость: отпечаток не защищает ни от кого, он различает.\n")
+    out.append("#: Зафиксирован он потому, что должен совпасть у шести реализаций.\n")
+    out.append(f'FINGERPRINT_HASH: Final[str] = "{algorithm["hash"]}"\n')
+
+    out.append("\n#: Длина хэша в байтах.\n")
+    out.append(f"FINGERPRINT_DIGEST_BYTES: Final[int] = {algorithm['digest_size_bytes']}\n")
+
+    out.append("\n#: Длина отпечатка в знаках шестнадцатеричной записи.\n")
+    out.append("#:\n")
+    out.append("#: Зафиксирована отдельно от длины хэша, чтобы реализация не удлинила её\n")
+    out.append("#: вслед за сменой алгоритма, не заметив, что этим обнулила сохранённые\n")
+    out.append("#: ключи идемпотентности у всех, кто уже работает.\n")
+    out.append(f"FINGERPRINT_LENGTH: Final[int] = {algorithm['length_chars']}\n")
 
     out.append("\n#: Сколько хранится запись о доставленном событии, миллисекунды.\n")
     out.append(f"DEDUP_TTL_MS: Final[int] = {dedup['ttl_ms']}\n")

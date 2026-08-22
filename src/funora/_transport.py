@@ -41,6 +41,12 @@ import httpx
 from ._hops import Follow, Reject, next_hop
 from ._host import host_of
 from ._secret import Secret
+from .budget import (
+    MAX_CONNECTIONS_PER_HOST,
+    MAX_DECOMPRESSED_BYTES,
+    MAX_REDIRECTS,
+    MAX_RESPONSE_BYTES,
+)
 from .errors import NetworkError, RemoteServerError, TimeoutError
 
 __all__ = ["Observation", "Fetcher", "AsyncFetcher", "TransportSettings"]
@@ -58,15 +64,24 @@ _warned = False
 class TransportSettings:
     """Настройки транспорта.
 
-    Значения соответствуют spec/runtime/budget.yaml. Там они помечены как
-    провизорные и будут уточнены по результатам наблюдений.
+    Числа берутся из порождённого модуля budget, а не пишутся здесь. Прежде они
+    были литералами «по мотивам» спецификации, и правка спецификации меняла
+    порождённый файл, не меняя поведения: предел переходов, размера ответа и
+    числа соединений оставался прежним. Молча.
+
+    В спецификации числа помечены провизорными и будут уточнены по результатам
+    наблюдений - тем важнее, чтобы уточнение доходило до транспорта само.
 
     Args:
         base_url (str): Базовый адрес площадки.
         connect_timeout_s (float): Предел на установку соединения, секунды.
         read_timeout_s (float): Предел на чтение ответа, секунды.
         max_connections (int): Предел одновременных соединений на хост.
-        max_response_bytes (int): Предел размера ответа, байты.
+        max_response_bytes (int): Предел размера полученного тела, байты.
+        max_decompressed_bytes (int): Предел размера тела после распаковки,
+            байты. Отдельный предел, а не тот же самый: сжатый ответ в мегабайт
+            разворачивается в сотни, и одна проверка на двоих ловит только тот
+            случай, который и так виден.
         max_redirects (int): Предел числа переходов при ручном следовании.
         user_agent (str): Значение заголовка User-Agent. Задаётся спецификацией,
             а не оставляется на усмотрение реализации: одинаковое поведение
@@ -76,9 +91,10 @@ class TransportSettings:
     base_url: str = "https://funpay.com"
     connect_timeout_s: float = 10.0
     read_timeout_s: float = 20.0
-    max_connections: int = 4
-    max_response_bytes: int = 8 * 1024 * 1024
-    max_redirects: int = 5
+    max_connections: int = MAX_CONNECTIONS_PER_HOST
+    max_response_bytes: int = MAX_RESPONSE_BYTES
+    max_decompressed_bytes: int = MAX_DECOMPRESSED_BYTES
+    max_redirects: int = MAX_REDIRECTS
     user_agent: str = "Funora/0.0.1 (+https://github.com/Funora-Develop)"
 
 
@@ -96,6 +112,9 @@ class Observation:
         elapsed_ms (int): Длительность запроса, миллисекунды.
         redirects (int): Сколько переходов было выполнено.
         content_length (int): Размер полученного тела в байтах.
+        content_encoding (str): Кодирование тела, как его объявил сервер. Пустая
+            строка означает, что сервер послушался просьбы не сжимать, и длину
+            можно сравнивать с объявленной.
         declared_length (int | None): Длина, объявленная заголовком
             Content-Length, если он был. Нужна для проверки целостности:
             страница, оборванная посреди таблицы, проходит и классификацию, и
@@ -116,6 +135,7 @@ class Observation:
     elapsed_ms: int
     redirects: int
     content_length: int
+    content_encoding: str = ""
     declared_length: int | None = None
     retry_after_ms: int | None = None
     requests_sent: int = 1
@@ -183,6 +203,24 @@ def _client_kwargs(settings: TransportSettings) -> dict[str, object]:
         "headers": {
             "User-Agent": settings.user_agent,
             "Accept-Language": "ru,en;q=0.8",
+            # Сжатие запрашивается отключённым, и это не про экономию, а про
+            # единственную защиту от обрыва тела.
+            #
+            # Библиотека распаковывает ответ прозрачно, а заголовок
+            # Content-Length объявляет длину СЖАТОГО тела. Проверка целостности
+            # сравнивала распакованную длину с объявленной сжатой - двести тысяч
+            # байт против двухсот пятидесяти, - и проходила всегда, в том числе
+            # на оборванном ответе. Проверка была мертва ровно там, где нужна.
+            #
+            # Распаковка обрыв тоже не ловит: оборванный gzip разворачивается
+            # частично и без ошибки. Проверено - половина потока дала 88 тысяч
+            # байт правдоподобного текста.
+            #
+            # Цена - трафик. Запросов от этого больше не становится, а страница,
+            # оборванная посреди таблицы, проходит и классификацию как
+            # пригодную, и разбор как полный: вызывающий получает половину
+            # заказов с нулём повреждений.
+            "Accept-Encoding": "identity",
         },
     }
 
@@ -234,10 +272,17 @@ def _observe(
         RemoteServerError: Если ответ превысил предел размера.
     """
     raw = response.content
-    if len(raw) > settings.max_response_bytes:
-        raise RemoteServerError(
-            f"ответ превысил предел {settings.max_response_bytes} байт: получено {len(raw)}"
-        )
+    # Два предела, а не один. Полученное тело меряется одним, распакованное -
+    # другим: сжатый ответ в мегабайт разворачивается в сотни, и одна проверка
+    # на двоих ловит только тот случай, который и так виден.
+    encoded = (response.headers.get("content-encoding") or "").strip().lower()
+    limit = (
+        settings.max_decompressed_bytes
+        if encoded not in ("", "identity")
+        else settings.max_response_bytes
+    )
+    if len(raw) > limit:
+        raise RemoteServerError(f"ответ превысил предел {limit} байт: получено {len(raw)}")
 
     return Observation(
         status=response.status_code,
@@ -247,6 +292,7 @@ def _observe(
         redirects=redirects,
         requests_sent=sent,
         content_length=len(raw),
+        content_encoding=(response.headers.get("content-encoding") or "").strip().lower(),
         declared_length=_header_int(response, "content-length"),
         retry_after_ms=_retry_after_ms(response),
     )

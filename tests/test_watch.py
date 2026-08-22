@@ -26,7 +26,7 @@ from funora._diff import Event
 from funora._engine import Engine, Pause
 from funora._poll import Schedule
 from funora._transport import Observation, TransportSettings
-from funora._watch import PRODUCIBLE, Router, dispatch, incomplete, primed
+from funora._watch import PRODUCIBLE, Router, dispatch, incomplete, loss, primed
 from funora.errors import (
     AccessBlockedError,
     ConfigurationError,
@@ -55,6 +55,7 @@ def _event(index: int, event_type: EventType = EventType.ORDER_CREATED) -> Event
     return Event(
         id=f"e{index}",
         type=event_type,
+        account_id="12345678",
         ordering_key=f"order:{index}",
         entity_id=str(index),
         observed_at=datetime(2026, 8, 19, tzinfo=UTC),
@@ -1509,16 +1510,16 @@ def test_every_declared_kind_is_actually_produced() -> None:
                 account_id=account,
             )
         ),
-        primed(account, when, "account:" + account).type,
+        primed(account, when, ("orders", "chats")).type,
         incomplete(
             account,
             when,
-            "account:" + account,
             entity="orders",
             reason="page_defects",
             rows_total=8,
             rows_accepted=8,
         ).type,
+        loss(account, when, lost=1, reason="queue_overflow").type,
     }
 
     assert produced >= PRODUCIBLE, (
@@ -1646,7 +1647,6 @@ def test_incompleteness_that_grew_is_reported_again() -> None:
     first = incomplete(
         "acc",
         when,
-        "account:acc",
         entity="orders",
         reason="page_defects",
         rows_total=8,
@@ -1655,7 +1655,6 @@ def test_incompleteness_that_grew_is_reported_again() -> None:
     grew = incomplete(
         "acc",
         when,
-        "account:acc",
         entity="orders",
         reason="page_defects",
         rows_total=8,
@@ -1664,7 +1663,6 @@ def test_incompleteness_that_grew_is_reported_again() -> None:
     same = incomplete(
         "acc",
         when,
-        "account:acc",
         entity="orders",
         reason="page_defects",
         rows_total=8,
@@ -1673,7 +1671,6 @@ def test_incompleteness_that_grew_is_reported_again() -> None:
     other = incomplete(
         "acc",
         when,
-        "account:acc",
         entity="chats",
         reason="page_defects",
         rows_total=8,
@@ -1683,3 +1680,409 @@ def test_incompleteness_that_grew_is_reported_again() -> None:
     assert first.id == same.id, "та же неполнота обязана гаситься как повтор"
     assert first.id != grew.id, "выросшая неполнота обязана дойти заново"
     assert first.id != other.id, "неполнота другого списка - другое событие"
+
+
+def test_redelivery_is_marked_as_a_repeat(no_sleep: list[float]) -> None:
+    """Проверяет, что повторная доставка отличима от первой.
+
+    Доставка объявлена как минимум однократной: событие, на котором обработчик
+    упал, приходит снова тем же отпечатком. Без номера попытки обработчик не
+    отличает повтор от нового события - а это ровно тот случай, ради которого
+    гарантию и формулируют: выдать товар дважды дешевле не становится оттого,
+    что второй раз был повтором.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    attempts: list[int] = []
+    router = Router()
+
+    @router.on(EventType.ORDER_CREATED)
+    def refuse(event: Event) -> None:
+        """Отказывается принимать событие, запомнив номер попытки.
+
+        Args:
+            event (Event): Событие.
+
+        Returns:
+            None
+
+        Raises:
+            ValueError: Всегда - отказ обработчика.
+        """
+        attempts.append(event.delivery.attempt)
+        raise ValueError("обработчик не принял")
+
+    orders, chats = _page("orders-trade.logged.ru"), _page("chat.logged.ru")
+    # На втором шаге в списке появляется заказ, на третьем список тот же.
+    # Курсор не двигается - обработчик не принял, - и событие приходит снова.
+    grown = _renamed_first_order(orders)
+    transport = _Cycle([orders, chats, grown, chats, grown, chats])
+    with Client(transport=transport) as client:  # type: ignore[arg-type]
+        client.watch(router, max_iterations=3)
+
+    assert attempts, "события о заказах не дошли ни разу"
+    assert max(attempts) > 1, (
+        "все доставки помечены первой попыткой - обработчик не отличит повтор "
+        f"от нового события; номера: {sorted(set(attempts))}"
+    )
+    assert min(attempts) == 1, "первая доставка обязана быть первой попыткой"
+
+
+def test_counter_holds_only_what_is_still_undelivered(
+    no_sleep: list[float], tmp_path: Path
+) -> None:
+    """Проверяет, что счётчик попыток не тащит доставленное.
+
+    Счётчик переживает перезапуск вместе с гашением повторов, то есть пишется на
+    диск. Запись о доставленном событии там не нужна ни для чего: гашение
+    повторов его больше не пропустит. Счётчик, из которого ничего не выбывает,
+    растёт файлом состояния - и это не гипотетически, а по одной записи на
+    каждое событие, дошедшее за всё время работы.
+
+    Проверяется по файлу, а не по номерам попыток у обработчика: номера
+    пересобираются по партии, и лишняя запись в них не видна. Видна она ровно
+    там, где вредит.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+        tmp_path (Path): Временный каталог для файла состояния.
+
+    Returns:
+        None
+    """
+    state_path = tmp_path / "state.json"
+    orders, chats = _page("orders-trade.logged.ru"), _page("chat.logged.ru")
+    grown = _renamed_first_order(orders)
+
+    seen: list[Event] = []
+    router = Router()
+    router.on()(seen.append)
+
+    with Client(transport=_Cycle([orders, chats, grown, chats])) as client:  # type: ignore[arg-type]
+        client.watch(router, max_iterations=2, state_path=state_path)
+
+    assert seen, "события не дошли - проверять нечего"
+    assert {event.delivery.attempt for event in seen} == {1}, (
+        "принятое с первого раза событие помечено повтором"
+    )
+
+    saved = json.loads(state_path.read_text(encoding="utf-8"))["payload"]
+    assert saved.get("attempts") == {}, (
+        f"в сохранённом счётчике осталось {saved.get('attempts')} - "
+        "это записи о доставленном, и они будут копиться вечно"
+    )
+
+
+def test_attempt_survives_a_restart(no_sleep: list[float], tmp_path: Path) -> None:
+    """Проверяет, что номер попытки переживает перезапуск.
+
+    Перезапуск, обнуляющий счётчик, выдаёт событие, падавшее пятый раз, за
+    новое - то есть врёт ровно тогда, когда обработчику важнее всего знать, что
+    оно не новое. А перезапуск после серии отказов - обычное дело: так и
+    лечат зависший обработчик.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+        tmp_path (Path): Временный каталог для файла состояния.
+
+    Returns:
+        None
+    """
+    state = tmp_path / "state.json"
+    orders, chats = _page("orders-trade.logged.ru"), _page("chat.logged.ru")
+
+    def run(iterations: int, pages: list[str]) -> list[int]:
+        """Прогоняет цикл с отказывающим обработчиком.
+
+        Args:
+            iterations (int): Сколько шагов сделать.
+            pages (list[str]): Страницы, которые отдаёт подставной транспорт.
+
+        Returns:
+            list[int]: Номера попыток, которые увидел обработчик.
+        """
+        seen: list[int] = []
+        router = Router()
+
+        @router.on(EventType.ORDER_CREATED)
+        def refuse(event: Event) -> None:
+            """Отказывается принимать событие.
+
+            Args:
+                event (Event): Событие.
+
+            Returns:
+                None
+
+            Raises:
+                ValueError: Всегда.
+            """
+            seen.append(event.delivery.attempt)
+            raise ValueError("обработчик не принял")
+
+        with Client(transport=_Cycle(pages)) as client:  # type: ignore[arg-type]
+            client.watch(router, max_iterations=iterations, state_path=state)
+        return seen
+
+    grown = _renamed_first_order(orders)
+    # Первый прогон: заказ появляется на втором шаге и не принимается.
+    first = run(2, [orders, chats, grown, chats])
+    # Второй прогон начинается с восстановленного курсора, и заказ приходит
+    # снова - обработчик его так и не принял.
+    second = run(1, [grown, chats])
+
+    assert first and second
+    assert second[0] > max(first), (
+        f"после перезапуска номер попытки {second[0]} не продолжил ряд {first} - счётчик обнулился"
+    )
+
+
+def test_failure_on_the_first_batch_does_not_silence_the_watch(
+    no_sleep: list[float],
+) -> None:
+    """Проверяет, что отказ на приветствии не убивает наблюдение навсегда.
+
+    Самая дорогая из найденных потерь. Признак «поздоровались» поднимался ДО
+    раздачи, и обработчик, упавший на первой партии, забирал с собой всё: курсор
+    не двигался, потому что партия не принята; приветствие второй раз не
+    собиралось, потому что признак уже поднят; а несдвинутый курсор держит
+    холодный старт, при котором diff_* молчат по правилу первого чтения.
+
+    Цикл продолжал работать, ходить на площадку и тратить бюджет - и не
+    порождал больше ни одного события. Ни исключения, ни строки в журнале.
+
+    Отказ на первой партии - не выдуманный случай: первое, что делает
+    обработчик, это обращается к своей базе, а первое обращение и падает, если
+    база ещё не поднялась.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    orders, chats = _page("orders-trade.logged.ru"), _page("chat.logged.ru")
+    grown = _renamed_first_order(orders)
+
+    seen: list[EventType] = []
+    router = Router()
+
+    @router.on()
+    def handle(event: Event) -> None:
+        """Падает на первом приветствии и принимает всё остальное.
+
+        Args:
+            event (Event): Событие.
+
+        Returns:
+            None
+
+        Raises:
+            ValueError: На первом приветствии.
+        """
+        seen.append(event.type)
+        if event.type is EventType.WATCH_PRIMED and seen.count(EventType.WATCH_PRIMED) == 1:
+            raise ValueError("база ещё не поднялась")
+
+    transport = _Cycle([orders, chats, orders, chats, grown, chats])
+    with Client(transport=transport) as client:  # type: ignore[arg-type]
+        client.watch(router, max_iterations=3)
+
+    assert seen.count(EventType.WATCH_PRIMED) == 2, (
+        "приветствие не пришло второй раз - признак «поздоровались» поднят "
+        "до раздачи, и наблюдение замолчало навсегда"
+    )
+    assert EventType.ORDER_CREATED in seen, (
+        "после принятого приветствия наблюдение так и не заработало: курсор "
+        "остался на холодном старте"
+    )
+
+
+def test_greeting_is_not_repeated_after_it_was_taken(no_sleep: list[float]) -> None:
+    """Проверяет, что принятое приветствие не приходит снова.
+
+    Обратная сторона починки. Признак, поднимаемый по факту доставки, легко
+    сделать не поднимающимся вовсе - и тогда приветствие уходит каждый шаг, а
+    события данных не уходят никогда: тот самый случай, из-за которого признак
+    когда-то и появился.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    orders, chats = _page("orders-trade.logged.ru"), _page("chat.logged.ru")
+
+    seen: list[EventType] = []
+    router = Router()
+    router.on()(lambda event: seen.append(event.type))
+
+    with Client(transport=_Cycle([orders, chats])) as client:  # type: ignore[arg-type]
+        client.watch(router, max_iterations=3)
+
+    assert seen.count(EventType.WATCH_PRIMED) == 1, (
+        f"приветствие пришло {seen.count(EventType.WATCH_PRIMED)} раз за три шага"
+    )
+
+
+def test_incomplete_thread_tells_the_handler(no_sleep: list[float]) -> None:
+    """Проверяет, что неполно прочитанная переписка не проходит молча.
+
+    Объявлялись только списки, и это была половина правила. Для торгового бота
+    переписка - главное место: неполно прочитанная означает, что часть сообщений
+    покупателя не увидели вовсе, а событий по прочитанной части при этом пришло
+    сколько-то, и выглядят они как вся переписка.
+
+    Событие несёт ссылку на диалог: неполон не весь снимок, а одна переписка, и
+    без ссылки получатель не узнает, какая из полусотни прочитана наполовину.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    dialogs = _numeric_dialogs(_page("chat.logged.ru"))
+    thread = _page("chat-thread.logged.ru")
+    # Отметка времени убирается у всех сообщений: повреждение поднимается до
+    # уровня страницы только когда поле пропало везде.
+    broken = thread.replace('class="chat-msg-date"', 'class="chat-msg-gone"')
+    assert broken != thread, "порча не применилась - проверка бессмысленна"
+
+    _, events = _follow_run(
+        [dialogs, _moved(dialogs, "777")],
+        2,
+        [broken, broken],
+    )
+
+    notices = [
+        event
+        for event in events
+        if event.type is EventType.SNAPSHOT_INCOMPLETE and event.payload.get("entity") == "thread"
+    ]
+    assert notices, "неполно прочитанная переписка прошла молча"
+    assert notices[0].payload.get("entity_ref"), (
+        "событие не называет диалог - получатель не узнает, какая переписка прочитана наполовину"
+    )
+
+
+def test_complete_thread_says_nothing(no_sleep: list[float]) -> None:
+    """Проверяет, что целиком прочитанная переписка события о неполноте не даёт.
+
+    Без этой проверки правило вырождается в «сообщать всегда», и получатель
+    привыкает не читать.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    dialogs = _numeric_dialogs(_page("chat.logged.ru"))
+
+    _, events = _follow_run([dialogs, _moved(dialogs, "777")], 2)
+
+    assert not [
+        event
+        for event in events
+        if event.type is EventType.SNAPSHOT_INCOMPLETE and event.payload.get("entity") == "thread"
+    ]
+
+
+def test_queue_overflow_is_announced_not_silent(
+    no_sleep: list[float], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Проверяет, что переполнение очереди не проходит молча.
+
+    Очередь дочитывания пополняется на каждом изменении диалога, а вычерпывается
+    по несколько штук за шаг: у продавца с полусотней активных переписок она
+    растёт быстрее, чем убывает. Предел объявлен спецификацией и до сих пор не
+    применялся - очередь была неограниченной.
+
+    Ограничить её и промолчать было бы худшим исходом: сообщение покупателя не
+    прочитается никогда, и узнать об этом неоткуда. Поэтому выброшенное
+    объявляется событием потери.
+
+    Предел подменяется на маленький: набрать полтораста диалогов в наборе
+    негде.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+        monkeypatch (pytest.MonkeyPatch): Механизм подмены.
+
+    Returns:
+        None
+    """
+    import funora._engine as engine_module
+
+    monkeypatch.setattr(engine_module, "MAX_QUEUE_DEPTH_PER_KEY", 3)
+
+    dialogs = _numeric_dialogs(_page("chat.logged.ru"))
+    # Второе чтение сдвигает позиции у всех диалогов сразу: в очередь попадает
+    # столько узлов, сколько их на странице.
+    moved = re.sub(r'data-node-msg="[^"]*"', 'data-node-msg="T10:d#сдвинуто"', dialogs)
+    assert moved != dialogs, "порча не применилась - проверка бессмысленна"
+
+    _, events = _follow_run([dialogs, moved], 2)
+
+    losses = [event for event in events if event.type is EventType.EVENT_LOSS]
+    assert losses, "очередь переполнилась молча"
+    assert losses[0].payload["lost"] > 0
+    assert losses[0].payload["reason_code"] == "queue_overflow"
+
+
+def test_queue_within_the_limit_reports_no_loss(no_sleep: list[float]) -> None:
+    """Проверяет, что непереполненная очередь событий потери не даёт.
+
+    Без этой проверки правило вырождается в «сообщать всегда», и получатель
+    привыкает не читать.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    dialogs = _numeric_dialogs(_page("chat.logged.ru"))
+
+    _, events = _follow_run([dialogs, _moved(dialogs, "777")], 2)
+
+    assert not [event for event in events if event.type is EventType.EVENT_LOSS]
+
+
+def test_overflow_drops_the_tail_not_the_head(
+    no_sleep: list[float], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Проверяет, что при переполнении выбывает хвост, а не голова.
+
+    В голове очереди самые давние диалоги - они ждут дольше всех. Выбросить их
+    значило бы гарантировать, что именно они не дочитаются никогда, а
+    дочитываться будут только свежие.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+        monkeypatch (pytest.MonkeyPatch): Механизм подмены.
+
+    Returns:
+        None
+    """
+    import funora._engine as engine_module
+
+    monkeypatch.setattr(engine_module, "MAX_QUEUE_DEPTH_PER_KEY", 2)
+
+    dialogs = _numeric_dialogs(_page("chat.logged.ru"))
+    moved = re.sub(r'data-node-msg="[^"]*"', 'data-node-msg="T10:d#сдвинуто"', dialogs)
+
+    transport, _ = _follow_run([dialogs, moved], 2)
+
+    read = transport.threads_read()
+    assert read, "ни одна переписка не прочитана"
+    first_on_page = re.search(r'data-id="(\d+)"', dialogs).group(1)
+    assert read[0] == f"/chat/?node={first_on_page}", (
+        f"первой прочитана {read[0]}, а не голова очереди - выбывает не хвост"
+    )

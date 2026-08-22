@@ -28,12 +28,19 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Final
 
-from ._diff import Event
-from .errors import ConfigurationError, FunoraError, HandlerError
-from .events import EventType
+from ._diff import Event, make_event
+from .budget import HANDLER_TIMEOUT_MS, MAX_CONCURRENT_HANDLERS
+from .errors import (
+    ConfigurationError,
+    FunoraError,
+    HandlerError,
+    HandlerTimeoutError,
+)
+from .events import ORDERING_KEY, EventType
 
 __all__ = [
     "Router",
+    "loss",
     "incomplete",
     "Handler",
     "StepResult",
@@ -60,6 +67,18 @@ _PRIMED: Final[EventType] = EventType.WATCH_PRIMED
 #: Событие, которым отмечается неполно собранный снимок.
 _INCOMPLETE: Final[EventType] = EventType.SNAPSHOT_INCOMPLETE
 
+#: Событие, которым объявляется потеря событий.
+_LOSS: Final[EventType] = EventType.EVENT_LOSS
+
+#: Причина, по которой наблюдение объявляется начавшимся.
+_COLD_START: Final[str] = "cold_start"
+
+#: Разделитель частей версии сущности.
+#:
+#: Управляющий знак, а не двоеточие: причина неполноты приходит со страницы
+#: и содержать двоеточие вправе.
+_PART_SEP: Final[str] = "\x1f"
+
 
 #: Виды событий, которые эта реализация вправду порождает.
 #:
@@ -83,6 +102,7 @@ PRODUCIBLE: Final[frozenset[EventType]] = frozenset(
         EventType.ORDER_STATUS_CHANGED,
         EventType.WATCH_PRIMED,
         EventType.SNAPSHOT_INCOMPLETE,
+        EventType.EVENT_LOSS,
     }
 )
 
@@ -235,6 +255,24 @@ def dispatch_core(
             exc = yield (handler, event)
             if exc is None:
                 continue
+            if isinstance(exc, HandlerError):
+                # Отказ обработчика - его беда, а не условие площадки, и это
+                # верно даже для отказа по времени: HandlerTimeoutError входит в
+                # иерархию Funora, и без этой ветки один задумавшийся обработчик
+                # останавливал бы наблюдение целиком.
+                #
+                # Ветка стоит ПЕРЕД проверкой на FunoraError намеренно:
+                # HandlerError её потомок, и обратный порядок отправил бы отказ
+                # обработчика в fatal.
+                broke = True
+                errors.append(exc)
+                _log.warning(
+                    "обработчик отказал на событии %s (ключ %s): %s",
+                    event.type,
+                    event.ordering_key,
+                    type(exc).__name__,
+                )
+                break
             if isinstance(exc, FunoraError):
                 # Раньше здесь стоял raise, и партия обрывалась посреди раздачи:
                 # накопленные delivered и failed пропадали, курсор не
@@ -349,7 +387,29 @@ async def _adispatch_serially(router: Router, events: tuple[Event, ...]) -> Step
         try:
             outcome = handler(event)
             if inspect.isawaitable(outcome):
-                await outcome
+                # Предел времени объявлен спецификацией и до сих пор не
+                # применялся нигде: обработчик, ушедший в вечное ожидание,
+                # останавливал цикл наблюдения целиком. Ни исключения, ни
+                # строки в журнале - клиент просто переставал ходить на
+                # площадку, и внешне это неотличимо от «ничего не происходит».
+                #
+                # Обещание должно быть либо выполнено, либо снято. Здесь оно
+                # выполнимо: сопрограмму можно отменить.
+                await asyncio.wait_for(outcome, HANDLER_TIMEOUT_MS / 1000)
+        except TimeoutError as exc:
+            _log.warning(
+                "обработчик не уложился в %d мс на событии %s (ключ %s)",
+                HANDLER_TIMEOUT_MS,
+                event.type,
+                event.ordering_key,
+            )
+            timeout = HandlerTimeoutError(
+                f"обработчик {getattr(handler, '__name__', handler)!r} не уложился "
+                f"в {HANDLER_TIMEOUT_MS} мс на событии {event.type} с ключом "
+                f"{event.ordering_key}"
+            )
+            timeout.__cause__ = exc
+            reply = timeout
         except Exception as exc:  # noqa: BLE001
             reply = exc
 
@@ -449,11 +509,29 @@ async def adispatch(
         router (Router): Реестр обработчиков.
         events (tuple[Event, ...]): События этого шага.
         concurrency (int): Сколько ключей упорядочивания обрабатывать
-            одновременно. Единица означает последовательную раздачу.
+            одновременно. Единица означает последовательную раздачу. Значение
+            выше объявленного спецификацией предела отвергается: договор об
+            одновременности - часть контракта, а не настройка вызывающего.
 
     Returns:
         StepResult: Что доставлено, что нет, и можно ли сдвигать базу.
+
+    Raises:
+        ConfigurationError: Если запрошено больше одновременных обработчиков,
+            чем объявляет спецификация.
     """
+    if concurrency > MAX_CONCURRENT_HANDLERS:
+        # Предел объявлен спецификацией и до сих пор не применялся: вызывающий
+        # мог попросить хоть тысячу. Тысяча одновременных обработчиков - это
+        # тысяча одновременных соединений с чужой базой у него и, что важнее,
+        # тысяча параллельных реакций на площадке.
+        #
+        # Отказ, а не тихое понижение: понизить молча значило бы дать
+        # вызывающему неверное представление о том, как работает его код.
+        raise ConfigurationError(
+            f"запрошено {concurrency} одновременных обработчиков, "
+            f"спецификация объявляет предел {MAX_CONCURRENT_HANDLERS}"
+        )
     if concurrency <= 1 or len(events) < 2:
         return await _adispatch_serially(router, events)
 
@@ -479,41 +557,57 @@ async def adispatch(
     return _merge(events, tuple(results))
 
 
-def primed(account_id: str, observed_at: datetime, ordering_key: str) -> Event:
+def primed(account_id: str, observed_at: datetime, entities: tuple[str, ...]) -> Event:
     """Собирает событие о сохранении первого снимка.
 
     Холодный старт молчит намеренно: события на каждую существующую сущность
     дали бы лавину «изменений» по всему наблюдаемому множеству сразу. Но молчать
-    совсем нельзя - вызывающий должен знать, что наблюдение началось.
+    совсем нельзя - вызывающий должен знать, что наблюдение началось, а не что
+    оно молчит по неисправности.
+
+    Идентификатор и ключ упорядочивания строятся общим строителем, а не вручную.
+    Прежде здесь собиралась строка «primed:{account_id}:{ordering_key}» с
+    ключом «account:...», и это расходилось с нормативным «watch:{watch_id}»
+    из спецификации, а версии сущности в идентификаторе не было вовсе.
 
     Args:
-        account_id (str): Идентификатор аккаунта.
+        account_id (str): Идентификатор аккаунта. Он же служит идентификатором
+            наблюдения: наблюдение ведётся за аккаунтом целиком.
         observed_at (datetime): Момент наблюдения.
-        ordering_key (str): Ключ упорядочивания наблюдения.
+        entities (tuple[str, ...]): За чем установлено наблюдение.
 
     Returns:
         Event: Событие watch.primed.
     """
-    return Event(
-        id=f"primed:{account_id}:{ordering_key}",
-        type=_PRIMED,
-        ordering_key=ordering_key,
+    return make_event(
+        account_id=account_id,
+        event_type=_PRIMED,
         entity_id=account_id,
+        # Версия - причина. Приветствие приходит один раз за срок гашения, и
+        # второе приветствие того же наблюдения было бы повтором.
+        revision=_COLD_START,
         observed_at=observed_at,
-        origin="structural",
-        payload={"reason": "cold_start"},
+        key_field="watch_id",
+        payload={
+            "watch_id": account_id,
+            # Перечень, а не число. Прежняя редакция схемы объявляла здесь
+            # количество - оно отвечает на «сколько», тогда как получателю нужен
+            # ответ на «за чем».
+            "entities": list(entities),
+            "reason": _COLD_START,
+        },
     )
 
 
 def incomplete(
     account_id: str,
     observed_at: datetime,
-    ordering_key: str,
     *,
     entity: str,
     reason: str,
     rows_total: int,
     rows_accepted: int,
+    entity_ref: str | None = None,
 ) -> Event:
     """Собирает событие о неполно собранном снимке.
 
@@ -527,45 +621,97 @@ def incomplete(
     поздний сигнал бесполезен: решение по неполным данным к тому времени уже
     принято.
 
-    Отпечаток строится из сущности, причины и числа принятых строк. Одна и та же
-    неполнота, держащаяся много шагов подряд, доходит один раз за срок гашения;
-    переход от «двух строк не хватает» к «не хватает двадцати» доходит сразу -
-    это новость.
+    Версия сущности - сущность, причина И ОБА ЧИСЛА. Первая редакция брала одно
+    число принятых строк, и этого мало: чтение 50 из 50 с тремя отброшенными и
+    чтение 100 из 100 с пятьюдесятью тремя отброшенными дают одинаковое число
+    принятых в одном случае из многих, а разница между «не хватает трёх» и «не
+    хватает пятидесяти трёх» - это новость, которую гасить нельзя.
 
     Args:
-        account_id (str): Идентификатор аккаунта.
+        account_id (str): Идентификатор аккаунта, он же наблюдения.
         observed_at (datetime): Момент наблюдения.
-        ordering_key (str): Ключ упорядочивания наблюдения.
         entity (str): Что прочитано неполно: orders, chats, thread.
         reason (str): Машиночитаемая причина неполноты со страницы.
         rows_total (int): Сколько кандидатов в строки нашлось.
         rows_accepted (int): Сколько строк принято.
+        entity_ref (str | None): К какой сущности относится неполнота, если она
+            не про список целиком. У переписки это диалог: без ссылки получатель
+            не узнает, какой из полусотни прочитан наполовину.
 
     Returns:
         Event: Событие snapshot.incomplete.
     """
-    return Event(
-        id=f"incomplete:{account_id}:{entity}:{reason}:{rows_accepted}",
-        type=_INCOMPLETE,
-        ordering_key=ordering_key,
+    return make_event(
+        account_id=account_id,
+        event_type=_INCOMPLETE,
         entity_id=account_id,
+        revision=_PART_SEP.join(
+            (entity, entity_ref or "", reason, f"{rows_accepted}/{rows_total}")
+        ),
         observed_at=observed_at,
-        origin="structural",
+        key_field="watch_id",
         payload={
             # Идентификатор наблюдения лежит и в нагрузке: так велит схема
-            # события, и это не дубль оболочки без причины. Нагрузку принято
-            # передавать дальше отдельно от оболочки - в очередь, в журнал, - и
+            # события, и это не дубль конверта без причины. Нагрузку принято
+            # передавать дальше отдельно от конверта - в очередь, в журнал, - и
             # там она обязана оставаться самодостаточной.
             "watch_id": account_id,
             "entity": entity,
-            # Чтение однослойное: страница запрошена одна и получена одна.
-            # Поля сохранены, потому что неполнота бывает и постраничной, а
-            # получателю нужно уметь различать роды по одному и тому же событию.
-            # Здесь расходятся не страницы, а строки.
+            # Ключ появляется только когда неполнота относится к отдельной
+            # сущности. Класть сюда None было бы неверно: None в этом контракте
+            # означает ненаблюдённое, а у списка наблюдать нечего - у него нет
+            # отдельной сущности, к которой неполноту можно отнести. Поле
+            # применимо или неприменимо, и это выражается наличием.
+            **({"entity_ref": entity_ref} if entity_ref is not None else {}),
+            # Чтение однослойное: страница запрошена одна и получена одна. Поля
+            # сохранены, потому что неполнота бывает и постраничной, а получатель
+            # обязан уметь различать роды по одному и тому же событию. Здесь
+            # расходятся не страницы, а строки.
             "pages_fetched": 1,
             "pages_requested": 1,
             "rows_total": rows_total,
             "rows_accepted": rows_accepted,
+            "reason_code": reason,
+        },
+    )
+
+
+def loss(account_id: str, observed_at: datetime, *, lost: int, reason: str) -> Event:
+    """Собирает событие о потерянных событиях.
+
+    Очередь дочитывания переписок ограничена: спецификация объявляет предел, и
+    предел этот нужен - очередь пополняется на каждом изменении диалога, а
+    вычерпывается по несколько штук за шаг. У продавца с полусотней активных
+    переписок она растёт быстрее, чем убывает.
+
+    Но ограничить очередь и молча выбросить лишнее - худший исход из возможных:
+    сообщение покупателя не будет прочитано никогда, и узнать об этом неоткуда.
+    Поэтому выброшенное объявляется вслух.
+
+    Само это событие не выбрасывается никогда: выбросить сообщение о потере
+    значит потерять и сам факт потери.
+
+    Args:
+        account_id (str): Идентификатор аккаунта, он же наблюдения.
+        observed_at (datetime): Момент наблюдения.
+        lost (int): Сколько диалогов выпало из очереди.
+        reason (str): Машиночитаемая причина потери.
+
+    Returns:
+        Event: Событие event.loss.
+    """
+    return make_event(
+        account_id=account_id,
+        event_type=_LOSS,
+        entity_id=account_id,
+        # Версия - причина и число: две потери подряд по одной причине с разным
+        # числом - разные новости, а с одинаковым - одна и та же.
+        revision=f"{reason}{_PART_SEP}{lost}",
+        observed_at=observed_at,
+        key_field="account_id",
+        payload={
+            "ordering_key": ORDERING_KEY[_LOSS].format(account_id=account_id),
+            "lost": lost,
             "reason_code": reason,
         },
     )

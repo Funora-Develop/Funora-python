@@ -32,19 +32,30 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import hashlib
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime
-from hashlib import blake2s
 from typing import Any, Final
 
 from ._chats import ChatsPage
 from ._observed import Observed
 from ._orders import OrdersPage
 from ._thread import Thread
-from .events import FINGERPRINT_FIELDS, ORDERING_KEY, EventType
+from .errors import ConfigurationError
+from .events import (
+    FINGERPRINT_DIGEST_BYTES,
+    FINGERPRINT_FIELDS,
+    FINGERPRINT_HASH,
+    FINGERPRINT_LENGTH,
+    FINGERPRINT_SEPARATOR,
+    ORDERING_KEY,
+    EventType,
+)
 
 __all__ = [
+    "Delivery",
+    "make_event",
     "UNREAD_STATUS",
     "UNKNOWN_UNREAD",
     "Event",
@@ -56,11 +67,45 @@ __all__ = [
     "thread_cursor",
 ]
 
+#: Как имя алгоритма из спецификации превращается в готовый хэшер.
+#:
+#: Таблица, а не hashlib.new: длину хэша blake2 задают аргументом конструктора,
+#: и через new её не передать. Таблица заодно делает громким тот случай, ради
+#: которого всё и затевалось - спецификация назвала алгоритм, которого
+#: реализация не умеет. Молча взять другой значило бы разойтись отпечатками с
+#: остальными SDK, а отпечаток - это ключ идемпотентности.
+_HASHERS: Final[dict[str, Callable[[], Any]]] = {
+    "blake2s": lambda: hashlib.blake2s(digest_size=FINGERPRINT_DIGEST_BYTES),
+    "blake2b": lambda: hashlib.blake2b(digest_size=FINGERPRINT_DIGEST_BYTES),
+}
+
+
 #: Происхождение события: выведено из разметки, а не из текста.
 _STRUCTURAL: Final[str] = "structural"
 
-#: Длина отпечатка события в знаках.
-_FINGERPRINT_LEN: Final[int] = 32
+
+@dataclass(frozen=True, slots=True)
+class Delivery:
+    """Метаданные доставки события.
+
+    Доставка объявлена как минимум однократной: событие, на котором обработчик
+    упал, приходит снова. Без этих полей обработчик не отличает вторую доставку
+    от нового события - а это ровно тот случай, ради которого гарантию и
+    формулируют: выдать товар дважды дешевле не становится оттого, что второй
+    раз был повтором.
+
+    Attributes:
+        attempt (int): Номер попытки доставки, с единицы. Больше единицы
+            означает повтор после отказа обработчика.
+        coalesced (bool): Собрано ли событие сжатием нескольких наблюдений.
+            Эта реализация не сжимает: опрос читает состояние целиком, и
+            промежуточные состояния между чтениями не наблюдаются вовсе, так
+            что сжимать нечего. Поле всегда False и стоит здесь потому, что
+            получателю нужен ответ, а не отсутствие поля.
+    """
+
+    attempt: int = 1
+    coalesced: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,22 +116,30 @@ class Event:
         id (str): Идентификатор события. Отпечаток от полей, перечисленных в
             спецификации; момента наблюдения и версии адаптера среди них нет.
         type (EventType): Тип события.
+        account_id (str): Аккаунт, в контексте которого наблюдено событие.
+            Обязателен по конверту: получатель, разбирающий события нескольких
+            аккаунтов из одной очереди, иначе не различит их - а отпечаток,
+            куда аккаунт входит, непрозрачен и разбору не подлежит.
         ordering_key (str): Ключ упорядочивания. Порядок сохраняется внутри
             одного ключа, между разными ключами порядка нет.
         entity_id (str): Идентификатор сущности, к которой относится событие.
         observed_at (datetime): Момент наблюдения. В отпечаток не входит.
         origin (str): Как получено: структурно либо по тексту.
+        delivery (Delivery): Метаданные доставки. По ним обработчик отличает
+            повтор от нового события.
         payload (dict[str, Any]): Полезная нагрузка. Персональных данных в ней
             нет: содержимое сообщений и имена сюда не кладутся.
     """
 
     id: str
     type: EventType
+    account_id: str
     ordering_key: str
     entity_id: str
     observed_at: datetime
     origin: str
     payload: dict[str, Any]
+    delivery: Delivery = Delivery()
 
 
 def _fingerprint(*, account_id: str, event_type: EventType, entity_id: str, revision: str) -> str:
@@ -114,11 +167,26 @@ def _fingerprint(*, account_id: str, event_type: EventType, entity_id: str, revi
         "entity_id": entity_id,
         "entity_revision": revision,
     }
-    material = "\x1f".join(parts[name] for name in FINGERPRINT_FIELDS)
-    return blake2s(material.encode("utf-8"), digest_size=16).hexdigest()[:_FINGERPRINT_LEN]
+    material = FINGERPRINT_SEPARATOR.join(parts[name] for name in FINGERPRINT_FIELDS)
+    # Алгоритм, длина хэша и длина отпечатка берутся из порождённого файла, а
+    # не пишутся здесь. Отпечаток - это ключ идемпотентности, и он обязан
+    # совпасть у шести реализаций; литерал в коде разошёлся бы со
+    # спецификацией молча, а разойдясь, обнулил бы гашение повторов у всех,
+    # кто подключил две реализации сразу.
+    make_digest = _HASHERS.get(FINGERPRINT_HASH)
+    if make_digest is None:
+        raise ConfigurationError(
+            f"спецификация требует отпечаток алгоритмом {FINGERPRINT_HASH}, "
+            f"а эта реализация умеет {sorted(_HASHERS)}. Взять другой значило бы "
+            "разойтись идентификаторами событий с остальными SDK"
+        )
+    digest = make_digest()
+    digest.update(material.encode("utf-8"))
+    fingerprint: str = digest.hexdigest()[:FINGERPRINT_LENGTH]
+    return fingerprint
 
 
-def _event(
+def make_event(
     *,
     account_id: str,
     event_type: EventType,
@@ -128,7 +196,20 @@ def _event(
     key_field: str,
     payload: dict[str, Any],
 ) -> Event:
-    """Собирает событие с ключом упорядочивания из спецификации.
+    """Собирает событие с отпечатком и ключом упорядочивания из спецификации.
+
+    Через эту функцию проходят ВСЕ события пакета, включая события о самом
+    наблюдении. Прежде их было два рода: события данных строились здесь, а
+    watch.primed и snapshot.incomplete собирали идентификатор вручную строкой
+    вида «primed:{account_id}:{ordering_key}» и подставляли ключ
+    упорядочивания «account:...» мимо порождённой таблицы.
+
+    Стоило это трёх нарушений разом. Ключ упорядочивания расходился с
+    нормативным «watch:{watch_id}» - то есть второй SDK делил бы поток на
+    другие группы. Идентификатор строился не из полей, перечисленных
+    спецификацией, и у одного из двух не было версии сущности вовсе. И
+    сосуществовали два формата идентификатора: отпечаток в шестнадцатеричном
+    виде и человекочитаемая строка с двоеточиями.
 
     Args:
         account_id (str): Идентификатор аккаунта.
@@ -154,6 +235,7 @@ def _event(
         entity_id=entity_id,
         observed_at=observed_at,
         origin=_STRUCTURAL,
+        account_id=account_id,
         payload=payload,
     )
 
@@ -203,7 +285,7 @@ def diff_orders(
 
         if entry.order_id not in known:
             events.append(
-                _event(
+                make_event(
                     account_id=account_id,
                     event_type=EventType.ORDER_CREATED,
                     entity_id=entry.order_id,
@@ -214,9 +296,18 @@ def diff_orders(
                     observed_at=page.observed_at,
                     key_field="order_id",
                     payload={
+                        # Идентификатор лежит и в нагрузке, и в конверте. Нагрузку
+                        # принято передавать дальше отдельно от конверта - в
+                        # очередь, в журнал, - и там она обязана оставаться
+                        # самодостаточной.
+                        "order_id": entry.order_id,
                         "href": entry.href,
                         "row_index": entry.row_index,
-                        "status": now,
+                        # В нагрузке отсутствие значения - None, а не метка "?".
+                        # Метка живёт в курсоре, где нужна строка, и наружу ей
+                        # выходить незачем: получатель, увидевший "?", решил бы,
+                        # что это состояние заказа. Отсутствие типизируется само.
+                        "status": entry.status.or_none(),
                     },
                 )
             )
@@ -227,7 +318,7 @@ def diff_orders(
             continue
 
         events.append(
-            _event(
+            make_event(
                 account_id=account_id,
                 event_type=EventType.ORDER_STATUS_CHANGED,
                 entity_id=entry.order_id,
@@ -236,7 +327,17 @@ def diff_orders(
                 revision=now,
                 observed_at=page.observed_at,
                 key_field="order_id",
-                payload={"href": entry.href, "from": before, "to": now},
+                payload={
+                    "order_id": entry.order_id,
+                    "href": entry.href,
+                    # previous и current, а не from и to: валидатор спецификации
+                    # сам предупредил, что from - ключевое слово в Python и
+                    # порождённый код получил бы from_. Ключ нагрузки читают
+                    # шесть языков, и имя, которое в одном из них приходится
+                    # экранировать, плохое имя.
+                    "previous": before,
+                    "current": now,
+                },
             )
         )
 
@@ -391,7 +492,7 @@ def diff_chats(
             continue
 
         events.append(
-            _event(
+            make_event(
                 account_id=account_id,
                 event_type=EventType.CHAT_UNREAD_CHANGED,
                 entity_id=entry.node_id,
@@ -404,6 +505,7 @@ def diff_chats(
                 observed_at=page.observed_at,
                 key_field="chat_id",
                 payload={
+                    "chat_id": entry.node_id,
                     "unread": entry.unread.or_none(),
                     "unread_confidence": (
                         str(entry.unread.confidence) if entry.unread.confidence else None
@@ -477,7 +579,7 @@ def diff_thread(
             continue
 
         events.append(
-            _event(
+            make_event(
                 account_id=account_id,
                 event_type=EventType.MESSAGE_CREATED,
                 entity_id=chat_id,
@@ -485,6 +587,7 @@ def diff_thread(
                 observed_at=thread.observed_at,
                 key_field="chat_id",
                 payload={
+                    "chat_id": chat_id,
                     "message_id": message.message_id.value,
                     # Происхождение кладётся в нагрузку намеренно: обработчик
                     # обязан видеть его, не разбирая текст. Но даже origin равный

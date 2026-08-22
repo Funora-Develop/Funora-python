@@ -27,7 +27,7 @@ import pytest
 
 from funora._diff import Event
 from funora._watch import Router, StepResult, adispatch
-from funora.errors import SessionExpiredError
+from funora.errors import HandlerTimeoutError, SessionExpiredError
 from funora.events import EventType
 
 #: Момент наблюдения. Задан явно, чтобы события оставались повторяемыми.
@@ -47,6 +47,7 @@ def _event(key: str, number: int) -> Event:
     return Event(
         id=f"{key}:{number}",
         type=EventType.MESSAGE_CREATED,
+        account_id="12345678",
         ordering_key=key,
         entity_id=key,
         observed_at=WHEN,
@@ -301,3 +302,146 @@ async def test_non_positive_concurrency_means_serial(concurrency: int) -> None:
     await adispatch(router, BATCH, concurrency=concurrency)
 
     assert seen == [event.id for event in BATCH]
+
+
+@pytest.mark.asyncio
+async def test_hung_handler_does_not_hang_the_watch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Проверяет, что задумавшийся обработчик отпускается по времени.
+
+    Предел был объявлен спецификацией и не применялся нигде. Обработчик, ушедший
+    в вечное ожидание - забыл таймаут на своём запросе, залип на блокировке в
+    базе, - останавливал цикл наблюдения целиком. Ни исключения, ни строки в
+    журнале: клиент просто переставал ходить на площадку, и внешне это
+    неотличимо от «ничего не происходит».
+
+    Предел подменяется на короткий: ждать настоящие тридцать секунд в наборе
+    нельзя.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Механизм подмены.
+
+    Returns:
+        None
+    """
+    import funora._watch as watch_module
+
+    monkeypatch.setattr(watch_module, "HANDLER_TIMEOUT_MS", 50)
+
+    router = Router()
+    started = asyncio.Event()
+
+    @router.on(EventType.MESSAGE_CREATED)
+    async def hang(event: Event) -> None:
+        """Не возвращается никогда.
+
+        Args:
+            event (Event): Событие.
+
+        Returns:
+            None
+        """
+        started.set()
+        await asyncio.sleep(3600)
+
+    result = await asyncio.wait_for(adispatch(router, (_event("chat:1", 1),)), timeout=5)
+
+    assert started.is_set(), "обработчик даже не начался - проверка не о том"
+    assert result.failed, "зависший обработчик не отмечен как непринявший"
+    assert not result.advance, "курсор сдвинулся при зависшем обработчике"
+    assert result.fatal is None, (
+        "отказ по времени объявлен условием площадки - тогда один задумавшийся "
+        "обработчик останавливает наблюдение целиком"
+    )
+    assert result.errors and isinstance(result.errors[0], HandlerTimeoutError)
+
+
+@pytest.mark.asyncio
+async def test_handler_within_the_limit_is_not_touched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Проверяет, что уложившийся обработчик не отменяется.
+
+    Обратная сторона: предел, поставленный слишком рьяно, рубит нормальную
+    работу. Обработчик, отвечающий покупателю, ходит в сеть, и доли секунды для
+    него - обычное дело.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Механизм подмены.
+
+    Returns:
+        None
+    """
+    import funora._watch as watch_module
+
+    monkeypatch.setattr(watch_module, "HANDLER_TIMEOUT_MS", 5000)
+
+    router = Router()
+    done: list[int] = []
+
+    @router.on(EventType.MESSAGE_CREATED)
+    async def slow(event: Event) -> None:
+        """Работает заметное время, но укладывается.
+
+        Args:
+            event (Event): Событие.
+
+        Returns:
+            None
+        """
+        await asyncio.sleep(0.05)
+        done.append(1)
+
+    result = await adispatch(router, (_event("chat:1", 1),))
+
+    assert done == [1]
+    assert result.advance and not result.failed
+
+
+@pytest.mark.asyncio
+async def test_concurrency_above_the_declared_limit_is_refused() -> None:
+    """Проверяет отказ на одновременности выше объявленного предела.
+
+    Предел объявлен спецификацией и до сих пор не применялся: вызывающий мог
+    попросить хоть тысячу. Тысяча одновременных обработчиков - это тысяча
+    одновременных соединений с чужой базой у него и, что важнее, тысяча
+    параллельных реакций на площадке.
+
+    Отказ, а не тихое понижение: понизить молча значило бы дать вызывающему
+    неверное представление о том, как работает его код.
+
+    Returns:
+        None
+    """
+    from funora.budget import MAX_CONCURRENT_HANDLERS
+    from funora.errors import ConfigurationError
+
+    router = Router()
+    router.on()(lambda event: None)
+    events = (_event("chat:1", 1), _event("chat:2", 2))
+
+    with pytest.raises(ConfigurationError, match=str(MAX_CONCURRENT_HANDLERS)):
+        await adispatch(router, events, concurrency=MAX_CONCURRENT_HANDLERS + 1)
+
+
+@pytest.mark.asyncio
+async def test_concurrency_at_the_limit_is_allowed() -> None:
+    """Проверяет, что предел не отсекает сам себя.
+
+    Ошибка на единицу здесь стоила бы дороже обычного: вызывающий, взявший
+    число прямо из спецификации, получил бы отказ.
+
+    Returns:
+        None
+    """
+    from funora.budget import MAX_CONCURRENT_HANDLERS
+
+    router = Router()
+    seen: list[int] = []
+    router.on()(lambda event: seen.append(event.payload["n"]))
+    events = (_event("chat:1", 1), _event("chat:2", 2))
+
+    result = await adispatch(router, events, concurrency=MAX_CONCURRENT_HANDLERS)
+    assert sorted(seen) == [1, 2]
+    assert result.advance
