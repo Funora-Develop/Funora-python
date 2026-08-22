@@ -452,3 +452,134 @@ def test_every_event_type_has_an_ordering_key(event_type: EventType) -> None:
     """
     assert event_type in ORDERING_KEY
     assert "{" in ORDERING_KEY[event_type], "шаблон обязан содержать подстановку"
+
+
+def test_each_message_gets_its_own_fingerprint() -> None:
+    """Проверяет, что отпечаток события о сообщении зависит от сообщения.
+
+    Самый дорогой пробел из найденных разбором. Версией сущности служит
+    идентификатор сообщения; замени её константой - и все сообщения одного
+    диалога получат один отпечаток. Прогон через настоящее гашение повторов: из
+    трёх сообщений доставляется одно, два гасятся как повторы. Между опросами
+    хуже: второе сообщение через десять минут не доставляется вовсе.
+
+    Ни одна проверка этого не удерживала: отпечаток сравнивали сам с собой.
+
+    Returns:
+        None
+    """
+    thread = _thread()
+    events = diff_thread(frozenset(), thread, account_id=ACCOUNT, chat_id="42")
+    assert len(events) > 2, "в снимке должно быть больше двух сообщений"
+
+    fingerprints = {event.id for event in events}
+    assert len(fingerprints) == len(events), (
+        "у сообщений одного диалога совпали отпечатки - гашение повторов оставит от них одно"
+    )
+
+
+def test_message_fingerprint_survives_a_reread() -> None:
+    """Проверяет, что отпечаток не зависит от момента чтения.
+
+    Повторное чтение той же переписки обязано давать те же отпечатки: иначе
+    гашение повторов перестаёт работать ровно там, где нужно, - при опросе раз в
+    несколько секунд.
+
+    Returns:
+        None
+    """
+    first = diff_thread(frozenset(), _thread(), account_id=ACCOUNT, chat_id="42")
+    later = diff_thread(
+        frozenset(), _thread(when=WHEN + timedelta(days=3)), account_id=ACCOUNT, chat_id="42"
+    )
+    assert [e.id for e in first] == [e.id for e in later]
+
+
+def test_chat_event_names_the_dialog_it_is_about() -> None:
+    """Проверяет, что событие о диалоге названо диалогом, а не чем попало.
+
+    Проверка неочевидно нужная: подстановка номера строки, адреса и пустой
+    строки вместо идентификатора диалога проходила незамеченной. У заказов та же
+    подмена роняла семь проверок - слепота была именно к диалогам.
+
+    Сверяется с разметкой, а не с самим событием: сравнение ordering_key с
+    entity_id тавтологично, ключ из него и построен.
+
+    Returns:
+        None
+    """
+    page = _chats()
+    known = {}
+    for entry in page.rows():
+        known[entry.node_id] = "старая-позиция"
+
+    events = diff_chats(known, page, account_id=ACCOUNT)
+    assert events, "изменение позиции обязано дать события"
+
+    node_ids = {entry.node_id for entry in page.rows()}
+    for event in events:
+        assert event.entity_id in node_ids, (
+            f"событие названо {event.entity_id!r}, а такого диалога на странице нет"
+        )
+
+
+def test_status_change_names_the_order_it_is_about() -> None:
+    """Проверяет то же для события о смене состояния заказа.
+
+    Прежняя проверка была тавтологичной: она сверяла ключ упорядочивания с
+    полем, из которого он и собран. Подстановка чужого номера заказа и вовсе
+    несуществующего проходила незамеченной.
+
+    Returns:
+        None
+    """
+    before = _with_ids_orders()
+    after = before.replace('"tc-item info"', '"tc-item"').replace(
+        '"tc-status text-primary"', '"tc-status text-success"'
+    )
+
+    page_before = _orders(before)
+    page_after = _orders(after)
+    events = diff_orders(orders_cursor(page_before), page_after, account_id=ACCOUNT)
+    assert events
+
+    on_page = {entry.order_id for entry in page_after.rows()}
+    for event in events:
+        assert event.entity_id in on_page, (
+            f"событие названо {event.entity_id!r}, а такого заказа на странице нет"
+        )
+
+
+def test_messages_keep_the_order_they_appear_in() -> None:
+    """Проверяет порядок событий внутри одного ключа упорядочивания.
+
+    Все сообщения диалога делят ключ chat:{chat_id}, и восстановить порядок по
+    идентификатору нельзя: числовая его форма - догадка, а не наблюдение.
+    Порядок кортежа - единственный сигнал, и разворот этого кортежа проходил
+    незамеченным.
+
+    Два сообщения одного диалога, пришедшие в обратном порядке, - это выданный
+    не тот товар.
+
+    Returns:
+        None
+    """
+    thread = _thread()
+    events = diff_thread(frozenset(), thread, account_id=ACCOUNT, chat_id="42")
+
+    in_markup = [
+        message.message_id.value
+        for message in thread.messages(accept_incomplete=True)
+        if message.message_id.is_observed
+    ]
+    in_events = [event.payload["message_id"] for event in events]
+    assert in_events == in_markup, "порядок событий разошёлся с порядком в разметке"
+
+
+def _with_ids_orders() -> str:
+    """Готовит страницу заказов с различимыми идентификаторами.
+
+    Returns:
+        str: Разметка списка заказов.
+    """
+    return _raw()
