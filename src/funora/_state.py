@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
+from .contract import ADAPTER_FAMILY as _ADAPTER_FAMILY
 from .errors import StateSchemaIncompatibleError
 
 __all__ = ["StateFile", "STATE_FORMAT"]
@@ -58,7 +59,7 @@ STATE_FORMAT: Final[str] = "funora-state-v3"
 #: Состояние, снятое с другой площадки, бессмысленно здесь целиком: совпадение
 #: идентификаторов было бы случайным, а последствия - молчаливым гашением чужих
 #: событий.
-ADAPTER_FAMILY: Final[str] = "funpay-web"
+ADAPTER_FAMILY: Final[str] = _ADAPTER_FAMILY
 
 
 @dataclass(frozen=True, slots=True)

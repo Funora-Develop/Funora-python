@@ -451,3 +451,24 @@ def test_fingerprint_separator_cannot_be_smuggled() -> None:
         "две разные сущности получили один отпечаток - разделитель встретился внутри части"
     )
     assert separator not in "x:y", "проверка потеряла смысл: подмена уже содержит разделитель"
+
+
+def test_unproduced_event_schemas_say_so_machine_readably() -> None:
+    """Проверяет, что непорождаемость вида объявлена признаком, а не прозой.
+
+    Прежде предупреждение стояло только в описании. Проза не сверяется ни с чем:
+    вид начинают порождать, предупреждение остаётся, и следующий читатель верит
+    ему, а не коду. Обратное тоже: вид перестают порождать, а предупреждения не
+    появляется.
+
+    Признак сверяется с PRODUCIBLE в обе стороны - так же, как у моделей.
+
+    Returns:
+        None
+    """
+    for event_type, schema in _schemas().items():
+        marked = bool(schema.get("x-funora-not-implemented"))
+        produced = event_type in {str(kind) for kind in PRODUCIBLE}
+        assert marked is not produced, (
+            f"{event_type}: порождается={produced}, помечен непорождаемым={marked}"
+        )

@@ -75,6 +75,7 @@ SOURCES: Final[frozenset[str]] = frozenset(
         "spec/services/lots.yaml",
         "spec/services/market.yaml",
         "spec/services/orders.yaml",
+        "spec/version.yaml",
     }
 )
 
@@ -949,6 +950,7 @@ def render_events(spec: Path) -> str:
         "FINGERPRINT_HASH",
         "FINGERPRINT_DIGEST_BYTES",
         "FINGERPRINT_LENGTH",
+        "MIN_ENTRIES_PER_KEY",
         "DEDUP_TTL_MS",
     ):
         out.append(f'    "{name}",\n')
@@ -1013,8 +1015,124 @@ def render_events(spec: Path) -> str:
     out.append("#: ключи идемпотентности у всех, кто уже работает.\n")
     out.append(f"FINGERPRINT_LENGTH: Final[int] = {algorithm['length_chars']}\n")
 
+    out.append("\n#: Сколько записей о ключе упорядочивания хранится минимум.\n")
+    out.append("#:\n")
+    out.append("#: Число объявлено спецификацией и прежде совпадало с ним по\n")
+    out.append("#: совпадению: в реализации оно было литералом. Слишком малое\n")
+    out.append("#: значение вытесняет запись о доставленном событии до истечения\n")
+    out.append("#: срока, и событие приходит второй раз - тихо и не всегда.\n")
+    out.append(f"MIN_ENTRIES_PER_KEY: Final[int] = {dedup['min_entries_per_key']}\n")
+
     out.append("\n#: Сколько хранится запись о доставленном событии, миллисекунды.\n")
     out.append(f"DEDUP_TTL_MS: Final[int] = {dedup['ttl_ms']}\n")
+
+    return "".join(out)
+
+
+def render_contract(spec: Path) -> str:
+    """Порождает сведения о версии контракта.
+
+    Пакет не нёс машиночитаемого ответа на вопрос «какую версию контракта я
+    реализую». При шести SDK и независимом версионировании спецификации это и
+    есть тот вопрос, ради которого version.yaml заведён.
+
+    Семейство адаптера жило рукописной константой в _state.py, а перечень
+    поддерживаемых локалей - нигде: заголовок Accept-Language в транспорте
+    собирался из своих значений.
+
+    Args:
+        spec (Path): Корень рабочей копии Funora-spec.
+
+    Returns:
+        str: Содержимое модуля.
+
+    Raises:
+        SystemExit: Если в файле версии незнакомый ключ.
+    """
+    doc = _load(spec, "spec/version.yaml")
+
+    known = {
+        "spec_version",
+        "status",
+        "canonical_form_version",
+        "runner_protocol",
+        "supported_locales",
+        "adapter_family",
+    }
+    unknown = sorted(set(doc) - known)
+    if unknown:
+        raise SystemExit(
+            f"spec/version.yaml: ключи {unknown}, а генератор о них не знает. "
+            "Молча уронить их значило бы завести ось версионирования, о которой "
+            "реализация не подозревает"
+        )
+
+    extra = (
+        "Три оси версий разведены намеренно. Версия спецификации говорит, какой\n"
+        "контракт реализован. Версия канонической формы меняется отдельно: одна\n"
+        "и та же модель может сериализоваться по-новому, и это ломает\n"
+        "сохранённые отпечатки и ключи гашения повторов.\n"
+        "\n"
+        "Семейство адаптера отделяет состояние, снятое с одной площадки, от\n"
+        "состояния другой: совпадение идентификаторов было бы случайным, а\n"
+        "последствия - молчаливым гашением чужих событий.\n"
+    )
+
+    out = [
+        HEADER.format(
+            title="Версия контракта, которую реализует пакет.",
+            source="spec/version.yaml",
+            extra=extra,
+        ).replace("from typing import ClassVar, Final", "from typing import Final")
+    ]
+
+    out.append(
+        "__all__ = [\n"
+        '    "SPEC_VERSION",\n'
+        '    "SPEC_STATUS",\n'
+        '    "CANONICAL_FORM_VERSION",\n'
+        '    "RUNNER_PROTOCOL",\n'
+        '    "SUPPORTED_LOCALES",\n'
+        '    "ADAPTER_FAMILY",\n'
+        "]\n"
+    )
+
+    out.append("\n#: Версия спецификации, которую реализует пакет.\n")
+    out.append(f'SPEC_VERSION: Final[str] = "{doc["spec_version"]}"\n')
+
+    out.append("\n#: Состояние спецификации: draft либо released.\n")
+    out.append("#:\n")
+    out.append("#: В состоянии draft контракт может меняться без соблюдения правил\n")
+    out.append("#: совместимости, и классификация изменений носит осведомительный\n")
+    out.append("#: характер.\n")
+    out.append(f'SPEC_STATUS: Final[str] = "{doc["status"]}"\n')
+
+    out.append("\n#: Версия правил канонической сериализации.\n")
+    out.append("#:\n")
+    out.append("#: Меняется отдельно от версии спецификации: одна и та же модель\n")
+    out.append("#: может сериализоваться по-новому, и это ломает сохранённые\n")
+    out.append("#: отпечатки и ключи гашения повторов.\n")
+    out.append(f"CANONICAL_FORM_VERSION: Final[int] = {doc['canonical_form_version']}\n")
+
+    out.append("\n#: Версия протокола запуска набора соответствия.\n")
+    out.append(f"RUNNER_PROTOCOL: Final[int] = {doc['runner_protocol']}\n")
+
+    out.append("\n#: Локали интерфейса, для которых у проекта есть снимки страниц.\n")
+    out.append("#:\n")
+    out.append("#: Локаль привязана к аккаунту, а не к адресу, и переключить её\n")
+    out.append("#: запросом нельзя. При локали вне перечня реализация обязана\n")
+    out.append("#: вернуть типизированную ошибку, но никогда - пустой результат.\n")
+    out.append("SUPPORTED_LOCALES: Final[tuple[str, ...]] = (\n")
+    for locale in doc["supported_locales"]:
+        out.append(f'    "{locale}",\n')
+    out.append(")\n")
+
+    out.append("\n#: Семейство протокольного адаптера.\n")
+    out.append("#:\n")
+    out.append("#: Состояние, снятое с другой площадки, бессмысленно здесь целиком:\n")
+    out.append("#: совпадение идентификаторов было бы случайным, а последствия -\n")
+    out.append("#: молчаливым гашением чужих событий.\n")
+    out.append(f'ADAPTER_FAMILY: Final[str] = "{doc["adapter_family"]}"\n')
 
     return "".join(out)
 
@@ -1311,6 +1429,7 @@ TARGETS: Final[dict[str, Callable[[Path], str]]] = {
     "events.py": render_events,
     "extraction.py": render_extraction,
     "operations.py": render_operations,
+    "contract.py": render_contract,
 }
 
 

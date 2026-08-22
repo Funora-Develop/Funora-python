@@ -34,7 +34,7 @@ from typing import Final
 
 from ._diff import Event
 from .budget import SCHEDULING, Scheduling
-from .events import DEDUP_TTL_MS
+from .events import DEDUP_TTL_MS, MIN_ENTRIES_PER_KEY
 
 __all__ = ["Schedule", "Deduplicator", "UNSAFE_FLOOR_MARK"]
 
@@ -43,9 +43,6 @@ __all__ = ["Schedule", "Deduplicator", "UNSAFE_FLOOR_MARK"]
 #: Появляется в состоянии клиента и в журнале, чтобы при разборе блокировки было
 #: видно: опрос шёл чаще, чем позволяет спецификация, и это сделали намеренно.
 UNSAFE_FLOOR_MARK: Final[str] = "unsafe_interval_floor_lowered"
-
-#: Сколько записей о событиях хранится на один ключ упорядочивания.
-_MIN_ENTRIES_PER_KEY: Final[int] = 256
 
 
 @dataclass
@@ -155,7 +152,7 @@ class Deduplicator:
     def __init__(
         self,
         ttl_ms: int = DEDUP_TTL_MS,
-        entries_per_key: int = _MIN_ENTRIES_PER_KEY,
+        entries_per_key: int = MIN_ENTRIES_PER_KEY,
     ) -> None:
         self._ttl_ms = ttl_ms
         self._entries_per_key = entries_per_key

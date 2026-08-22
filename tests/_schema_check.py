@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["SchemaError", "check", "UnsupportedKeyword"]
+__all__ = ["SchemaError", "check", "UnsupportedKeyword", "use_types"]
 
 #: Ключевые слова, допустимые на верхнем уровне схемы.
 #:
@@ -39,6 +39,7 @@ _SCHEMA_KEYWORDS: frozenset[str] = frozenset(
         "additionalProperties",
         "x-funora-spec-version",
         "x-funora-event-type",
+        "x-funora-not-implemented",
     }
 )
 
@@ -80,14 +81,29 @@ _JSON_TYPES: dict[str, tuple[type, ...]] = {
     "null": (type(None),),
 }
 
-#: Доменные типы спецификации и то, чем они представлены в нагрузке.
+#: Доменные типы спецификации, известные проверке.
 #:
-#: Проверяется представление, а не смысл: entity_id обязан быть непустой
-#: строкой, и пустая строка вместо идентификатора - это ровно тот молчаливый
-#: провал, ради которого всё и написано.
-_FUNORA_TYPES: frozenset[str] = frozenset(
-    {"entity_id", "revision", "cursor", "instant", "duration"}
-)
+#: Перечень задаётся снаружи вызывающим, а не переписывается здесь: копия
+#: словаря типов разошлась бы с spec/types.yaml молча, и проверка начала бы
+#: отвергать тип, который спецификация объявила, либо принимать тот, которого
+#: она не знает.
+#:
+#: По умолчанию пусто: сверка, не получившая словаря, отказывается работать со
+#: всяким доменным типом. Отказ громкий - см. UnsupportedKeyword.
+KNOWN_TYPES: set[str] = set()
+
+
+def use_types(names: object) -> None:
+    """Задаёт словарь доменных типов, известных проверке.
+
+    Args:
+        names (object): Имена типов из spec/types.yaml.
+
+    Returns:
+        None
+    """
+    KNOWN_TYPES.clear()
+    KNOWN_TYPES.update(str(name) for name in names)  # type: ignore[union-attr]
 
 
 class SchemaError(AssertionError):
@@ -176,7 +192,7 @@ def _check_value(value: Any, schema: dict[str, Any], where: str) -> None:
 
     domain = schema.get("x-funora-type")
     if domain is not None:
-        if domain not in _FUNORA_TYPES:
+        if domain not in KNOWN_TYPES:
             raise UnsupportedKeyword(f"{where}: проверка не знает x-funora-type «{domain}»")
         if not isinstance(value, str) or not value:
             _fail(where, f"доменный тип {domain} требует непустую строку, получено {value!r}")
