@@ -69,6 +69,7 @@ from .budget import (
     COUNTS_RETRIES,
     MAX_QUEUE_DEPTH_PER_KEY,
     WAIT_ATTEMPTS,
+    WAIT_GUARD_MS,
     RequestClass,
 )
 from .capabilities import CAPABILITY_INITIAL, Capability, CapabilityState
@@ -977,6 +978,11 @@ class Engine:
         превратил бы одно ограничение в бесконечную паузу, если бы часы пошли
         назад.
 
+        Пауза округляется объявленной величиной, а не литералом. Спецификация
+        распространяет правило на всякую паузу, вычисленную из монотонных
+        секунд: после неё вызывающий спрашивает то же самое снова, и пауза
+        вровень приводит его туда, где условие ещё не выполнено.
+
         Returns:
             Generator[Request, Reply, None]: Сопрограмма, выдающая паузу.
         """
@@ -984,7 +990,7 @@ class Engine:
         if not self._identity.is_cooling(now):
             return
 
-        wait_ms = int((self._identity.cooldown_until - now) * 1000) + 1
+        wait_ms = int((self._identity.cooldown_until - now) * 1000) + WAIT_GUARD_MS
         _log.info(
             "идентичность %s остывает после ограничения: пауза %d мс",
             self._identity.name,

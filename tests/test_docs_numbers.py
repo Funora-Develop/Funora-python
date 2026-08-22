@@ -116,6 +116,61 @@ def test_declared_event_count_matches_reality() -> None:
     )
 
 
+def test_the_heading_counts_produced_kinds_too() -> None:
+    """Проверяет число в ЗАГОЛОВКЕ раздела о порождаемых видах.
+
+    Заголовок обещал семь, тело того же раздела - восемь, и перечисляло восемь.
+    Проверки смотрели в тело и в соседний документ, а на заголовок не смотрел
+    никто: число прозой протухает молча, и заголовок протухает первым - его
+    правят реже всего.
+
+    Returns:
+        None
+    """
+    claimed = _number_after(
+        _read("limits.md"), "видов событий порождаются", "Перечисление"
+    )
+    assert claimed == len(PRODUCIBLE), (
+        f"заголовок limits.md обещает {claimed} порождаемых видов, порождается "
+        f"{len(PRODUCIBLE)}"
+    )
+
+
+@pytest.mark.skipif(
+    not SPEC_DIR or not (Path(SPEC_DIR) / "spec").is_dir(),
+    reason="переменная FUNORA_SPEC_DIR не задана или не указывает на рабочую копию Funora-spec",
+)
+def test_the_unreachable_error_count_matches_the_table() -> None:
+    """Проверяет число недостижимых классов в прозе.
+
+    Проза говорила «недостижимы семь», а таблица под ней называла шесть.
+    Соседняя проверка сверяла ИМЕНА таблицы с реестром и проходила: имена
+    сходились, а число рядом с ними никто не читал.
+
+    Returns:
+        None
+    """
+    import yaml
+
+    registry = yaml.safe_load(
+        (Path(SPEC_DIR or ".") / "spec" / "conformance" / "not-implemented.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    declared = {
+        symbol
+        for body in registry["items"].values()
+        for symbol in (body.get("symbols") or [])
+        if symbol.endswith("Error")
+    }
+
+    claimed = _number_after(_read("limits.md"), "листовых классов недостижимы", ",")
+    assert claimed == len(declared), (
+        f"limits.md обещает {claimed} недостижимых классов, в реестре их "
+        f"{len(declared)}: {sorted(declared)}"
+    )
+
+
 def test_non_producible_count_matches_reality() -> None:
     """Проверяет заявленное число непорождаемых видов событий.
 

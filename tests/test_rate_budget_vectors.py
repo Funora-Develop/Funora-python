@@ -24,7 +24,7 @@ from typing import Any
 import pytest
 
 from funora._budget import Budget
-from funora.budget import BUCKETS, WAIT_ATTEMPTS, RequestClass
+from funora.budget import BUCKETS, BURST_WINDOW_MS, WAIT_ATTEMPTS, RequestClass
 from funora.conformance import _requests, _run_trace, answer
 from funora.errors import BudgetExhaustedError
 
@@ -94,6 +94,12 @@ def test_every_trace_stays_inside_what_the_vectors_declare() -> None:
                 f"{note}: запрос {index} ушёл в {sent[int(index)]}, а не раньше {floor}"
             )
 
+        for index, ceiling in want.get("not_after", {}).items():
+            assert sent[int(index)] is not None, f"{note}: запрос {index} не ушёл вовсе"
+            assert sent[int(index)] <= ceiling, (  # type: ignore[operator]
+                f"{note}: запрос {index} ушёл в {sent[int(index)]}, а граница {ceiling}"
+            )
+
         if "total_sent_at_most" in want:
             total = sum(1 for one in sent if one is not None)
             assert total <= want["total_sent_at_most"], (
@@ -149,19 +155,28 @@ def test_the_budget_belongs_to_the_identity_and_not_to_the_client() -> None:
 
 
 def test_the_burst_scenario_is_bounded_by_the_declared_recovery() -> None:
-    """Сверяет нижние границы залпа с правилом восстановления.
+    """Сверяет границы залпа с правилом восстановления.
 
     Границы в векторах - не подобранные числа. Право на залп восстанавливается
     равномерно, burst единиц за окно, то есть одна единица за window_ms / burst.
     Проверка требует, чтобы вектор с этим совпадал: разошедшаяся граница
     отменила бы правило молча.
 
+    Окно берётся из спецификации, а не литералом. Прежде здесь стояла тысяча, и
+    проверка сверяла вектор с константой вместо объявленного окна: правка
+    window_ms проходила насквозь - кодогенератор перестраивал число, ворота
+    спецификации молчали, набор оставался зелёным, - а настоящая трасса уезжала
+    вдвое.
+
+    Связывающим оказывается ведро АККАУНТА, а не идентичности: залп у него пять
+    против десяти, и упирается трасса в меньший из двух.
+
     Returns:
         None
     """
     scenario = next(one for one in _runnable() if "not_before" in one["expected"])
     account = BUCKETS["account"]
-    step = 1000 / account.burst
+    step = BURST_WINDOW_MS / account.burst
 
     for index, floor in scenario["expected"]["not_before"].items():
         # Первые burst запросов уходят без ожидания, следующие - по одному за
@@ -171,6 +186,48 @@ def test_the_burst_scenario_is_bounded_by_the_declared_recovery() -> None:
             f"граница запроса {index} объявлена {floor}, а из правила "
             f"восстановления следует {expected}"
         )
+
+
+def test_every_lower_bound_has_an_upper_one() -> None:
+    """Требует коридор там, где объявлена нижняя граница.
+
+    Одна нижняя граница ловит только слишком быстрое. Реализация,
+    восстанавливающая право на залп ВДВОЕ МЕДЛЕННЕЕ объявленного, все нижние
+    границы соблюдает - и проходила набор целиком, пока верхних не было.
+
+    Returns:
+        None
+    """
+    for scenario in _runnable():
+        want = scenario["expected"]
+        low = set(want.get("not_before", {}))
+        high = set(want.get("not_after", {}))
+        assert low <= high, (
+            f"сценарий «{scenario['name']}»: у запросов {sorted(low - high)} есть "
+            "нижняя граница и нет верхней. Слишком медленную реализацию такой "
+            "сценарий не отличает от правильной"
+        )
+
+
+def test_the_corridor_is_wide_enough_for_the_guard_and_no_wider() -> None:
+    """Держит коридор узким.
+
+    Коридор существует затем, что запас считается числами с плавающей точкой, а
+    к паузе прибавляется сторожевая миллисекунда. Ширины хватает на несколько
+    таких прибавок; коридор шире прятал бы настоящее расхождение.
+
+    Returns:
+        None
+    """
+    for scenario in _runnable():
+        want = scenario["expected"]
+        for index, floor in want.get("not_before", {}).items():
+            width = want["not_after"][index] - floor
+            assert 0 < width <= 100, (
+                f"сценарий «{scenario['name']}», запрос {index}: коридор шириной "
+                f"{width} мс. Узкий не переживёт сторожевой миллисекунды, широкий "
+                "спрячет расхождение"
+            )
 
 
 def test_the_concurrent_scenario_is_skipped_with_a_registry_reference() -> None:

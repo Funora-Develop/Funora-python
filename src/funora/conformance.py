@@ -12,6 +12,11 @@
 показывает согласие там, где его нет, а это хуже отсутствия набора. Отсутствие
 видно, ложное согласие нет.
 
+Второе свойство: ОЖИДАЕМОГО РЕАЛИЗАЦИЯ НЕ ВИДИТ. Она считает и возвращает
+посчитанное, а сверяет раннер. Первая редакция клала ожидаемое в случай, и
+случай уезжал реализации целиком - то есть проверяемому присылали ответ вместе
+с вопросом, и пустая реализация, возвращающая присланное, прошла бы весь набор.
+
 Запуск::
 
     python -m funora.conformance < cases.jsonl > results.jsonl
@@ -63,8 +68,8 @@ def _spec_file(name: str) -> Path:
     return Path(root) / "spec" / "conformance" / name
 
 
-def _vectors() -> dict[str, Any]:
-    """Читает файл набора СВОИМ разборщиком.
+def _document(name: str) -> dict[str, Any]:
+    """Читает файл набора СВОИМ разборщиком и сверяет версию протокола.
 
     Вход приходит ссылкой, а не значением, и это не удобство. Первая редакция
     протокола передавала значение, и раннер портил его по дороге: он написан на
@@ -74,15 +79,42 @@ def _vectors() -> dict[str, Any]:
     Значит вектор обязан доезжать нетронутым, а разобрать его должен тот, кто
     будет с ним работать.
 
+    Штамп runner_protocol сверяется здесь, а не только раннером, и это не
+    дублирование: раннер и реализация ищут файл набора по РАЗНЫМ корням -
+    раннер рядом с собой, реализация по FUNORA_SPEC_DIR. Значит они могут
+    читать разные рабочие копии, и версию обязан проверить тот, кто вправду
+    открыл файл.
+
+    Args:
+        name (str): Имя файла в каталоге spec/conformance.
+
     Returns:
         dict[str, Any]: Разобранный файл набора.
 
     Raises:
         ConfigurationError: Если рабочая копия спецификации не найдена.
+        ValidationError: Если файл набора написан под другую версию протокола.
     """
-    path = _spec_file("canonical-form.vectors.json")
+    path = _spec_file(name)
     parsed: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+
+    stamp = parsed.get("runner_protocol")
+    if stamp != PROTOCOL:
+        raise ValidationError(
+            f"файл набора {name} объявляет протокол {stamp!r}, а реализация "
+            f"отвечает по версии {PROTOCOL}. Прогнать набор чужой версии молча "
+            "нельзя: ось версий заведена ровно затем, чтобы это было видно"
+        )
     return parsed
+
+
+def _vectors() -> dict[str, Any]:
+    """Читает файл векторов канонической формы.
+
+    Returns:
+        dict[str, Any]: Разобранный файл набора.
+    """
+    return _document("canonical-form.vectors.json")
 
 
 def _resolve(reference: str) -> Any:
@@ -162,8 +194,7 @@ def _scenario(reference: str, source: str = "resume.vectors.json") -> dict[str, 
     if match is None:
         raise ValidationError(f"ссылка на сценарий {reference!r} не разбирается")
 
-    path = _spec_file(source)
-    document = json.loads(path.read_text(encoding="utf-8"))
+    document = _document(source)
     try:
         scenario: dict[str, Any] = document["scenarios"][int(match.group(1))]
     except (KeyError, IndexError) as error:
@@ -225,10 +256,19 @@ def _run_scenario(scenario: dict[str, Any]) -> list[list[str]]:
             какой момент стенных часов сохранять состояние.
     """
     dedup = Deduplicator(ttl_ms=scenario["ttl_ms"])
-    # Аптайм первого процесса ненулевой нарочно. При нуле показание секундомера
-    # совпало бы с прошедшим по стенным часам, и реализация, перепутавшая одно с
-    # другим, случайно дала бы верный ответ - мутация это показала.
-    uptime_base = float(scenario.get("uptime_s", 604800))
+
+    # Аптайм объявляет сценарий, и умолчания тут нет. Умолчание в коде уводило
+    # величину из-под запрета: проверка «ноль ставить нельзя» сверяла данные, а
+    # нулевой аптайм задавался бы не данными. При нуле же показание секундомера
+    # совпадает с прошедшим по стенным часам, и реализация, перепутавшая одно с
+    # другим, случайно даёт верный ответ - мутация это показала.
+    if "uptime_s" not in scenario:
+        raise ValidationError(
+            "сценарий не объявил аптайма первого процесса. Умолчания тут нет: "
+            "аптайм влияет на то, что проверяется, и выбирать его за сценарий "
+            "значит проверять не объявленное"
+        )
+    uptime_base = float(scenario["uptime_s"])
     wall_base: int | None = None
     wall_now: int | None = None
     delivered: list[list[str]] = []
@@ -377,11 +417,11 @@ def answer(case: dict[str, Any]) -> dict[str, Any]:
     try:
         if kind == "serialize":
             got = canonical_dumps(_materialise(_resolve(case["vector"])))
-            return _compare(case_id, got, case.get("expected"))
+            return {"id": case_id, "outcome": "pass", "value": got}
 
         if kind == "fingerprint":
             got = _digest(_resolve(case["vector"]))
-            return _compare(case_id, got, case.get("expected"))
+            return {"id": case_id, "outcome": "pass", "value": got}
 
         if kind == "rate_budget":
             trace = _scenario(case["vector"], "rate-budget.vectors.json")
@@ -410,8 +450,18 @@ def answer(case: dict[str, Any]) -> dict[str, Any]:
             worker = canonical_dumps if kind == "serialize_refuses" else _digest
             try:
                 produced = worker(_materialise(_resolve(case["vector"])))
-            except FunoraError:
-                return {"id": case_id, "outcome": "pass"}
+            except FunoraError as refusal:
+                # Возвращается ИМЯ КЛАССА, а не просто «отвергнуто». Иначе случай
+                # судил бы себя сам: раннер канонической формы не считает и о
+                # том, обязан ли вход быть отвергнут, знать не может. Заодно имя
+                # держит согласие классов между реализациями - два SDK,
+                # отвергающие дробное число разными классами, заставляют
+                # вызывающего писать разный except.
+                return {
+                    "id": case_id,
+                    "outcome": "pass",
+                    "value": type(refusal).__name__,
+                }
             return {
                 "id": case_id,
                 "outcome": "fail",
@@ -443,30 +493,6 @@ def answer(case: dict[str, Any]) -> dict[str, Any]:
         "id": case_id,
         "outcome": "fail",
         "detail": f"вид случая {kind!r} реализации неизвестен - она отстала от набора",
-    }
-
-
-def _compare(case_id: str, got: str, expected: str | None) -> dict[str, Any]:
-    """Сверяет полученное с ожидаемым.
-
-    Args:
-        case_id (str): Идентификатор случая.
-        got (str): Что получилось.
-        expected (str | None): Что ожидалось. None означает, что случай
-            сверяется с другим случаем по полю same_as, и сверку делает раннер.
-
-    Returns:
-        dict[str, Any]: Ответ по протоколу.
-    """
-    if expected is None:
-        return {"id": case_id, "outcome": "pass", "value": got}
-    if got == expected:
-        return {"id": case_id, "outcome": "pass", "value": got}
-    return {
-        "id": case_id,
-        "outcome": "fail",
-        "value": got,
-        "detail": f"получено {got!r}, ожидалось {expected!r}",
     }
 
 

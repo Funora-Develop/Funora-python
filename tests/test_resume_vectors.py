@@ -94,22 +94,89 @@ def test_every_scenario_declares_an_outcome_for_every_step() -> None:
         )
 
 
-def test_no_scenario_starts_the_first_process_at_zero_uptime() -> None:
-    """Запрещает нулевой аптайм первого процесса.
+def test_every_scenario_declares_its_uptime_and_it_is_not_zero() -> None:
+    """Требует явный ненулевой аптайм первого процесса.
 
     При нуле показание секундомера совпадает с прошедшим по стенным часам, и
     реализация, перепутавшая одно с другим, случайно даёт верный ответ. Так и
     было: с нулём сценарий про истечение срока проходил на сломанной
     реализации, и мутация это показала.
 
+    Прежде проверка была пустой дважды. Ни один сценарий поля не объявлял,
+    поэтому тело цикла сверяло собственный литерал сам с собой; а сам литерал
+    дублировал умолчание из кода, то есть запрет распространялся на данные и не
+    распространялся на то место, которым ноль и задавался бы. Умолчание из кода
+    убрано, поле стало обязательным.
+
     Returns:
         None
     """
     for scenario in _scenarios():
-        assert scenario.get("uptime_s", 604800) != 0, (
+        assert "uptime_s" in scenario, (
+            f"сценарий «{scenario['name']}» не объявил аптайма. Умолчание вернуло "
+            "бы выбор в код, где запрет на ноль его не достаёт"
+        )
+        assert scenario["uptime_s"] != 0, (
             f"сценарий «{scenario['name']}» начинает первый процесс с нулевого "
             "аптайма: при нуле сломанная реализация даёт верный ответ случайно"
         )
+
+
+def test_a_scenario_without_an_uptime_is_refused() -> None:
+    """Проверяет, что умолчания в коде вправду нет.
+
+    Проверка выше сверяет данные. Эта - код: она подаёт сценарий без поля и
+    требует отказа. Без неё умолчание могло бы вернуться, и данные остались бы
+    в порядке, а проверялось бы не объявленное.
+
+    Returns:
+        None
+    """
+    scenario = dict(_scenarios()[0])
+    del scenario["uptime_s"]
+
+    with pytest.raises(ValidationError):
+        _run_scenario(scenario)
+
+
+def test_at_least_one_record_is_aged_when_the_process_restarts() -> None:
+    """Требует сценарий, где снимок снимается позже последней фиксации.
+
+    Перевод метки через стенные часы - то самое выражение, ради которого набор
+    написан, - проверялся во всех первых сценариях тождественно нулём: снимок
+    снимался в тот же момент, в который была последняя фиксация, и возраст
+    записи был всегда ноль. Реализация, восстанавливающая записи как только что
+    доставленные, проходила набор целиком.
+
+    Returns:
+        None
+    """
+    aged = False
+    for scenario in _scenarios():
+        snapshot_at = None
+        first_commit = None
+        for step in scenario["steps"]:
+            if "restart" in step:
+                # Снимок снимается на момент последнего шага. Возраст ненулевой,
+                # если к этому времени хоть одна запись уже полежала.
+                if (
+                    first_commit is not None
+                    and snapshot_at is not None
+                    and snapshot_at > first_commit
+                ):
+                    aged = True
+                snapshot_at = None
+                first_commit = None
+                continue
+            snapshot_at = step["at_ms"]
+            if step.get("commit") and first_commit is None:
+                first_commit = step["at_ms"]
+
+    assert aged, (
+        "ни в одном сценарии снимок не снимается позже последней фиксации: "
+        "возраст записи всюду ноль, и перевод метки через стенные часы не "
+        "проверяется вовсе"
+    )
 
 
 def test_the_suite_keeps_both_halves_of_the_trap() -> None:

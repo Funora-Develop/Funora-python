@@ -320,10 +320,16 @@ class Budget:
 
         # Снятый класс не проходит вовсе, сколько бы ни было в ведре. Ждать он
         # обязан до конца остывания, а не до появления токена.
+        #
+        # Округление то же, что и у ожидания запаса: пауза строго больше точной
+        # величины. Здесь константа прежде стояла литералом - то есть правило
+        # выполнялось по совпадению, и правка объявленного числа обошла бы это
+        # место стороной.
         if self.is_suspended(request_class, now):
             return Reservation(
                 granted=False,
-                wait_ms=int((self._suspended_until[request_class] - now) * 1000) + 1,
+                wait_ms=int((self._suspended_until[request_class] - now) * 1000)
+                + WAIT_GUARD_MS,
                 bucket="suspended",
             )
 
