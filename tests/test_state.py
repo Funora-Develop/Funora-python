@@ -229,3 +229,55 @@ def test_restore_respects_the_per_key_bound() -> None:
 
     target = Deduplicator(entries_per_key=4)
     assert target.restore(oversized, 100.0) == 4
+
+
+def test_state_remembers_the_canonical_form(tmp_path: Path) -> None:
+    """Проверяет, что версия канонической формы попадает в файл.
+
+    Она меняется отдельно от версии спецификации: одна и та же модель может
+    сериализоваться по-новому, и это ломает сохранённые отпечатки. Файл, не
+    помнящий её, нельзя проверить на пригодность - можно только надеяться.
+
+    Args:
+        tmp_path (Path): Временный каталог.
+
+    Returns:
+        None
+    """
+    import json
+
+    from funora.contract import CANONICAL_FORM_VERSION
+
+    path = tmp_path / "state.json"
+    StateFile(path).save({"что-нибудь": 1})
+
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    assert raw["canonical_form_version"] == CANONICAL_FORM_VERSION
+
+
+def test_state_of_another_canonical_form_is_refused(tmp_path: Path) -> None:
+    """Проверяет отказ на файле, записанном другой канонической формой.
+
+    Сохранённые отпечатки собраны по другим правилам и не совпадут ни с чем.
+    Молчаливое принятие такого файла означает, что гашение повторов не сработает
+    ни разу, - и заметить это можно только по повторно выданному товару.
+
+    Args:
+        tmp_path (Path): Временный каталог.
+
+    Returns:
+        None
+    """
+    import json
+
+    from funora.contract import CANONICAL_FORM_VERSION
+
+    path = tmp_path / "state.json"
+    StateFile(path).save({"что-нибудь": 1})
+
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["canonical_form_version"] = CANONICAL_FORM_VERSION + 1
+    path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+
+    with pytest.raises(StateSchemaIncompatibleError, match="канонической формой"):
+        StateFile(path).load()

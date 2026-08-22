@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from .contract import ADAPTER_FAMILY as _ADAPTER_FAMILY
+from .contract import CANONICAL_FORM_VERSION
 from .errors import StateSchemaIncompatibleError
 
 __all__ = ["StateFile", "STATE_FORMAT"]
@@ -116,6 +117,15 @@ class StateFile:
                 f"ожидалось {ADAPTER_FAMILY!r}"
             )
 
+        stored_canonical = raw.get("canonical_form_version")
+        if stored_canonical is not None and stored_canonical != CANONICAL_FORM_VERSION:
+            raise StateSchemaIncompatibleError(
+                f"файл состояния {self.path} записан канонической формой "
+                f"{stored_canonical!r}, ожидалась {CANONICAL_FORM_VERSION!r}. "
+                "Сохранённые отпечатки собраны по другим правилам и не совпадут "
+                "ни с чем"
+            )
+
         payload = raw.get("payload")
         return payload if isinstance(payload, dict) else {}
 
@@ -140,6 +150,12 @@ class StateFile:
             {
                 "format": STATE_FORMAT,
                 "adapter_family": ADAPTER_FAMILY,
+                # Версия канонической формы записывается вместе с остальным.
+                # Она меняется отдельно от версии спецификации: одна и та же
+                # модель может сериализоваться по-новому, и это ломает
+                # сохранённые отпечатки. Файл, не помнящий её, нельзя проверить
+                # на пригодность - можно только надеяться.
+                "canonical_form_version": CANONICAL_FORM_VERSION,
                 "payload": payload,
             },
             ensure_ascii=False,

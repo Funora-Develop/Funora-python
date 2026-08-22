@@ -55,7 +55,7 @@ from ._gate import check_capability
 from ._host import host_of
 from ._orders import Completeness, OrdersPage, parse_orders_page
 from ._poll import Deduplicator, Schedule
-from ._retry import Safety, plan_attempt
+from ._retry import plan_attempt
 from ._state import StateFile
 from ._thread import Thread, parse_thread
 from ._transport import Observation, TransportSettings
@@ -73,6 +73,7 @@ from .errors import (
     TransportError,
     ValidationError,
 )
+from .operations import OPERATIONS, Safety
 
 __all__ = ["Fetch", "Pause", "Deliver", "Request", "Engine", "ORDERS_PATH", "CHATS_PATH"]
 
@@ -214,6 +215,29 @@ IMPLEMENTED: Final[frozenset[Capability]] = frozenset(
         Capability.CHATS_HISTORY,
     }
 )
+
+
+def _safety_of(capability: Capability) -> Safety:
+    """Находит безопасность операции по возможности, которой она требует.
+
+    Решение о повторе - пересечение класса ошибки и безопасности операции.
+    Вторая половина объявлена в spec/services и порождена в таблицу операций;
+    брать её константой значило бы держать половину правила в коде.
+
+    Args:
+        capability (Capability): Возможность, под которую идёт запрос.
+
+    Returns:
+        Safety: Объявленная безопасность. Для возможности без операции -
+        небезопасно: неизвестное не повторяют.
+    """
+    for operation in OPERATIONS.values():
+        if operation.capability == capability.value:
+            return operation.safety
+    # Умолчание строгое намеренно. Возможность без операции означает, что
+    # реализация делает запрос, которого контракт не описывает; повторять такой
+    # запрос значило бы гадать о его последствиях.
+    return Safety.UNSAFE
 
 
 class Engine:
@@ -406,7 +430,12 @@ class Engine:
                 plan = plan_attempt(
                     exc,
                     attempt=attempt,
-                    safety=Safety.SAFE,
+                    # Безопасность берётся из таблицы операций, а не ставится
+                    # здесь константой. Все выполняемые сегодня операции -
+                    # чтения, и константа совпадала бы с таблицей; но первая же
+                    # операция записи получила бы повтор наравне с чтением,
+                    # потому что константа о ней не знает.
+                    safety=_safety_of(capability),
                     retry_after_ms=retry_after_ms,
                 )
                 if not plan.retry:

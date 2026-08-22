@@ -112,7 +112,7 @@ OPERATIONS: Final[dict[str, Operation]] = {
         capability="chats.list",
         safety=Safety.SAFE,
         request_class="poll",
-        returns="ChatListEntry[]",
+        returns="ChatsPage",
     ),
     "chats.mark_read": Operation(
         name="chats.mark_read",
@@ -196,7 +196,7 @@ OPERATIONS: Final[dict[str, Operation]] = {
         capability="orders.list",
         safety=Safety.SAFE,
         request_class="interactive",
-        returns="OrderListEntry[]",
+        returns="OrdersPage",
     ),
     "session.health": Operation(
         name="session.health",

@@ -47,7 +47,8 @@ from .budget import (
     MAX_REDIRECTS,
     MAX_RESPONSE_BYTES,
 )
-from .errors import NetworkError, RemoteServerError, TimeoutError
+from .contract import SUPPORTED_LOCALES
+from .errors import ConfigurationError, NetworkError, RemoteServerError, TimeoutError
 
 __all__ = ["Observation", "Fetcher", "AsyncFetcher", "TransportSettings"]
 
@@ -167,6 +168,27 @@ def _warn_if_headers_logged() -> None:
     _warned = True
 
 
+def _accept_language() -> str:
+    """Собирает заголовок предпочитаемых языков из перечня спецификации.
+
+    Первый язык перечня просится без веса, остальные - с убывающим: так принято
+    в HTTP, и так площадка поймёт порядок предпочтения.
+
+    Returns:
+        str: Значение заголовка Accept-Language.
+    """
+    if not SUPPORTED_LOCALES:
+        raise ConfigurationError(
+            "перечень поддерживаемых локалей пуст: клиент не может назвать язык, "
+            "для которого у него есть снимки страниц"
+        )
+    head, *rest = SUPPORTED_LOCALES
+    parts = [head]
+    for index, locale in enumerate(rest, start=1):
+        parts.append(f"{locale};q={max(0.1, 1.0 - index * 0.2):.1f}")
+    return ",".join(parts)
+
+
 def _client_kwargs(settings: TransportSettings) -> dict[str, object]:
     """Собирает одинаковые для обоих транспортов настройки httpx.
 
@@ -202,7 +224,12 @@ def _client_kwargs(settings: TransportSettings) -> dict[str, object]:
         "cookies": None,
         "headers": {
             "User-Agent": settings.user_agent,
-            "Accept-Language": "ru,en;q=0.8",
+            # Перечень берётся из спецификации, а не пишется здесь. Локаль
+            # привязана к аккаунту и запросом не переключается, но заголовок
+            # обязан называть ровно те языки, для которых у проекта есть
+            # снимки: попросив язык без снимков, клиент получил бы страницу,
+            # которую не умеет разбирать, и объявил бы это изменением вёрстки.
+            "Accept-Language": _accept_language(),
             # Сжатие запрашивается отключённым, и это не про экономию, а про
             # единственную защиту от обрыва тела.
             #
