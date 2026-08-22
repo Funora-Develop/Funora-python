@@ -19,7 +19,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Final
+from typing import Final, NoReturn
 
 __all__ = ["CapabilityState", "Capability", "CAPABILITY_SOURCE", "CAPABILITY_INITIAL"]
 
@@ -91,6 +91,28 @@ class CapabilityState(StrEnum):
             bool: True, если вызов разрешён.
         """
         return self in _USABLE or (opted_in and self in _OPT_IN)
+
+    def __bool__(self) -> NoReturn:
+        """Запрещает приведение к булеву значению.
+
+        Состояний пять, и к двум они не сводятся. Запись
+        ``if client.capability(cap): call()`` выглядит настолько
+        естественно, что её пишут не задумываясь, - а состояние это
+        строка, и любая непустая строка истинна. Проверка пропускала
+        вызов при unsupported: ровно тот случай, ради которого она и
+        написана.
+
+        Тот же запрет стоит у Observed и по той же причине.
+
+        Raises:
+            TypeError: Всегда.
+        """
+        raise TypeError(
+            "CapabilityState нельзя привести к булеву значению: состояний "
+            "пять, а не два, и unsupported истинно как непустая строка. "
+            "Спросите allows_call(opted_in=...), если нужен факт "
+            "допустимости вызова, либо сравните состояние с нужным"
+        )
 
 
 #: Состояния, в которых вызов разрешён без дополнительных условий.

@@ -67,6 +67,7 @@ from .errors import (
     AuthenticationError,
     BudgetError,
     BudgetExhaustedError,
+    ConfigurationError,
     FunoraError,
     NetworkError,
     TransportError,
@@ -193,6 +194,28 @@ def check_integrity(observation: Observation) -> None:
     )
 
 
+#: Возможности, под которые у этой реализации есть операция.
+#:
+#: Таблица начальных состояний отвечает на вопрос о ПЛОЩАДКЕ: наблюдается ли
+#: возможность там. Вызывающий спрашивает другое - «могу ли я это вызвать», - и
+#: одиннадцать возможностей отвечали ему supported, то есть «подтверждена и
+#: доступна», при том что метода под них в SDK нет вовсе.
+#:
+#: Код, который ветвится по состоянию (а состояние для того и заведено), уходил
+#: в ветку «доступно» и падал на отсутствующем атрибуте - в лучшем случае. В
+#: худшем ветка просто не делала ничего.
+#:
+#: Перечень - факт о реализации, а не о контракте, поэтому он здесь, а не в
+#: порождённом файле. Проверка сверяет его с тем, что вправду вызывается.
+IMPLEMENTED: Final[frozenset[Capability]] = frozenset(
+    {
+        Capability.ORDERS_LIST,
+        Capability.CHATS_LIST,
+        Capability.CHATS_HISTORY,
+    }
+)
+
+
 class Engine:
     """Логика клиента, отделённая от способа выполнять ввод-вывод.
 
@@ -219,12 +242,31 @@ class Engine:
     def capability(self, capability: Capability) -> CapabilityState:
         """Возвращает текущее состояние возможности.
 
+        Возможность, под которую у реализации нет операции, отвергается вслух.
+        Таблица начальных состояний отвечает на вопрос о площадке - наблюдается
+        ли возможность там, - а вызывающий спрашивает другое: «могу ли я это
+        вызвать». Одиннадцать возможностей отвечали ему supported при том, что
+        метода под них в SDK нет вовсе.
+
+        Тот же довод, по которому отвергается подписка на непорождаемое
+        событие: молчаливое «доступно» отправляет вызывающего в ветку, которой
+        не существует.
+
         Args:
             capability (Capability): Возможность.
 
         Returns:
             CapabilityState: Состояние, каким его видит клиент сейчас.
+
+        Raises:
+            ConfigurationError: Если под возможность нет операции.
         """
+        if capability not in IMPLEMENTED:
+            raise ConfigurationError(
+                f"возможность {capability.value} эта реализация не выполняет: "
+                f"операции под неё нет. Выполняются: "
+                f"{', '.join(sorted(item.value for item in IMPLEMENTED))}"
+            )
         return self._state.capabilities[capability]
 
     def read_orders(self) -> Generator[Request, Reply, OrdersPage]:

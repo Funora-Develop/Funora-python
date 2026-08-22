@@ -286,7 +286,7 @@ def render_capabilities(spec: Path) -> str:
             extra=extra,
         ).replace(
             "from typing import ClassVar, Final",
-            "from enum import StrEnum\nfrom typing import Final",
+            "from enum import StrEnum\nfrom typing import Final, NoReturn",
         )
     ]
 
@@ -335,6 +335,27 @@ def render_capabilities(spec: Path) -> str:
     out.append("            bool: True, если вызов разрешён.\n")
     out.append('        """\n')
     out.append("        return self in _USABLE or (opted_in and self in _OPT_IN)\n")
+
+    out.append("\n    def __bool__(self) -> NoReturn:\n")
+    out.append('        """Запрещает приведение к булеву значению.\n\n')
+    out.append("        Состояний пять, и к двум они не сводятся. Запись\n")
+    out.append("        ``if client.capability(cap): call()`` выглядит настолько\n")
+    out.append("        естественно, что её пишут не задумываясь, - а состояние это\n")
+    out.append("        строка, и любая непустая строка истинна. Проверка пропускала\n")
+    out.append("        вызов при unsupported: ровно тот случай, ради которого она и\n")
+    out.append("        написана.\n\n")
+    out.append("        Тот же запрет стоит у Observed и по той же причине.\n\n")
+    out.append("        Raises:\n")
+    out.append("            TypeError: Всегда.\n")
+    out.append('        """\n')
+    out.append("        raise TypeError(\n")
+    out.append(
+        '            "CapabilityState нельзя привести к булеву значению: состояний "\n'
+    )
+    out.append('            "пять, а не два, и unsupported истинно как непустая строка. "\n')
+    out.append('            "Спросите allows_call(opted_in=...), если нужен факт "\n')
+    out.append('            "допустимости вызова, либо сравните состояние с нужным"\n')
+    out.append("        )\n")
 
     out.append("\n\n#: Состояния, в которых вызов разрешён без дополнительных условий.\n")
     out.append("_USABLE: Final[frozenset[CapabilityState]] = frozenset(\n    {\n")
