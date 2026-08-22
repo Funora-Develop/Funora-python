@@ -570,3 +570,59 @@ def test_subdomain_of_ours_is_still_ours() -> None:
     )
 
     assert verdict.cls is not ResponseClass.WRONG_IDENTITY
+
+
+def test_unparsable_body_is_not_called_a_markup_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Проверяет диагноз на теле, которое не разобралось вовсе.
+
+    Прежде разборщик, упавший на теле, давал None, и дальше всё шло своим
+    чередом: признаков страницы приложения не нашлось, текст оказался пуст,
+    сигнатуры не сработали - и вердикт выходил identity_marker_absent, то есть
+    «разметка изменилась».
+
+    Диагноз не тот и лечение не то. Разметка могла не меняться вовсе, а ответ
+    прийти не тем, чем должен: телом другого формата, обрывком, чем угодно. На
+    «разметка изменилась» полагается идти и смотреть страницу; здесь смотреть
+    нечего.
+
+    Ветка достижима только подменой разборщика: на строке он не падает ни на
+    какой из тех, что я пробовал. Проверяется поэтому не достижимость, а
+    поведение - оно и было неверным.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Подмена разборщика.
+
+    Returns:
+        None
+    """
+    import funora._classify as classify_module
+
+    def refuse(*args: object, **kwargs: object) -> object:
+        """Разборщик, который всегда отказывает.
+
+        Args:
+            *args (object): Не используются.
+            **kwargs (object): Не используются.
+
+        Returns:
+            object: Не возвращает.
+
+        Raises:
+            ValueError: Всегда.
+        """
+        raise ValueError("тело не разбирается")
+
+    monkeypatch.setattr(classify_module, "HTMLParser", refuse)
+
+    verdict = classify(
+        status=200,
+        html="<html><body>что-то есть</body></html>",
+        final_url=f"https://{HOST}/orders/trade",
+        expected_host=HOST,
+    )
+
+    assert verdict.cls is ResponseClass.UNKNOWN
+    assert verdict.reason == "body_unparsable"
+    assert verdict.reason != "identity_marker_absent"
