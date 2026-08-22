@@ -316,3 +316,107 @@ def test_capability_values_match_spec_names() -> None:
     """
     for capability in caps.Capability:
         assert capability.name == capability.value.replace(".", "_").upper()
+
+
+def test_capability_state_refuses_boolean_coercion() -> None:
+    """Проверяет, что состояние возможности нельзя привести к булеву.
+
+    Состояний пять, и к двум они не сводятся. Запись
+    ``if client.capability(cap): call()`` выглядит настолько естественно, что её
+    пишут не задумываясь, - а состояние это строка, и любая непустая строка
+    истинна. Проверка пропускала вызов при unsupported: ровно тот случай, ради
+    которого она и написана.
+
+    Тот же запрет стоит у Observed и по той же причине.
+
+    Returns:
+        None
+    """
+    from funora.capabilities import CapabilityState
+
+    for state in CapabilityState:
+        with pytest.raises(TypeError, match="булеву"):
+            bool(state)
+
+    # Сравнение и допустимость вызова при этом работают.
+    assert CapabilityState.SUPPORTED.allows_call(opted_in=False)
+    assert not CapabilityState.UNSUPPORTED.allows_call(opted_in=False)
+
+
+def test_capability_of_an_unimplemented_operation_is_refused() -> None:
+    """Проверяет отказ на возможности, под которую нет операции.
+
+    Таблица начальных состояний отвечает на вопрос о ПЛОЩАДКЕ: наблюдается ли
+    возможность там. Вызывающий спрашивает другое - «могу ли я это вызвать», - и
+    одиннадцать возможностей отвечали ему supported, то есть «подтверждена и
+    доступна», при том что метода под них в SDK нет вовсе.
+
+    Код, который ветвится по состоянию, уходил в ветку «доступно» и падал на
+    отсутствующем атрибуте - в лучшем случае. В худшем ветка не делала ничего.
+
+    Returns:
+        None
+    """
+    from funora._budget import Budget
+    from funora._engine import IMPLEMENTED, Engine
+    from funora._transport import TransportSettings
+    from funora.capabilities import Capability
+    from funora.errors import ConfigurationError
+
+    engine = Engine(TransportSettings(), Budget())
+    missing = sorted(set(Capability) - IMPLEMENTED, key=lambda item: item.value)
+    assert missing, "если выполняется всё, проверка бессмысленна - её надо убрать"
+
+    for capability in missing:
+        with pytest.raises(ConfigurationError, match=capability.value):
+            engine.capability(capability)
+
+
+def test_capability_of_an_implemented_operation_answers() -> None:
+    """Проверяет, что отказ не задел то, что выполняется.
+
+    Returns:
+        None
+    """
+    from funora._budget import Budget
+    from funora._engine import IMPLEMENTED, Engine
+    from funora._transport import TransportSettings
+    from funora.capabilities import CapabilityState
+
+    engine = Engine(TransportSettings(), Budget())
+    for capability in IMPLEMENTED:
+        assert isinstance(engine.capability(capability), CapabilityState)
+
+
+def test_implemented_capabilities_are_the_ones_actually_called() -> None:
+    """Проверяет, что перечень выполняемых заработан, а не объявлен.
+
+    Без этой проверки правило разворачивается наизнанку: возможность вписывают в
+    перечень, состояние отвечает supported, а операции по-прежнему нет - то же
+    самое обещание, но теперь с разрешения.
+
+    Сверяется с исходником цикла: возможность считается выполняемой, если она
+    вправду подставляется в чтение.
+
+    Returns:
+        None
+    """
+    import re
+    from pathlib import Path as _Path
+
+    from funora._engine import IMPLEMENTED
+
+    source = (_Path(__file__).resolve().parent.parent / "src" / "funora" / "_engine.py").read_text(
+        encoding="utf-8"
+    )
+    called = set(re.findall(r"fetch_ok\(\s*(Capability\.[A-Z_]+)", source))
+    called |= set(re.findall(r"capability = (Capability\.[A-Z_]+)", source))
+
+    declared = {f"Capability.{item.name}" for item in IMPLEMENTED}
+    assert declared <= called, (
+        f"объявлено выполняемым, но нигде не вызывается: {sorted(declared - called)}"
+    )
+    assert called <= declared, (
+        f"вызывается, но не объявлено выполняемым: {sorted(called - declared)} - "
+        "состояние такой возможности будет отвергнуто зря"
+    )
