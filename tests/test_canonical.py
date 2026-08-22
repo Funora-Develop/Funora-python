@@ -213,3 +213,98 @@ def test_normalization_is_not_a_no_op() -> None:
     assert raw != unicodedata.normalize("NFC", raw), (
         "вектор нормализации записан уже нормализованным - он не проверяет ничего"
     )
+
+
+def _rules() -> list[dict[str, Any]]:
+    """Читает нормативные правила канонической формы.
+
+    Returns:
+        list[dict[str, Any]]: Правила в объявленном порядке.
+    """
+    import yaml
+
+    path = Path(SPEC_DIR or ".") / "spec" / "canonical-form.yaml"
+    return list(yaml.safe_load(path.read_text(encoding="utf-8"))["rules"])
+
+
+def test_rules_are_numbered_without_gaps() -> None:
+    """Проверяет, что правила пронумерованы подряд и без повторов.
+
+    Правила называют по номеру - в отказах, в заметках, в чужих реализациях.
+    Пропуск в нумерации означает, что правило удалили, не заметив, что на него
+    ссылаются.
+
+    Returns:
+        None
+    """
+    numbers = [rule["id"] for rule in _rules()]
+    assert numbers == list(range(1, len(numbers) + 1)), f"нумерация правил разошлась: {numbers}"
+
+
+def test_every_rule_says_how_it_is_checked() -> None:
+    """Проверяет, что каждое правило называет, чем оно проверяется.
+
+    Это та же болезнь, что и в реализации: объявление, которым никто не
+    пользуется, выглядит работающим. Правило канонической формы, не названное
+    ни одной проверкой, ничем и не держится - что доказано мутацией: правила
+    можно было переписать на противоположные, и обе сборки оставались
+    зелёными.
+
+    Returns:
+        None
+    """
+    silent = [rule["id"] for rule in _rules() if not str(rule.get("checked_by", "")).strip()]
+    assert not silent, f"правила не называют, чем проверяются: {silent}"
+
+
+def test_named_vectors_exist() -> None:
+    """Проверяет, что названный правилом вектор вправду есть в файле векторов.
+
+    Ссылка на несуществующий вектор хуже отсутствия ссылки: она выглядит
+    проверкой и ею не является.
+
+    Returns:
+        None
+    """
+    vectors = _vectors()
+    known = {
+        v["name"]
+        for section in ("serialize", "fingerprint")
+        for bucket in ("accept", "reject")
+        for v in vectors[section][bucket]
+    }
+
+    missing: list[str] = []
+    for rule in _rules():
+        for name in rule.get("vectors") or ():
+            if name not in known:
+                missing.append(f"правило {rule['id']} -> «{name}»")
+
+    assert not missing, (
+        f"правила ссылаются на векторы, которых нет в файле: {missing}. "
+        "Ссылка на несуществующий вектор хуже отсутствия ссылки: она выглядит "
+        "проверкой и ею не является"
+    )
+
+
+def test_vectors_belong_to_the_current_form() -> None:
+    """Проверяет, что векторы объявлены той же версией формы, что и пакет.
+
+    Векторы описывают байты, а байты задаются правилами. Вектор, оставшийся от
+    прежней версии формы, проверяет прежние правила и при этом выглядит
+    работающей проверкой - то есть ровно тем, чего в этом проекте не бывает.
+
+    Расхождение уже случалось: правила подняли до второй версии, а файл
+    векторов остался объявленным первой, и не поймало этого ничто.
+
+    Returns:
+        None
+    """
+    from funora.contract import CANONICAL_FORM_VERSION
+
+    declared = _vectors()["canonical_form_version"]
+    assert declared == CANONICAL_FORM_VERSION, (
+        f"векторы объявлены формой {declared}, а пакет собран формой "
+        f"{CANONICAL_FORM_VERSION}. Либо векторы отстали от правил, либо "
+        "правила подняли, не тронув векторы"
+    )
