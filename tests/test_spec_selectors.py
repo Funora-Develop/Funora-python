@@ -131,7 +131,59 @@ def test_inventory_is_not_empty() -> None:
     Returns:
         None
     """
-    assert len(ENTRIES) >= 20, (
+    # Порог держится близко к настоящему числу намеренно. Прежний «не меньше
+    # двадцати» пропускал урезание перечня вдвое: двадцать одна запись из сорока
+    # одной давала зелёный набор, читавшийся как «спецификация сверена».
+    assert len(ENTRIES) >= 38, (
         f"в перечне {len(ENTRIES)} записей, это подозрительно мало: "
         "вероятно, спецификация прочитана не полностью"
+    )
+
+
+#: Записи перечня, объявившие число наблюдений.
+COUNTED = [e for e in ENTRIES if "count_observed" in e]
+
+
+def _count_ids() -> list[str]:
+    """Строит понятные имена для проверок счётчиков.
+
+    Returns:
+        list[str]: Имена в виде «селектор x число».
+    """
+    return [f"{e['selector']} x{e['count_observed']}" for e in COUNTED]  # type: ignore[index]
+
+
+@pytest.mark.parametrize("entry", COUNTED, ids=_count_ids())
+def test_declared_count_matches_the_fixture(entry: dict[str, object]) -> None:
+    """Проверяет, что объявленное число наблюдений совпадает со снимком.
+
+    Числа в спецификации протухли молча дважды. Снимки пересняли, диалогов стало
+    пятьдесят вместо сорока семи, сообщений одиннадцать вместо десяти - а
+    count_observed остался прежним, и сверить его было нечем: перечень
+    селекторов чисел не носил, а validate.js слова count_observed не знал.
+
+    Само по себе устаревшее число вреда не наносит. Вредит то, чем оно
+    становится: на числе 47 выросло утверждение «список ограничен сорока семью»,
+    из него - формулировка гарантии доставки, и всё это про предел, которого
+    никто не наблюдал.
+
+    Args:
+        entry (dict[str, object]): Запись перечня со счётчиком и областью.
+
+    Returns:
+        None
+    """
+    selector = str(entry["selector"])
+    declared = int(entry["count_observed"])  # type: ignore[arg-type]
+    scope = str(entry.get("scope", "document"))
+    where = str(entry["where"])
+    evidence = [str(x) for x in entry["evidence"]]  # type: ignore[union-attr]
+
+    if scope != "document":
+        pytest.skip("счётчик в области строки: сверяется разбором, а не по документу")
+
+    seen = {name: len(HTMLParser(_read(name)).css(selector)) for name in evidence}
+    assert declared in seen.values(), (
+        f"{where}: объявлено {declared} вхождений {selector!r}, "
+        f"а в снимках {seen}. Число в спецификации устарело"
     )
