@@ -360,3 +360,43 @@ def test_unsafe_operation_retries_when_no_side_effect_was_possible() -> None:
     assert plan.reason == "reconcile_first", (
         "сетевой отказ допускает побочный эффект: повторять небезопасную операцию по нему нельзя"
     )
+
+
+def test_safety_is_looked_up_not_assumed() -> None:
+    """Проверяет, что безопасность берётся из таблицы операций.
+
+    Все выполняемые сегодня операции - чтения, и константа Safety.SAFE в цикле
+    совпадала бы с таблицей. Совпадение это временное: первая же операция записи
+    получила бы повтор наравне с чтением, потому что константа о ней не знает, -
+    то есть покупателю ушло бы второе сообщение.
+
+    Проверяются оба конца: возможность с объявленной безопасностью даёт
+    объявленное, возможность без операции даёт unsafe. Второе важнее: запрос,
+    которого контракт не описывает, повторять нельзя - неизвестное не
+    повторяют.
+
+    Returns:
+        None
+    """
+    from funora._engine import _safety_of
+    from funora.capabilities import Capability
+    from funora.operations import OPERATIONS
+
+    by_capability = {op.capability: op for op in OPERATIONS.values()}
+    checked = 0
+    for capability in Capability:
+        operation = by_capability.get(capability.value)
+        if operation is None:
+            continue
+        assert _safety_of(capability) is operation.safety, (
+            f"{capability.value}: цикл считает операцию {_safety_of(capability)}, "
+            f"спецификация объявляет {operation.safety}"
+        )
+        checked += 1
+
+    assert checked > 5, "возможностей с операциями не набралось - проверять нечего"
+
+    # Небезопасные операции в таблице есть, и на них константа Safety.SAFE
+    # разошлась бы с объявленным.
+    unsafe = [op for op in OPERATIONS.values() if op.safety is not Safety.SAFE]
+    assert unsafe, "в таблице нет ни одной небезопасной операции - проверка слепа"

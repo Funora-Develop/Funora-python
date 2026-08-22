@@ -398,3 +398,59 @@ def test_transport_limits_come_from_the_spec() -> None:
     settings = TransportSettings()
     assert settings.max_redirects == MAX_REDIRECTS
     assert settings.max_connections == MAX_CONNECTIONS_PER_HOST
+
+
+def test_accepted_languages_come_from_the_spec() -> None:
+    """Проверяет, что заголовок языков собран из перечня спецификации.
+
+    Локаль привязана к аккаунту и запросом не переключается, но заголовок обязан
+    называть ровно те языки, для которых у проекта есть снимки: попросив язык
+    без снимков, клиент получил бы страницу, которую не умеет разбирать, и
+    объявил бы это изменением вёрстки.
+
+    Прежде заголовок был литералом и совпадал с перечнем по совпадению.
+
+    Returns:
+        None
+    """
+    from funora._transport import _client_kwargs
+    from funora.contract import SUPPORTED_LOCALES
+
+    header = _client_kwargs(TransportSettings())["headers"]["Accept-Language"]
+    named = [part.split(";")[0] for part in header.split(",")]
+
+    assert named == list(SUPPORTED_LOCALES), (
+        f"заголовок называет {named}, спецификация объявляет {list(SUPPORTED_LOCALES)}"
+    )
+    assert header.startswith(SUPPORTED_LOCALES[0]), (
+        "первый язык перечня обязан идти без веса: так выражается предпочтение"
+    )
+
+
+def test_accepted_languages_follow_the_spec_when_it_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Проверяет, что заголовок вправду выводится из перечня.
+
+    Проверка выше сравнивает заголовок с перечнем и на сегодняшних данных
+    проходит даже у литерала: выведенное значение совпадает с тем, что стояло
+    строкой до правки, знак в знак. Совпадение это случайное, и полагаться на
+    него нельзя.
+
+    Здесь перечень подменяется, и заголовок обязан поменяться следом. Литерал
+    так не умеет.
+
+    Args:
+        monkeypatch (pytest.MonkeyPatch): Механизм подмены.
+
+    Returns:
+        None
+    """
+    import funora._transport as transport_module
+
+    monkeypatch.setattr(transport_module, "SUPPORTED_LOCALES", ("de", "fr", "es"))
+    header = transport_module._client_kwargs(TransportSettings())["headers"]["Accept-Language"]
+
+    assert header.startswith("de"), f"перечень сменился, а заголовок остался: {header}"
+    assert "fr" in header and "es" in header
+    assert "ru" not in header, "заголовок держит язык, которого нет в перечне"

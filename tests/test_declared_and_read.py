@@ -29,7 +29,16 @@ import pytest
 SRC = Path(__file__).resolve().parent.parent / "src" / "funora"
 
 #: Порождённые из спецификации модули.
-GENERATED = ("budget", "retry", "capabilities", "response_classes", "events", "extraction")
+GENERATED = (
+    "budget",
+    "retry",
+    "capabilities",
+    "response_classes",
+    "events",
+    "extraction",
+    "operations",
+    "contract",
+)
 
 #: Имена, предназначенные вызывающему, а не реализации.
 #:
@@ -52,6 +61,19 @@ FOR_CALLERS: frozenset[str] = frozenset(
         # Признак того, что числа бюджета подобраны, а не измерены. Читает его
         # человек, а не код.
         "PROVISIONAL",
+        # Версия и состояние контракта. Пакет обязан уметь ответить, какой
+        # контракт он реализует: при шести SDK и независимом версионировании
+        # спецификации это и есть тот вопрос, ради которого version.yaml
+        # заведён. Отвечает он вызывающему, а не себе.
+        "SPEC_VERSION",
+        "SPEC_STATUS",
+        # Тип записи таблицы операций. Реализация пользуется самой таблицей, а
+        # тип нужен вызывающему, который разбирает её содержимое.
+        "Operation",
+        # Объявленный тип результата операции. Реализация его не читает и читать
+        # не должна: она возвращает конкретный объект, а строка нужна для сверки
+        # между реализациями - и такая сверка есть, в tests/test_spec_coverage.py.
+        "returns",
     }
 )
 
@@ -274,7 +296,7 @@ def test_every_generated_field_is_read_or_declared_unread() -> None:
     silent: list[str] = []
 
     for module_name, structure, field in _generated_fields():
-        if field.startswith("_") or field in unread_by_design:
+        if field.startswith("_") or field in unread_by_design or field in FOR_CALLERS:
             continue
         if not _read_somewhere(field, except_module=module_name):
             silent.append(f"{module_name}.{structure}.{field}")

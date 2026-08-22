@@ -295,3 +295,96 @@ def test_domain_types_come_from_the_spec() -> None:
     assert set(doc["types"]) == KNOWN_TYPES, (
         f"сверка знает {sorted(KNOWN_TYPES)}, спецификация объявляет {sorted(doc['types'])}"
     )
+
+
+#: Какой метод отвечает за какую операцию.
+#:
+#: Соответствие не механическое: chats.history выполняется методом thread, имена
+#: разные. Поэтому таблица рукописная - а рукописная таблица устаревает молча,
+#: и её стережёт проверка ниже: множество ключей обязано совпадать с множеством
+#: выполняемых операций.
+OPERATION_METHOD: dict[str, tuple[str, str]] = {
+    "chats.list": ("ChatsService", "list"),
+    "chats.history": ("ChatsService", "thread"),
+    "orders.list": ("OrdersService", "list"),
+}
+
+
+def test_declared_return_type_matches_what_is_returned() -> None:
+    """Сверяет объявленный тип результата с настоящим.
+
+    Поле returns порождалось в таблицу операций и не читалось никем: расхождение
+    между «что обещано» и «что возвращается» не давало ни одного признака.
+
+    Расхождение было, и вдвойне вредное. Спецификация объявляла у chats.list и
+    orders.list ГОЛЫЙ МАССИВ записей, а возвращается страница. Голый список
+    делает неполноту незаметной: вызывающий берёт его и не спрашивает, всё ли
+    прочитано, а неполный список неотличим от полного - то есть спецификация
+    предписывала ровно то, против чего написана вся остальная её часть.
+
+    Returns:
+        None
+    """
+    import funora._client as client_module
+    from funora._engine import IMPLEMENTED
+    from funora.operations import OPERATIONS
+
+    expected = {
+        name
+        for name, operation in OPERATIONS.items()
+        if operation.capability in {item.value for item in IMPLEMENTED}
+    }
+    assert set(OPERATION_METHOD) == expected, (
+        f"таблица соответствия разошлась с выполняемыми операциями: "
+        f"лишние {sorted(set(OPERATION_METHOD) - expected)}, "
+        f"недостающие {sorted(expected - set(OPERATION_METHOD))}"
+    )
+
+    for name, (service, method_name) in OPERATION_METHOD.items():
+        method = getattr(getattr(client_module, service), method_name)
+        actual = method.__annotations__.get("return")
+        assert actual is not None, f"{service}.{method_name}: тип результата не объявлен"
+        assert OPERATIONS[name].returns == actual, (
+            f"{name}: спецификация обещает {OPERATIONS[name].returns}, "
+            f"а {service}.{method_name} возвращает {actual}"
+        )
+
+
+def test_declared_return_schema_exists_and_names_the_same_type() -> None:
+    """Проверяет ссылку на схему результата.
+
+    Поле returns_schema не читает ни валидатор спецификации, ни генератор:
+    первый его не знает, второй принимает и роняет. Опечатка в пути молчала бы.
+
+    Проверка сегодня зелёная - это не находка, а сторож, и он оправдан ровно
+    тем, что сторожить сейчас некому.
+
+    Returns:
+        None
+    """
+    import json
+
+    import yaml
+
+    root = _spec_dir()
+    assert root is not None
+
+    checked = 0
+    for path in sorted((root / "spec" / "services").glob("*.yaml")):
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for name, body in (doc.get("operations") or {}).items():
+            reference = body.get("returns_schema")
+            if reference is None:
+                continue
+            target = root / reference
+            assert target.is_file(), f"{name}: схема результата {reference} не существует"
+
+            schema = json.loads(target.read_text(encoding="utf-8"))
+            declared = str(body["returns"]).removesuffix("[]")
+            assert schema.get("title") == declared, (
+                f"{name}: объявлен тип {declared}, а схема {reference} названа "
+                f"{schema.get('title')!r}"
+            )
+            checked += 1
+
+    assert checked >= 3, f"сверено схем результата: {checked} - слишком мало"
