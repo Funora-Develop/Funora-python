@@ -20,6 +20,7 @@ from typing import Final
 from .errors import (
     AccessBlockedError,
     ChallengeRequiredError,
+    NetworkError,
     ProtocolChangedError,
     RateLimitedError,
     RemoteServerError,
@@ -81,6 +82,7 @@ VERDICT_ERRORS: Final[dict[tuple[str, str], type[Exception] | None]] = {
     ("wrong_identity", "host_unreadable"): UnexpectedResponseError,
     ("transport_error", "http_5xx"): RemoteServerError,
     ("transport_error", "http_4xx"): UnexpectedResponseError,
+    ("transport_error", "body_truncated"): NetworkError,
     ("unknown", "empty_body"): UnexpectedResponseError,
     ("unknown", "identity_marker_absent"): ProtocolChangedError,
     ("unknown", "body_unparsable"): UnexpectedResponseError,

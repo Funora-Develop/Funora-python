@@ -32,6 +32,8 @@ __all__ = [
     "MAX_RESPONSE_BYTES",
     "MAX_DECOMPRESSED_BYTES",
     "MAX_REDIRECTS",
+    "RateLimitResponse",
+    "RATE_LIMIT_RESPONSE",
     "Scheduling",
     "SCHEDULING",
     "PROVISIONAL",
@@ -110,6 +112,46 @@ MAX_DECOMPRESSED_BYTES: Final[int] = 33554432
 
 #: Предел числа переходов при ручном следовании, штук.
 MAX_REDIRECTS: Final[int] = 5
+
+
+@dataclass(frozen=True, slots=True)
+class RateLimitResponse:
+    """Как источник отвечает на ограничение частоты.
+
+    Восстановление медленнее падения намеренно. Симметричное
+    восстановление даёт автоколебания: система отступает, тут же
+    возвращается к прежней частоте, получает ограничение снова и так
+    по кругу.
+
+    Attributes:
+        capacity_multiplier (float): На сколько умножается ёмкость.
+        min_capacity_factor (float): Ниже этой доли ёмкость не падает.
+        cooldown_ms (int): Остывание за первое ограничение, мс.
+        window_ms (int): Окно учёта ограничений, мс.
+        successes_per_step (int): Успехов подряд на шаг восстановления.
+        recovery_multiplier (float): Во сколько раз растёт ёмкость.
+    """
+
+    capacity_multiplier: float
+    min_capacity_factor: float
+    cooldown_ms: int
+    window_ms: int
+    successes_per_step: int
+    recovery_multiplier: float
+
+
+#: Реакция на ограничение частоты.
+#:
+#: Раздел долго называл ступени именами и не давал ни одного числа:
+#: реализация не могла его выполнить, даже захотев.
+RATE_LIMIT_RESPONSE: Final[RateLimitResponse] = RateLimitResponse(
+    capacity_multiplier=0.5,
+    min_capacity_factor=0.125,
+    cooldown_ms=60000,
+    window_ms=900000,
+    successes_per_step=20,
+    recovery_multiplier=1.1,
+)
 
 
 @dataclass(frozen=True, slots=True)

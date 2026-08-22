@@ -674,3 +674,133 @@ def test_rate_limit_is_not_blocked() -> None:
     )
     assert verdict.cls is ResponseClass.RATE_LIMITED
     assert verdict.cls is not ResponseClass.BLOCKED
+
+
+def test_rate_limit_with_a_truncated_body_is_still_a_rate_limit() -> None:
+    """Проверяет порядок шагов на самом дорогом случае.
+
+    Целостность тела проверялась ПЕРВОЙ, до кода ответа. Ответ 429 с оборванным
+    телом становился сетевым отказом - а сетевой отказ повторяется коротким
+    отступлением и не режет ёмкость ведра. То есть клиент продолжал бы стучаться
+    в прежнем темпе ровно тогда, когда площадка сказала «слишком быстро», и
+    следующим шагом была бы уже не просьба замедлиться.
+
+    При 429 тело разбирать бессмысленно, и его обрыв ничего не добавляет к
+    диагнозу.
+
+    Returns:
+        None
+    """
+    verdict = classify(
+        status=429,
+        html="<html><body>обор",
+        final_url=f"https://{HOST}/orders/trade",
+        expected_host=HOST,
+        declared_length=100_000,
+        received_length=17,
+    )
+
+    assert verdict.cls is ResponseClass.RATE_LIMITED, (
+        "ограничение частоты с оборванным телом опознано как что-то другое"
+    )
+    assert verdict.reason == "http_429"
+
+
+def test_maintenance_with_a_truncated_body_is_still_maintenance() -> None:
+    """Проверяет то же на технических работах.
+
+    Returns:
+        None
+    """
+    verdict = classify(
+        status=503,
+        html="",
+        final_url=f"https://{HOST}/orders/trade",
+        expected_host=HOST,
+        declared_length=50_000,
+        received_length=0,
+    )
+    assert verdict.cls is ResponseClass.MAINTENANCE
+
+
+def test_truncated_body_on_a_good_status_is_loud() -> None:
+    """Проверяет, что обрыв при коде 200 остаётся громким.
+
+    Обратная сторона перестановки: перенеся целостность после кода ответа,
+    легко потерять её вовсе. Страница, оборванная посреди таблицы, проходит и
+    классификацию как пригодную, и разбор как полный - вызывающий получает
+    половину заказов и ноль повреждений.
+
+    Returns:
+        None
+    """
+    verdict = classify(
+        status=200,
+        html="<html><body><div class='navbar-toggle-logged'></div>обор",
+        final_url=f"https://{HOST}/orders/trade",
+        expected_host=HOST,
+        declared_length=100_000,
+        received_length=56,
+    )
+
+    assert verdict.cls is ResponseClass.TRANSPORT_ERROR
+    assert verdict.reason == "body_truncated"
+
+
+def test_pipeline_order_matches_the_spec() -> None:
+    """Сверяет порядок шагов с объявленным спецификацией.
+
+    Порядок нормативен: две реализации, проверившие условия в разном порядке,
+    разойдутся именно на той странице, ради которой правило написано. Прежде
+    сверялся только флаг «порядок нормативен», а сам порядок - ничем.
+
+    Проверяется поведением, а не чтением кода: для каждой соседней пары шагов
+    строится ответ, на котором оба шага срабатывают, и вердикт обязан прийти от
+    того, который раньше.
+
+    Returns:
+        None
+    """
+    import os
+    from pathlib import Path as _Path
+
+    import yaml
+
+    raw = os.environ.get("FUNORA_SPEC_DIR")
+    if not raw:
+        pytest.skip("спецификация недоступна")
+    doc = yaml.safe_load(
+        (_Path(raw) / "spec" / "protocol" / "response-classes.yaml").read_text(encoding="utf-8")
+    )
+    names = [step["name"] for step in doc["pipeline"]["steps"]]
+    assert names[:3] == ["Код ответа", "Целостность тела", "Личность"], (
+        f"порядок шагов в спецификации изменился: {names}"
+    )
+
+    # Код ответа раньше целостности: ответ 429 с оборванным телом.
+    assert (
+        classify(
+            status=429,
+            html="",
+            final_url=f"https://{HOST}/orders/trade",
+            expected_host=HOST,
+            declared_length=1000,
+            received_length=0,
+        ).cls
+        is ResponseClass.RATE_LIMITED
+    )
+
+    # Целостность раньше личности: оборванный ответ с чужого хоста даёт обрыв,
+    # а не расхождение хостов? Нет - личность идёт ПОСЛЕ целостности, значит
+    # обрыв. Проверяется именно это.
+    assert (
+        classify(
+            status=200,
+            html="обор",
+            final_url="https://evil.example/orders/trade",
+            expected_host=HOST,
+            declared_length=1000,
+            received_length=4,
+        ).reason
+        == "body_truncated"
+    )
