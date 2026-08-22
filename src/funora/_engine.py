@@ -62,7 +62,7 @@ from ._thread import Thread, parse_thread
 from ._transport import Observation, TransportSettings
 from ._verdicts import error_for
 from ._watch import Router, StepResult, incomplete, loss, primed
-from .budget import MAX_QUEUE_DEPTH_PER_KEY
+from .budget import MAX_QUEUE_DEPTH_PER_KEY, RequestClass
 from .capabilities import CAPABILITY_INITIAL, Capability, CapabilityState
 from .errors import (
     AuthenticationError,
@@ -217,6 +217,30 @@ IMPLEMENTED: Final[frozenset[Capability]] = frozenset(
         Capability.CHATS_HISTORY,
     }
 )
+
+
+def _class_of(capability: Capability) -> RequestClass:
+    """Находит класс запроса по возможности, которой он требует.
+
+    Класс решает, кого вытесняют при нехватке ёмкости. Проставляет его служба, а
+    не пользователь: пользователь не знает, чем его вызов мешает соседнему.
+
+    Прежде класс объявлялся у каждой операции и до бюджета не доходил вовсе -
+    собственный мониторинг продавца вытеснял ответы покупателям на общих
+    основаниях, ровно то, ради чего доли и придуманы.
+
+    Args:
+        capability (Capability): Возможность, под которую идёт запрос.
+
+    Returns:
+        RequestClass: Объявленный класс. Для возможности без операции -
+        interactive: самый защищённый. Вызов, о котором контракт молчит, не
+        должен из-за этого молчания уступить наблюдению за рынком.
+    """
+    for operation in OPERATIONS.values():
+        if operation.capability == capability.value:
+            return RequestClass(operation.request_class)
+    return RequestClass.INTERACTIVE
 
 
 def _safety_of(capability: Capability) -> Safety:
@@ -408,7 +432,7 @@ class Engine:
             # держится отдельной переменной, чтобы обработчик не зависел от
             # того, успел ли ответ появиться.
             retry_after_ms: int | None = None
-            yield from self.spend_budget()
+            yield from self.spend_budget(_class_of(capability))
             try:
                 reply = yield Fetch(path)
                 if not isinstance(reply, Observation):
@@ -658,7 +682,9 @@ class Engine:
 
         return tuple(events), cursors, followed
 
-    def spend_budget(self) -> Generator[Request, Reply, None]:
+    def spend_budget(
+        self, request_class: RequestClass = RequestClass.INTERACTIVE
+    ) -> Generator[Request, Reply, None]:
         """Занимает бюджет под один отправляемый запрос.
 
         Расходуется именно отправляемый запрос, а не логическая операция:
@@ -678,7 +704,7 @@ class Engine:
             BudgetExhaustedError: Если ждать пришлось бы дольше предела. Запрос
                 при этом не отправляется вовсе.
         """
-        reservation = self._budget.require(monotonic())
+        reservation = self._budget.require(monotonic(), request_class=request_class)
         if reservation.granted:
             return
 
@@ -692,7 +718,7 @@ class Engine:
         # Вторая попытка обязана быть последней: цикл ожидания здесь превратил бы
         # предел ожидания в пожелание, а вызов снаружи стал бы неотличим от
         # зависшего процесса.
-        again = self._budget.require(monotonic())
+        again = self._budget.require(monotonic(), request_class=request_class)
         if not again.granted:
             raise BudgetExhaustedError(
                 f"бюджет не освободился за {reservation.wait_ms} мс ожидания "

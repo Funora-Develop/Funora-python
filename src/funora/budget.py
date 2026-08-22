@@ -17,12 +17,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Final
 
 __all__ = [
     "BucketLimits",
     "BUCKETS",
     "MAX_WAIT_MS",
+    "RequestClass",
+    "ON_REFUSAL",
+    "FLOOR_SHARE",
+    "DEMAND_WINDOW_MS",
     "COUNTS_RETRIES",
     "COUNTS_REDIRECTS",
     "MAX_QUEUE_DEPTH_PER_KEY",
@@ -83,6 +88,49 @@ BUCKETS: Final[dict[str, BucketLimits]] = {
 
 #: Сколько ждать освобождения бюджета, прежде чем отказать.
 MAX_WAIT_MS: Final[int] = 5000
+
+
+class RequestClass(StrEnum):
+    """Класс запроса.
+
+    Определяет, кого вытесняют при нехватке ёмкости. Проставляет его
+    служба, а не пользователь: пользователь не знает, чем его вызов
+    мешает соседнему.
+    """
+
+    INTERACTIVE = "interactive"
+    AUTOMATION = "automation"
+    POLL = "poll"
+    MONITORING = "monitoring"
+
+#: Что делать с запросом, которого ёмкость не пускает.
+#:
+#: "wait" - ждать пополнения, "refuse" - отказать немедленно.
+#: Отказать можно только тому, кого спецификация объявила
+#: отменяемым: ответ покупателю, не отправленный из-за собственного
+#: мониторинга продавца, - худший исход, какой этот раздел даёт.
+ON_REFUSAL: Final[dict[RequestClass, str]] = {
+    RequestClass.INTERACTIVE: "wait",
+    RequestClass.AUTOMATION: "wait",
+    RequestClass.POLL: "wait",
+    RequestClass.MONITORING: "refuse",
+}
+
+#: Гарантированная доля ёмкости для каждого класса.
+FLOOR_SHARE: Final[dict[RequestClass, float]] = {
+    RequestClass.INTERACTIVE: 0.3,
+    RequestClass.AUTOMATION: 0.3,
+    RequestClass.POLL: 0.25,
+    RequestClass.MONITORING: 0.15,
+}
+
+#: Сколько класс считается претендующим после обращения.
+#:
+#: Порог складывается только из долей претендующих. Вытеснять
+#: некого, когда никто не претендует, и запрещать циклу обновлений
+#: брать больше своей доли на пустой площадке значило бы наказывать
+#: его за чужое бездействие.
+DEMAND_WINDOW_MS: Final[int] = 60000
 
 #: Расходуют ли бюджет повторы.
 COUNTS_RETRIES: Final[bool] = True

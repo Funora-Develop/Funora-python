@@ -22,6 +22,7 @@ from time import monotonic
 import pytest
 
 import funora._client as client_module
+import funora._engine as engine_module
 from funora._budget import Budget
 from funora._client import Client
 from funora._diff import Event
@@ -29,6 +30,7 @@ from funora._engine import Engine, Pause
 from funora._poll import Schedule
 from funora._transport import Observation, TransportSettings
 from funora._watch import PRODUCIBLE, Router, adispatch, dispatch, incomplete, loss, primed
+from funora.budget import RequestClass
 from funora.errors import (
     AccessBlockedError,
     ConfigurationError,
@@ -381,6 +383,38 @@ def test_cancelling_the_task_still_cancels_it() -> None:
     assert asyncio.run(scenario()), "отмена задачи была проглочена раздачей"
 
 
+def test_the_engine_passes_the_declared_class(no_sleep: list[float]) -> None:
+    """Проверяет, что класс доходит от операции до бюджета.
+
+    Слабое место всей связки. Класс объявлен у каждой операции, порог считается
+    по классу - но если движок не передаст его, всё пройдёт как interactive, и
+    доли снова не будут значить ничего. Ровно так и было.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    orders, chats = _page("orders-trade.logged.ru"), _page("chat.logged.ru")
+    router = Router()
+
+    @router.on()
+    def handle(event: Event) -> None:
+        return None
+
+    with Client(transport=_Cycle([orders, chats])) as client:  # type: ignore[arg-type]
+        client.watch(router, max_iterations=1)
+        demanded = set(client.engine._budget._demanded_at)
+
+    assert RequestClass.POLL in demanded, (
+        "цикл обновлений потратил бюджет не как poll. Класс объявлен у операции "
+        f"chats.list и обязан дойти до ведра; дошли: "
+        f"{sorted(x.value for x in demanded)}"
+    )
+    assert RequestClass.INTERACTIVE in demanded, "чтение списка продаж не дошло как interactive"
+
+
 def _page(name: str) -> str:
     """Читает снимок страницы.
 
@@ -460,7 +494,36 @@ def no_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
         list[float]: Длительности, которые цикл собирался проспать.
     """
     slept: list[float] = []
-    monkeypatch.setattr(client_module, "sleep", slept.append)
+
+    # Часы двигаются вместе со сном, и это не украшение проверки. Бюджет
+    # пополняется по времени: подмена, глотающая сон и оставляющая часы на
+    # месте, показывает ведро, которое не пополняется НИКОГДА. Проверка тогда
+    # проходит или падает по причине, которой в жизни не бывает.
+    started = monotonic()
+    offset = [0.0]
+
+    def fake_sleep(seconds: float) -> None:
+        """Считает паузу и продвигает часы на неё же.
+
+        Args:
+            seconds (float): Сколько цикл собирался проспать.
+
+        Returns:
+            None
+        """
+        slept.append(seconds)
+        offset[0] += seconds
+
+    def fake_monotonic() -> float:
+        """Возвращает время с учётом проспанного.
+
+        Returns:
+            float: Монотонные секунды.
+        """
+        return started + offset[0]
+
+    monkeypatch.setattr(client_module, "sleep", fake_sleep)
+    monkeypatch.setattr(engine_module, "monotonic", fake_monotonic)
     return slept
 
 

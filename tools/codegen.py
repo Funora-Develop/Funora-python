@@ -738,7 +738,9 @@ def render_budget(spec: Path) -> str:
             extra=extra,
         ).replace(
             "from typing import ClassVar, Final",
-            "from dataclasses import dataclass\nfrom typing import Final",
+            "from dataclasses import dataclass\n"
+            "from enum import StrEnum\n"
+            "from typing import Final",
         )
     ]
 
@@ -747,6 +749,10 @@ def render_budget(spec: Path) -> str:
         "BucketLimits",
         "BUCKETS",
         "MAX_WAIT_MS",
+        "RequestClass",
+        "ON_REFUSAL",
+        "FLOOR_SHARE",
+        "DEMAND_WINDOW_MS",
         "COUNTS_RETRIES",
         "COUNTS_REDIRECTS",
         "MAX_QUEUE_DEPTH_PER_KEY",
@@ -794,6 +800,82 @@ def render_budget(spec: Path) -> str:
 
     out.append("\n#: Сколько ждать освобождения бюджета, прежде чем отказать.\n")
     out.append(f"MAX_WAIT_MS: Final[int] = {doc['exhausted']['max_wait_ms']}\n")
+
+    admission = doc.get("class_admission") or {}
+    classes = doc.get("classes") or {}
+    order = list(admission.get("order") or [])
+    reserved = dict(admission.get("reserved_above") or {})
+
+    if sorted(order) != sorted(classes):
+        raise SystemExit(
+            f"spec/runtime/budget.yaml: порядок защищённости {order} не совпадает "
+            f"с перечнем классов {sorted(classes)}. Класс, выпавший из порядка, "
+            "не получит порога допуска и пройдёт мимо правила"
+        )
+    if sorted(reserved) != sorted(classes):
+        raise SystemExit(
+            "spec/runtime/budget.yaml: reserved_above объявлен не для всех классов"
+        )
+
+    running = 0.0
+    for name in order:
+        expected = round(running, 4)
+        if abs(float(reserved[name]) - expected) > 1e-9:
+            raise SystemExit(
+                f"spec/runtime/budget.yaml: у класса {name} reserved_above "
+                f"{reserved[name]}, а сумма долей стоящих раньше даёт {expected}. "
+                "Порог, разошедшийся с долями, отменяет доли молча"
+            )
+        running += float(classes[name]["floor_share"])
+
+    if abs(running - 1.0) > 1e-9:
+        raise SystemExit(
+            f"spec/runtime/budget.yaml: доли классов в сумме дают {running}, а не "
+            "единицу. Недостача означала бы ничью ёмкость, избыток - обещание, "
+            "которого ведро не выполнит"
+        )
+
+    out.append("\n\nclass RequestClass(StrEnum):\n")
+    out.append('    """Класс запроса.\n\n')
+    out.append("    Определяет, кого вытесняют при нехватке ёмкости. Проставляет его\n")
+    out.append("    служба, а не пользователь: пользователь не знает, чем его вызов\n")
+    out.append("    мешает соседнему.\n")
+    out.append('    """\n\n')
+    for name in order:
+        out.append(f'    {name.upper()} = "{name}"\n')
+
+    out.append("\n#: Что делать с запросом, которого ёмкость не пускает.\n")
+    out.append("#:\n")
+    out.append('#: "wait" - ждать пополнения, "refuse" - отказать немедленно.\n')
+    out.append("#: Отказать можно только тому, кого спецификация объявила\n")
+    out.append("#: отменяемым: ответ покупателю, не отправленный из-за собственного\n")
+    out.append("#: мониторинга продавца, - худший исход, какой этот раздел даёт.\n")
+    out.append("ON_REFUSAL: Final[dict[RequestClass, str]] = {\n")
+    for name in order:
+        mode = "refuse" if classes[name].get("preemptible") == "cancellable" else "wait"
+        out.append(f'    RequestClass.{name.upper()}: "{mode}",\n')
+    out.append("}\n")
+
+    out.append("\n#: Гарантированная доля ёмкости для каждого класса.\n")
+    out.append("FLOOR_SHARE: Final[dict[RequestClass, float]] = {\n")
+    for name in order:
+        out.append(f"    RequestClass.{name.upper()}: {float(classes[name]['floor_share'])!r},\n")
+    out.append("}\n")
+
+    window = admission.get("demand_window_ms")
+    if not isinstance(window, int) or window <= 0:
+        raise SystemExit(
+            "spec/runtime/budget.yaml: demand_window_ms не объявлен либо неположителен. "
+            "Без него порог складывался бы из долей классов, которые молчат, и доля "
+            "превратилась бы из пола в потолок"
+        )
+    out.append("\n#: Сколько класс считается претендующим после обращения.\n")
+    out.append("#:\n")
+    out.append("#: Порог складывается только из долей претендующих. Вытеснять\n")
+    out.append("#: некого, когда никто не претендует, и запрещать циклу обновлений\n")
+    out.append("#: брать больше своей доли на пустой площадке значило бы наказывать\n")
+    out.append("#: его за чужое бездействие.\n")
+    out.append(f"DEMAND_WINDOW_MS: Final[int] = {window}\n")
 
     out.append("\n#: Расходуют ли бюджет повторы.\n")
     out.append(f"COUNTS_RETRIES: Final[bool] = {bool(doc['counting']['counts_retries'])}\n")
