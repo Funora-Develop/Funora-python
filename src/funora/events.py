@@ -29,6 +29,7 @@ __all__ = [
     "FINGERPRINT_LENGTH",
     "MIN_ENTRIES_PER_KEY",
     "EVENT_LANE",
+    "REVISION_APPEARED",
     "LANE_DROPPABLE",
     "DEDUP_TTL_MS",
 ]
@@ -156,6 +157,16 @@ EVENT_LANE: Final[dict[EventType, str]] = {
     EventType.SNAPSHOT_INCOMPLETE: "control_plane",
     EventType.EVENT_LOSS: "control_plane",
 }
+
+
+#: Версия события, случающегося с сущностью однажды.
+#:
+#: Заказ появляется в списке один раз, и различать разные появления
+#: одного заказа не требуется. Любая переменная часть - время,
+#: порядковый номер, состав строки - сделала бы отпечаток разным при
+#: повторном чтении того же списка, то есть отменила бы гашение
+#: повторов для самого частого события.
+REVISION_APPEARED: Final[str] = "appeared"
 
 #: Можно ли выбрасывать события полосы при переполнении.
 LANE_DROPPABLE: Final[dict[str, bool]] = {

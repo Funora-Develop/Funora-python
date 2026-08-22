@@ -50,6 +50,7 @@ from .events import (
     FINGERPRINT_LENGTH,
     FINGERPRINT_SEPARATOR,
     ORDERING_KEY,
+    REVISION_APPEARED,
     EventType,
 )
 
@@ -291,8 +292,10 @@ def diff_orders(
                     entity_id=entry.order_id,
                     # Версией служит сам факт появления: заказ появляется в
                     # списке однажды, и различать разные появления одного и того
-                    # же заказа не требуется.
-                    revision="appeared",
+                    # же заказа не требуется. Значение берётся из порождённого
+                    # файла: отпечаток обязан совпасть у всех реализаций, а
+                    # литерал здесь разошёлся бы со спецификацией молча.
+                    revision=REVISION_APPEARED,
                     observed_at=page.observed_at,
                     key_field="order_id",
                     payload={

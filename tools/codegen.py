@@ -1028,6 +1028,7 @@ def render_events(spec: Path) -> str:
         "FINGERPRINT_LENGTH",
         "MIN_ENTRIES_PER_KEY",
         "EVENT_LANE",
+        "REVISION_APPEARED",
         "LANE_DROPPABLE",
         "DEDUP_TTL_MS",
     ):
@@ -1148,6 +1149,31 @@ def render_events(spec: Path) -> str:
     for name in derivation:
         out.append(f'    EventType.{_const(name)}: "{by_type[name]}",\n')
     out.append("}\n")
+
+    sources = (doc.get("revision_source") or {}).get("sources") or {}
+    unsourced = sorted(set(derivation) - set(sources))
+    if unsourced:
+        raise SystemExit(
+            f"spec/events/delivery.yaml: виды {unsourced} не объявляют, что служит "
+            "их версией в отпечатке. Реализации выведут это поле сами и разойдутся "
+            "в ключе идемпотентности"
+        )
+    unknown = sorted(set(sources) - set(derivation))
+    if unknown:
+        raise SystemExit(
+            "spec/events/delivery.yaml: версия объявлена для несуществующих видов "
+            f"{unknown}"
+        )
+
+    out.append("\n\n#: Версия события, случающегося с сущностью однажды.\n")
+    out.append("#:\n")
+    out.append("#: Заказ появляется в списке один раз, и различать разные появления\n")
+    out.append("#: одного заказа не требуется. Любая переменная часть - время,\n")
+    out.append("#: порядковый номер, состав строки - сделала бы отпечаток разным при\n")
+    out.append("#: повторном чтении того же списка, то есть отменила бы гашение\n")
+    out.append("#: повторов для самого частого события.\n")
+    out.append('REVISION_APPEARED: Final[str] = "appeared"\n')
+
 
     out.append("\n#: Можно ли выбрасывать события полосы при переполнении.\n")
     out.append("LANE_DROPPABLE: Final[dict[str, bool]] = {\n")
