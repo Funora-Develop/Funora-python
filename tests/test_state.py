@@ -160,6 +160,13 @@ def test_foreign_adapter_family_is_loud(tmp_path: Path) -> None:
         StateFile(path).load()
 
 
+#: Момент по стенным часам, от которого считают проверки гашения.
+#:
+#: Фиксирован намеренно. Метки гашения уходят в файл моментами от эпохи, и
+#: проверка, берущая настоящие часы, зависела бы от машины - то есть проверяла
+#: бы и часы тоже.
+WALL: int = 1_700_000_000_000
+
 def test_dedup_survives_a_restart(tmp_path: Path) -> None:
     """Проверяет главное свойство: повтор гасится после перезапуска.
 
@@ -174,11 +181,13 @@ def test_dedup_survives_a_restart(tmp_path: Path) -> None:
     first = Deduplicator()
     fresh = first.filter((_event("a"),), 0.0)
     first.commit(fresh, 0.0)
-    state.save({"dedup": first.snapshot()})
+    state.save({"dedup": first.snapshot(0.0, wall_ms=WALL)})
 
+    # Показание секундомера у второго запуска СВОЁ и с первым не связано.
+    # Прежде связь предполагалась, и на ней всё и ломалось.
     second = Deduplicator()
-    assert second.restore(state.load()["dedup"], 1.0) == 1
-    assert len(second.filter((_event("a"),), 1.0)) == 0
+    assert second.restore(state.load()["dedup"], 9_999.0, wall_ms=WALL + 1_000) == 1
+    assert len(second.filter((_event("a"),), 9_999.0)) == 0
 
 
 def test_uncommitted_event_survives_a_restart_as_fresh(tmp_path: Path) -> None:
@@ -198,11 +207,11 @@ def test_uncommitted_event_survives_a_restart_as_fresh(tmp_path: Path) -> None:
 
     first = Deduplicator()
     first.filter((_event("a"),), 0.0)
-    state.save({"dedup": first.snapshot()})
+    state.save({"dedup": first.snapshot(0.0, wall_ms=WALL)})
 
     second = Deduplicator()
-    second.restore(state.load().get("dedup", {}), 1.0)
-    assert len(second.filter((_event("a"),), 1.0)) == 1
+    second.restore(state.load().get("dedup", {}), 9_999.0, wall_ms=WALL + 1_000)
+    assert len(second.filter((_event("a"),), 9_999.0)) == 1
 
 
 def test_expired_records_are_dropped_on_restore() -> None:
@@ -218,7 +227,8 @@ def test_expired_records_are_dropped_on_restore() -> None:
     source.commit(source.filter((_event("a"),), 0.0), 0.0)
 
     target = Deduplicator(ttl_ms=1000)
-    assert target.restore(source.snapshot(), 10.0) == 0
+    saved = source.snapshot(0.0, wall_ms=WALL)
+    assert target.restore(saved, 10.0, wall_ms=WALL + 10_000) == 0
     assert len(target.filter((_event("a"),), 10.0)) == 1
 
 
@@ -230,10 +240,83 @@ def test_restore_respects_the_per_key_bound() -> None:
     Returns:
         None
     """
-    oversized = {"chat:1": {f"e{i}": float(i) for i in range(100)}}
+    oversized = {"chat:1": {f"e{i}": WALL + i for i in range(100)}}
 
     target = Deduplicator(entries_per_key=4)
-    assert target.restore(oversized, 100.0) == 4
+    assert target.restore(oversized, 100.0, wall_ms=WALL + 100) == 4
+
+
+def test_dedup_ignores_the_uptime_of_the_machine() -> None:
+    """Проверяет, что гашение переживает перезапуск при любом аптайме.
+
+    Метки хранились монотонными секундами - часами, у которых начало отсчёта
+    своё в каждом запуске. После перезапуска сохранённая метка означала не то,
+    что значила при записи, и исходов было два, оба плохие.
+
+    Машину перезагрузили: показание секундомера малое, разность с меткой
+    отрицательная, запись не истекала НИКОГДА - срок в час не работал вовсе.
+
+    Машина работает давно: показание огромное, и весь кэш выбрасывался разом
+    на первом же чтении. Это хуже. Гашение сохраняется затем, чтобы пережить
+    перезапуск, а оно ровно перезапуска и не переживало: всё доставленное
+    приходило заново. Для обработчика выдачи - выданный дважды товар.
+
+    Returns:
+        None
+    """
+    source = Deduplicator(ttl_ms=3_600_000)
+    source.commit(source.filter((_event("a"),), 72_000.0), 72_000.0)
+    saved = source.snapshot(72_000.0, wall_ms=WALL)
+
+    # Прошла минута по стенным часам. Показание секундомера - какое угодно.
+    for uptime in (0.5, 5.0, 72_010.0, 864_000.0):
+        target = Deduplicator(ttl_ms=3_600_000)
+        assert target.restore(saved, uptime, wall_ms=WALL + 60_000) == 1, (
+            f"при показании секундомера {uptime} запись пропала"
+        )
+        assert len(target.filter((_event("a"),), uptime)) == 0, (
+            f"при показании секундомера {uptime} повтор не погашен"
+        )
+
+
+def test_dedup_expires_by_the_wall_clock() -> None:
+    """Проверяет обратную половину: срок вправду выходит.
+
+    Приёмник, который держит записи всегда, неотличим от неработающего срока -
+    и это ровно то, чем прежняя редакция была на перезагруженной машине.
+
+    Returns:
+        None
+    """
+    source = Deduplicator(ttl_ms=3_600_000)
+    source.commit(source.filter((_event("a"),), 72_000.0), 72_000.0)
+    saved = source.snapshot(72_000.0, wall_ms=WALL)
+
+    # Прошло два часа по стенным часам при том же показании секундомера.
+    target = Deduplicator(ttl_ms=3_600_000)
+    assert target.restore(saved, 72_000.0, wall_ms=WALL + 7_200_000) == 0
+
+
+def test_dedup_stamps_are_whole_numbers() -> None:
+    """Проверяет, что в файл уходят целые числа, а не дробные.
+
+    Каноническая форма запрещает числа с плавающей точкой (правило 8), а файл
+    состояния объявляет себя канонической формой. Прежде туда ложились
+    монотонные секунды - дробные по определению.
+
+    Returns:
+        None
+    """
+    source = Deduplicator()
+    source.commit(source.filter((_event("a"),), 0.25), 0.25)
+    saved = source.snapshot(0.25, wall_ms=WALL)
+
+    stamps = [stamp for bucket in saved.values() for stamp in bucket.values()]
+    assert stamps, "снимок пуст"
+    for stamp in stamps:
+        assert isinstance(stamp, int) and not isinstance(stamp, bool), (
+            f"метка {stamp!r} не целое число"
+        )
 
 
 def test_state_remembers_the_canonical_form(tmp_path: Path) -> None:
