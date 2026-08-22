@@ -477,7 +477,7 @@ def render_response_classes(spec: Path) -> str:
             extra=extra,
         ).replace(
             "from typing import ClassVar, Final",
-            "from typing import Final\n\nfrom .errors import (\n"
+            "from enum import StrEnum\nfrom typing import Final\n\nfrom .errors import (\n"
             + "".join(
                 f"    {name},\n"
                 for name in sorted(
@@ -488,7 +488,18 @@ def render_response_classes(spec: Path) -> str:
         )
     ]
 
-    out.append('__all__ = ["VERDICT_ERRORS", "RESPONSE_CLASSES", "STATUS_CLASS"]\n')
+    out.append("__all__ = [\n")
+    for name in (
+        "VERDICT_ERRORS",
+        "RESPONSE_CLASSES",
+        "STATUS_CLASS",
+        "Health",
+        "INITIAL_HEALTH",
+        "HEALTH_BY_VERDICT",
+        "WRITES_PAUSED_IN",
+    ):
+        out.append(f'    "{name}",\n')
+    out.append("]\n")
 
     out.append("\n#: Классы ответа, объявленные спецификацией.\n")
     out.append("#:\n")
@@ -530,6 +541,87 @@ def render_response_classes(spec: Path) -> str:
             value = by_stable[stable_id] if stable_id else "None"
             out.append(f'    ("{cls}", "{reason}"): {value},\n')
     out.append("}\n")
+
+    health = doc.get("health") or {}
+    states = list(health.get("states") or [])
+    from_verdict = dict(health.get("from_verdict") or {})
+    paused = list(health.get("writes_paused_in") or [])
+
+    if not states:
+        raise SystemExit(
+            "spec/protocol/response-classes.yaml: состояния доступа не объявлены"
+        )
+    if health.get("initial") not in states:
+        raise SystemExit(
+            "spec/protocol/response-classes.yaml: начальное состояние не входит в перечень"
+        )
+    unknown_states = sorted(set(paused) - set(states))
+    if unknown_states:
+        raise SystemExit(
+            "spec/protocol/response-classes.yaml: writes_paused_in называет "
+            f"несуществующие состояния {unknown_states}"
+        )
+    if health["initial"] in paused:
+        raise SystemExit(
+            "spec/protocol/response-classes.yaml: автоматика записи приостановлена в "
+            "начальном состоянии. Клиент не смог бы написать ни разу, ни разу не сходив"
+        )
+    missing = sorted(set(doc["classes"]) - set(from_verdict))
+    if missing:
+        raise SystemExit(
+            f"spec/protocol/response-classes.yaml: классы ответа {missing} не говорят, "
+            "в какое состояние доступа переводят. Реализация решит сама, и две "
+            "реализации объявят аккаунт ограниченным в разные моменты"
+        )
+    strange = sorted(
+        value for value in from_verdict.values() if value is not None and value not in states
+    )
+    if strange:
+        raise SystemExit(
+            "spec/protocol/response-classes.yaml: переход ведёт в несуществующие "
+            f"состояния {strange}"
+        )
+
+    out.append("\n\nclass Health(StrEnum):\n")
+    out.append('    """Состояние доступа к площадке.\n\n')
+    out.append("    От него зависит, приостановлена ли автоматика записи. Перечень\n")
+    out.append("    объявлен схемой события protocol.health_changed и повторён в\n")
+    out.append("    spec/protocol/response-classes.yaml вместе с правилами перехода.\n")
+    out.append('    """\n\n')
+    for name in states:
+        out.append(f'    {name.upper()} = "{name}"\n')
+
+    out.append("\n\n#: Начальное состояние.\n")
+    out.append("#:\n")
+    out.append("#: До первого ответа состояние не проверяется: клиент не знает о\n")
+    out.append("#: площадке ничего, пока не сходил.\n")
+    out.append(f"INITIAL_HEALTH: Final[Health] = Health.{health['initial'].upper()}\n")
+
+    out.append("\n#: В какое состояние переводит класс ответа.\n")
+    out.append("#:\n")
+    out.append("#: None означает «состояние не меняется». Сетевой отказ и\n")
+    out.append("#: неопознанный ответ говорят о нас и о дороге, а не о том, как\n")
+    out.append("#: площадка к нам относится: менять по ним состояние доступа значило\n")
+    out.append("#: бы объявлять аккаунт ограниченным из-за оборванного соединения.\n")
+    out.append("HEALTH_BY_VERDICT: Final[dict[str, Health | None]] = {\n")
+    for name in doc["classes"]:
+        target = from_verdict[name]
+        value = "None" if target is None else f"Health.{target.upper()}"
+        out.append(f'    "{name}": {value},\n')
+    out.append("}\n")
+
+    out.append("\n#: Состояния, в которых автоматика записи приостановлена.\n")
+    out.append("#:\n")
+    out.append("#: Возобновление - только явным действием пользователя либо\n")
+    out.append("#: возвратом в начальное состояние по успешному ответу. Сама по себе\n")
+    out.append("#: пауза не истекает: истекающая означала бы, что клиент снова пишет\n")
+    out.append("#: на площадку, которая только что отказала, и не спросил никого.\n")
+    out.append("WRITES_PAUSED_IN: Final[frozenset[Health]] = frozenset(\n")
+    out.append("    {\n")
+    for name in paused:
+        out.append(f"        Health.{name.upper()},\n")
+    out.append("    }\n")
+    out.append(")\n")
 
     return "".join(out)
 
@@ -951,7 +1043,9 @@ def render_budget(spec: Path) -> str:
     known_reaction = {
         "first",
         "second_in_window",
+        "second_note",
         "third_in_window",
+        "third_note",
         "recovery",
         "capacity_multiplier",
         "min_capacity_factor",

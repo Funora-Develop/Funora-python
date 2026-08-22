@@ -166,7 +166,7 @@ class Budget:
             нормативен: сначала общее, потом ведро аккаунта.
     """
 
-    __slots__ = ("_buckets", "_demanded_at")
+    __slots__ = ("_buckets", "_demanded_at", "_suspended_until")
 
     def __init__(self, names: tuple[str, ...] = ("host", "account")) -> None:
         self._buckets = tuple(TokenBucket(BUCKETS[name]) for name in names)
@@ -176,6 +176,48 @@ class Budget:
         #: превратилась бы из пола в потолок: цикл обновлений на пустой
         #: площадке уступал бы тем, кто не пришёл.
         self._demanded_at: dict[RequestClass, float] = {}
+
+        #: До какого момента класс снят с очереди.
+        #:
+        #: Вторая ступень реакции на ограничение частоты. Снятие держится до
+        #: конца остывания идентичности.
+        self._suspended_until: dict[RequestClass, float] = {}
+
+    def suspend(self, classes: tuple[RequestClass, ...], *, until: float) -> None:
+        """Снимает классы запросов с очереди до названного момента.
+
+        Вторая ступень реакции на ограничение частоты. Площадка сказала
+        «слишком быстро» второй раз в окне, и урезания ёмкости оказалось мало:
+        снимаются те классы, без которых клиент остаётся клиентом - наблюдение
+        за рынком и автоматика.
+
+        Снятие держится до конца остывания идентичности и снимается вместе с
+        ним. Само по себе оно не истекает раньше: истекающее раньше означало бы,
+        что клиент вернулся к прежнему темпу, ничего не дождавшись.
+
+        Args:
+            classes (tuple[RequestClass, ...]): Какие классы снять.
+            until (float): До какого момента, монотонные секунды.
+
+        Returns:
+            None
+        """
+        for request_class in classes:
+            self._suspended_until[request_class] = max(
+                self._suspended_until.get(request_class, 0.0), until
+            )
+
+    def is_suspended(self, request_class: RequestClass, now: float) -> bool:
+        """Сообщает, снят ли класс с очереди сейчас.
+
+        Args:
+            request_class (RequestClass): Класс запроса.
+            now (float): Текущий момент, монотонные секунды.
+
+        Returns:
+            bool: True, если класс снят и запрос по нему сейчас не пройдёт.
+        """
+        return now < self._suspended_until.get(request_class, 0.0)
 
     def _floor_for(self, request_class: RequestClass, now: float) -> float:
         """Считает порог допуска для класса по нынешнему спросу.
@@ -239,6 +281,16 @@ class Budget:
             Reservation: Выдан ли бюджет, и сколько ждать, если нет.
         """
         self._demanded_at[request_class] = now
+
+        # Снятый класс не проходит вовсе, сколько бы ни было в ведре. Ждать он
+        # обязан до конца остывания, а не до появления токена.
+        if self.is_suspended(request_class, now):
+            return Reservation(
+                granted=False,
+                wait_ms=int((self._suspended_until[request_class] - now) * 1000) + 1,
+                bucket="suspended",
+            )
+
         floor = self._floor_for(request_class, now)
         for bucket in self._buckets:
             wait = bucket.wait_for(now, cost, floor)

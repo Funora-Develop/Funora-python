@@ -31,7 +31,7 @@ from time import monotonic
 from typing import Final
 
 from ._budget import Budget
-from .budget import RATE_LIMIT_RESPONSE
+from .budget import RATE_LIMIT_RESPONSE, RequestClass
 
 __all__ = ["Identity", "IdentityRegistry", "REGISTRY", "identity_of"]
 
@@ -126,6 +126,18 @@ class Identity:
         cooldown_ms = RATE_LIMIT_RESPONSE.cooldown_ms * self.limits_seen
         self.cooldown_until = now + cooldown_ms / 1000
         self.budget.scale(self.capacity_factor)
+
+        # Вторая ступень. Классы monitoring и automation снимаются с очереди до
+        # конца остывания: первый отменяется, второй ждёт. Остаются interactive
+        # и poll - то, без чего клиент перестаёт быть клиентом.
+        #
+        # Ступень выражается через классы запросов и потому была невыполнима,
+        # пока классов не было: она так и стояла объявленной и не сделанной.
+        if self.limits_seen >= 2:
+            self.budget.suspend(
+                (RequestClass.MONITORING, RequestClass.AUTOMATION),
+                until=self.cooldown_until,
+            )
 
         _log.warning(
             "идентичность %s получила ограничение (%d-е в окне): ёмкость урезана "

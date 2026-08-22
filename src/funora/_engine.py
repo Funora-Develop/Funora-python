@@ -39,7 +39,7 @@ from typing import Final
 
 from ._budget import Budget
 from ._chats import ChatsPage, parse_chats_page
-from ._classify import DEFAULT_IDENTITY_CSS, classify
+from ._classify import DEFAULT_IDENTITY_CSS, Verdict, classify
 from ._diff import (
     UNREAD_STATUS,
     Delivery,
@@ -61,7 +61,7 @@ from ._state import StateFile
 from ._thread import Thread, parse_thread
 from ._transport import Observation, TransportSettings
 from ._verdicts import error_for
-from ._watch import Router, StepResult, incomplete, loss, primed
+from ._watch import Router, StepResult, health_changed, incomplete, loss, primed
 from .budget import MAX_QUEUE_DEPTH_PER_KEY, RequestClass
 from .capabilities import CAPABILITY_INITIAL, Capability, CapabilityState
 from .errors import (
@@ -76,6 +76,12 @@ from .errors import (
     ValidationError,
 )
 from .operations import OPERATIONS, Safety
+from .response_classes import (
+    HEALTH_BY_VERDICT,
+    INITIAL_HEALTH,
+    WRITES_PAUSED_IN,
+    Health,
+)
 
 __all__ = ["Fetch", "Pause", "Deliver", "Request", "Engine", "ORDERS_PATH", "CHATS_PATH"]
 
@@ -144,6 +150,8 @@ class _State:
             лечением.
         opted_in (frozenset[Capability]): Возможности, включённые вызывающим
             явно.
+        health (Health): Состояние доступа к площадке. От него зависит,
+            приостановлена ли автоматика записи.
     """
 
     capabilities: dict[Capability, CapabilityState] = field(
@@ -151,6 +159,7 @@ class _State:
     )
     session_ever_valid: bool = False
     opted_in: frozenset[Capability] = frozenset()
+    health: Health = INITIAL_HEALTH
 
 
 def check_integrity(observation: Observation) -> None:
@@ -281,7 +290,7 @@ class Engine:
             прямое соединение к хосту из настроек.
     """
 
-    __slots__ = ("_budget", "_identity", "_settings", "_state")
+    __slots__ = ("_budget", "_health_changes", "_identity", "_settings", "_state")
 
     def __init__(
         self,
@@ -293,6 +302,8 @@ class Engine:
         self._settings = settings
         self._budget = budget
         self._state = _State(opted_in=experimental)
+        #: Смены состояния доступа, ждущие выдачи партией.
+        self._health_changes: list[tuple[Health, Health, str]] = []
         self._identity = (
             identity
             if identity is not None
@@ -470,6 +481,7 @@ class Engine:
                     received_length=observation.content_length,
                     content_encoding=observation.content_encoding,
                 )
+                self.note_health(verdict)
                 error = error_for(verdict, session_ever_valid=self._state.session_ever_valid)
                 if error is not None:
                     raise error
@@ -483,6 +495,22 @@ class Engine:
                 # уходил в политику повторов, а ёмкость оставалась прежней -
                 # следующий залп был ровно таким же, каким был до ограничения.
                 self._identity.note_limit(monotonic())
+
+                # Третья ступень. Третье ограничение в окне - уже не про темп, а
+                # про то, как площадка относится к аккаунту: состояние доступа
+                # становится rate_limited, и автоматика записи приостанавливается.
+                #
+                # Разница со второй ступенью в том, кто решает. Пауза второй
+                # истекает вместе с остыванием; состояние третьей не истекает -
+                # оно снимается успешным ответом либо явным действием
+                # пользователя. Иначе клиент вернулся бы писать на площадку,
+                # которая трижды сказала «слишком быстро», и не спросил никого.
+                if self._identity.limits_seen >= 3:
+                    self.enter_health(
+                        Health.RATE_LIMITED,
+                        reason=f"rate_limited_{self._identity.limits_seen}_in_window",
+                    )
+
                 self._note_failure(capability, exc)
                 plan = plan_attempt(
                     exc,
@@ -681,6 +709,97 @@ class Engine:
             cursors[node_id] = thread_cursor(thread)
 
         return tuple(events), cursors, followed
+
+    def drain_health(self, account_id: str, observed_at: datetime) -> tuple[Event, ...]:
+        """Отдаёт накопленные смены состояния доступа событиями.
+
+        Смены копятся во время чтения и выдаются партией: породить событие
+        посреди чтения значило бы отдать его вне партии - без порядка, без
+        гашения повторов и без учёта в курсоре.
+
+        Args:
+            account_id (str): Идентификатор аккаунта.
+            observed_at (datetime): Момент наблюдения, общий для партии.
+
+        Returns:
+            tuple[Event, ...]: События protocol.health_changed. Пустой кортеж,
+            если состояние не менялось.
+        """
+        if not self._health_changes:
+            return ()
+        events = tuple(
+            health_changed(
+                account_id,
+                observed_at,
+                before=str(before),
+                after=str(after),
+                reason=reason,
+                writes_paused=after in WRITES_PAUSED_IN,
+            )
+            for before, after, reason in self._health_changes
+        )
+        self._health_changes.clear()
+        return events
+
+    def enter_health(self, target: Health, *, reason: str) -> None:
+        """Переводит состояние доступа принудительно.
+
+        Нужно там, где состояние определяется не вердиктом одного ответа, а
+        накопленным счётом: третье ограничение частоты в окне говорит о
+        площадке больше, чем каждое из них по отдельности.
+
+        Args:
+            target (Health): Новое состояние.
+            reason (str): Машиночитаемая причина перехода.
+
+        Returns:
+            None
+        """
+        if target is self._state.health:
+            return
+        before = self._state.health
+        self._state.health = target
+        self._health_changes.append((before, target, reason))
+        _log.warning(
+            "состояние доступа: %s -> %s (%s). Автоматика записи %s",
+            before,
+            target,
+            reason,
+            "приостановлена" if target in WRITES_PAUSED_IN else "разрешена",
+        )
+
+    def note_health(self, verdict: Verdict) -> None:
+        """Обновляет состояние доступа по вердикту классификатора.
+
+        Смена копится, а не порождает событие немедленно: события выдаются
+        партией на шаге наблюдения, и породить его посреди чтения значило бы
+        отдать вызывающему событие вне партии - без порядка, без гашения
+        повторов и без учёта в курсоре.
+
+        Переход в то же состояние не копится. Иначе каждый повторный отказ
+        порождал бы событие, и поток сообщений о неизменном состоянии заглушил
+        бы сообщение о его изменении.
+
+        Args:
+            verdict (Verdict): Вердикт классификатора.
+
+        Returns:
+            None
+        """
+        target = HEALTH_BY_VERDICT.get(str(verdict.cls))
+        if target is None or target is self._state.health:
+            return
+
+        before = self._state.health
+        self._state.health = target
+        self._health_changes.append((before, target, verdict.reason))
+        _log.info(
+            "состояние доступа: %s -> %s (%s). Автоматика записи %s",
+            before,
+            target,
+            verdict.reason,
+            "приостановлена" if target in WRITES_PAUSED_IN else "разрешена",
+        )
 
     def spend_budget(
         self, request_class: RequestClass = RequestClass.INTERACTIVE
@@ -953,7 +1072,10 @@ class Engine:
             )
             fresh = (*head, *dedup.filter((*losses, *messages), now))
 
-            batch = fresh
+            # Смены состояния доступа идут первыми в партии. Порядок значим:
+            # получатель, узнав, что автоматика записи приостановлена, обязан
+            # увидеть это ДО событий, на которые он собрался бы отвечать.
+            batch = (*self.drain_health(account_id, orders.observed_at), *fresh)
             greeting: Event | None = None
             if not greeted:
                 # Холодный старт молчит о данных и говорит один раз о себе:

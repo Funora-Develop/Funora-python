@@ -71,6 +71,9 @@ _INCOMPLETE: Final[EventType] = EventType.SNAPSHOT_INCOMPLETE
 #: Событие, которым объявляется потеря событий.
 _LOSS: Final[EventType] = EventType.EVENT_LOSS
 
+#: Вид события о смене состояния доступа.
+_HEALTH: Final[EventType] = EventType.PROTOCOL_HEALTH_CHANGED
+
 #: Причина, по которой наблюдение объявляется начавшимся.
 _COLD_START: Final[str] = "cold_start"
 
@@ -108,6 +111,7 @@ PRODUCIBLE: Final[frozenset[EventType]] = frozenset(
         EventType.WATCH_PRIMED,
         EventType.SNAPSHOT_INCOMPLETE,
         EventType.EVENT_LOSS,
+        EventType.PROTOCOL_HEALTH_CHANGED,
     }
 )
 
@@ -633,6 +637,52 @@ def primed(account_id: str, observed_at: datetime, entities: tuple[str, ...]) ->
             # ответ на «за чем».
             "entities": list(entities),
             "reason": _COLD_START,
+        },
+    )
+
+
+def health_changed(
+    account_id: str,
+    observed_at: datetime,
+    *,
+    before: str,
+    after: str,
+    reason: str,
+    writes_paused: bool,
+) -> Event:
+    """Собирает событие о смене состояния доступа к площадке.
+
+    Смена, о которой не сказали, неотличима от её отсутствия: вызывающий видит,
+    что автоматика записи молчит, и не знает почему. Отсюда правило - всякая
+    смена состояния порождает событие, а переход в то же состояние не порождает
+    ничего: поток сообщений о неизменном заглушил бы сообщение об изменении.
+
+    Args:
+        account_id (str): Идентификатор аккаунта.
+        observed_at (datetime): Момент наблюдения.
+        before (str): Прежнее состояние.
+        after (str): Новое состояние.
+        reason (str): Машиночитаемая причина перехода.
+        writes_paused (bool): Приостановлена ли автоматика записи.
+
+    Returns:
+        Event: Событие protocol.health_changed.
+    """
+    return make_event(
+        account_id=account_id,
+        event_type=_HEALTH,
+        entity_id=account_id,
+        # Версия - новое состояние, как объявлено нормативным перечнем
+        # источников версии. Возврат в прежнее состояние даёт прежний
+        # отпечаток, и гашение повторов срабатывает само.
+        revision=after,
+        observed_at=observed_at,
+        key_field="account_id",
+        payload={
+            "before": before,
+            "after": after,
+            "reason_code": reason,
+            "writes_paused": writes_paused,
         },
     )
 

@@ -29,7 +29,16 @@ from funora._diff import Event
 from funora._engine import Engine, Pause
 from funora._poll import Schedule
 from funora._transport import Observation, TransportSettings
-from funora._watch import PRODUCIBLE, Router, adispatch, dispatch, incomplete, loss, primed
+from funora._watch import (
+    PRODUCIBLE,
+    Router,
+    adispatch,
+    dispatch,
+    health_changed,
+    incomplete,
+    loss,
+    primed,
+)
 from funora.budget import RequestClass
 from funora.errors import (
     AccessBlockedError,
@@ -1737,6 +1746,14 @@ def test_every_declared_kind_is_actually_produced() -> None:
             rows_accepted=8,
         ).type,
         loss(account, when, lost=1, reason="queue_overflow").type,
+        health_changed(
+            account,
+            when,
+            before="authenticated",
+            after="rate_limited",
+            reason="http_429",
+            writes_paused=True,
+        ).type,
     }
 
     assert produced >= PRODUCIBLE, (
