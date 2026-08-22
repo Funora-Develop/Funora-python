@@ -567,12 +567,19 @@ def render_retry(spec: Path) -> str:
             extra=extra,
         ).replace(
             "from typing import ClassVar, Final",
-            "from dataclasses import dataclass\nfrom typing import Final",
+            "from dataclasses import dataclass\nfrom enum import StrEnum\nfrom typing import Final",
         )
     ]
 
     out.append(
-        '__all__ = ["RetryPolicy", "RETRY_POLICIES", "FALLBACK_POLICY", "GLOBAL_MAX_ATTEMPTS"]\n'
+        "__all__ = [\n"
+        '    "RetryPolicy",\n'
+        '    "RETRY_POLICIES",\n'
+        '    "FALLBACK_POLICY",\n'
+        '    "GLOBAL_MAX_ATTEMPTS",\n'
+        '    "RetryDecision",\n'
+        '    "DECISION_MATRIX",\n'
+        "]\n"
     )
 
     out.append("\n\n@dataclass(frozen=True, slots=True)\n")
@@ -631,6 +638,68 @@ def render_retry(spec: Path) -> str:
 
     out.append("\n#: Потолок числа попыток независимо от политики класса ошибки.\n")
     out.append(f"GLOBAL_MAX_ATTEMPTS: Final[int] = {limits['global_max_attempts']['value']}\n")
+
+    matrix = doc.get("decision_matrix")
+    if not matrix:
+        raise SystemExit(
+            "spec/protocol/retry-policy.yaml: матрица решения о повторе отсутствует. "
+            "Без неё каждая реализация решает сама, и одна повторит отправку "
+            "сообщения, а другая нет - на одной и той же трассе"
+        )
+
+    known_row = {
+        "error_retryable",
+        "operation_safety",
+        "error_side_effects_possible",
+        "requires",
+        "result",
+        "summary",
+    }
+    results: list[str] = []
+    for index, row in enumerate(matrix):
+        unknown = sorted(set(row) - known_row)
+        if unknown:
+            raise SystemExit(
+                f"spec/protocol/retry-policy.yaml: в строке {index} матрицы поля "
+                f"{unknown}, а генератор о них не знает. Молча уронить их значило "
+                "бы решать о повторе по неполному правилу"
+            )
+        if row["result"] not in results:
+            results.append(row["result"])
+
+    out.append("\n\nclass RetryDecision(StrEnum):\n")
+    out.append('    """Что матрица говорит о повторе.\n\n')
+    out.append("    Решение о повторе - пересечение класса ошибки и безопасности\n")
+    out.append("    операции. Реализация, сводящая матрицу к «повторяем только\n")
+    out.append("    чтения», строже контракта: это безопасно, но расходится -\n")
+    out.append("    второй SDK на той же трассе поступит иначе.\n")
+    out.append('    """\n\n')
+    for value in results:
+        out.append(f'    {value.upper()} = "{value}"\n')
+
+    out.append("\n\n#: Строки матрицы решения о повторе, в порядке спецификации.\n")
+    out.append("#:\n")
+    out.append("#: Порядок значим: строки читаются сверху вниз, и первая подошедшая\n")
+    out.append("#: решает. Первая строка отсекает неповторяемый класс ошибки\n")
+    out.append("#: независимо от операции.\n")
+    out.append("#:\n")
+    out.append("#: Кортеж: повторяем ли класс ошибки; безопасность операции либо\n")
+    out.append("#: None, если строка о любой; возможен ли побочный эффект либо None,\n")
+    out.append("#: если неважно; решение.\n")
+    out.append(
+        "DECISION_MATRIX: Final[tuple[tuple[bool, str | None, bool | None, "
+        "RetryDecision], ...]] = (" + chr(10)
+    )
+    for row in matrix:
+        safety = row.get("operation_safety")
+        effects = row.get("error_side_effects_possible")
+        safety_text = "None" if safety is None else f'"{safety}"'
+        effects_text = "None" if effects is None else str(bool(effects))
+        out.append(
+            f"    ({bool(row['error_retryable'])}, {safety_text}, {effects_text}, "
+            f"RetryDecision.{row['result'].upper()}),\n"
+        )
+    out.append(")\n")
 
     return "".join(out)
 

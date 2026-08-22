@@ -31,11 +31,18 @@ from dataclasses import dataclass
 from typing import Final
 
 from ._verdicts import PROVISIONAL_ATTR
-from .errors import FunoraError
+from .errors import ConfigurationError, FunoraError
 from .operations import Safety
-from .retry import FALLBACK_POLICY, GLOBAL_MAX_ATTEMPTS, RETRY_POLICIES, RetryPolicy
+from .retry import (
+    DECISION_MATRIX,
+    FALLBACK_POLICY,
+    GLOBAL_MAX_ATTEMPTS,
+    RETRY_POLICIES,
+    RetryDecision,
+    RetryPolicy,
+)
 
-__all__ = ["Safety", "Attempt", "policy_for", "plan_attempt"]
+__all__ = ["decide", "Safety", "Attempt", "policy_for", "plan_attempt"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,11 +84,57 @@ def policy_for(error: FunoraError) -> RetryPolicy:
     return FALLBACK_POLICY
 
 
+def decide(error: Exception, safety: Safety) -> RetryDecision:
+    """Находит строку матрицы, которая решает о повторе.
+
+    Матрица - пересечение двух вещей: класса ошибки и безопасности операции.
+    Реализация долго сводила её к одному условию «повторяем только чтения»: это
+    строже контракта и потому безопасно, но расходится - второй SDK на той же
+    трассе поступит иначе, и разойдутся они молча.
+
+    Строки читаются сверху вниз, первая подошедшая решает. Порядок значим и
+    задан спецификацией: первая строка отсекает неповторяемый класс ошибки
+    независимо от операции.
+
+    Args:
+        error (Exception): Полученная ошибка.
+        safety (Safety): Безопасность операции при повторе.
+        idempotency_key (str | None): Ключ идемпотентности, если вызывающий его
+            вычислил. Нужен идемпотентной операции: без него матрица считает её
+            небезопасной.
+
+    Returns:
+        RetryDecision: Что матрица говорит о повторе.
+
+    Raises:
+        ConfigurationError: Если ни одна строка не подошла. Матрица обязана быть
+            полной: сочетание без строки означает, что реализации решат сами.
+    """
+    retryable = bool(getattr(type(error), "retryable", False))
+    effects = bool(getattr(type(error), "side_effects_possible", False))
+
+    for row_retryable, row_safety, row_effects, result in DECISION_MATRIX:
+        if row_retryable is not retryable:
+            continue
+        if row_safety is not None and row_safety != safety.value:
+            continue
+        if row_effects is not None and row_effects is not effects:
+            continue
+        return result
+
+    raise ConfigurationError(
+        f"матрица решения о повторе не покрывает сочетание: повторяемость "
+        f"{retryable}, безопасность {safety.value}, побочный эффект {effects}. "
+        "Неполная матрица означает, что реализации решат сами - и разойдутся"
+    )
+
+
 def plan_attempt(
     error: FunoraError,
     *,
     attempt: int,
     safety: Safety = Safety.SAFE,
+    idempotency_key: str | None = None,
     retry_after_ms: int | None = None,
     rand: Callable[[], float] = _random.random,
 ) -> Attempt:
@@ -108,8 +161,21 @@ def plan_attempt(
     if getattr(error, PROVISIONAL_ATTR, False):
         return Attempt(False, 0, "verdict_provisional", policy)
 
-    if safety is not Safety.SAFE:
-        return Attempt(False, 0, f"operation_not_safe:{safety}", policy)
+    decision = decide(error, safety)
+    if decision is RetryDecision.NEVER:
+        return Attempt(False, 0, "error_not_retryable", policy)
+    if decision is RetryDecision.RECONCILE_FIRST:
+        # Повтор запрещён не потому, что бесполезен, а потому, что опасен:
+        # операция небезопасна, и ошибка допускает побочный эффект. Прежде чем
+        # повторять, надо прочитать фактическое положение дел. Это тот случай,
+        # когда покупатель получает второе сообщение или второй ключ автовыдачи.
+        return Attempt(False, 0, "reconcile_first", policy)
+    if decision is RetryDecision.ALLOWED_WITH_KEY and idempotency_key is None:
+        # Без ключа идемпотентная операция ведёт себя как небезопасная - так
+        # сказано в самой матрице. Отказ здесь честнее повтора: ключ не
+        # придумывается реализацией, его вычисляет вызывающий по составу,
+        # объявленному у операции.
+        return Attempt(False, 0, "idempotency_key_required", policy)
 
     limit = min(policy.max_attempts, GLOBAL_MAX_ATTEMPTS)
     if attempt >= limit:
