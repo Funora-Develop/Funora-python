@@ -487,3 +487,86 @@ def test_unusable_selector_does_not_break_classification() -> None:
 
     assert verdict.cls is ResponseClass.LOGIN_REQUIRED
     assert verdict.detail == {"selector": ".menu-item-login"}
+
+
+def test_backslash_host_is_not_ours() -> None:
+    """Проверяет самый коварный вид подделки хоста.
+
+    Адрес `https://evil.example\\.funpay.com/` разборщик Python видит как один
+    хост, оканчивающийся на `.funpay.com`, - и сравнение с суффиксом объявляет
+    его нашим. Браузер по такому адресу идёт на `evil.example`.
+
+    Классификатор держал свою копию правила о хосте и на этом попадался. Копия
+    была четвёртой: ровно из-за таких расхождений `_host.py` и появился.
+
+    Returns:
+        None
+    """
+    verdict = classify(
+        status=200,
+        html="<html><body><div class='navbar-toggle-logged'></div></body></html>",
+        final_url="https://evil.example\\.funpay.com/orders/trade",
+        expected_host=HOST,
+    )
+
+    assert verdict.cls is ResponseClass.WRONG_IDENTITY
+    assert verdict.reason in {"host_mismatch", "host_unreadable"}
+
+
+def test_prefix_host_is_not_ours() -> None:
+    """Проверяет подделку приставкой.
+
+    `https://funpay.com.evil.example/` содержит имя площадки и ведёт совсем не
+    туда. Сравнение подстрокой на этом попадается; сравнение суффиксом - нет,
+    но проверка стоит здесь затем, чтобы попытка «упростить» правило обратно к
+    подстроке падала.
+
+    Returns:
+        None
+    """
+    verdict = classify(
+        status=200,
+        html="<html><body><div class='navbar-toggle-logged'></div></body></html>",
+        final_url="https://funpay.com.evil.example/orders/trade",
+        expected_host=HOST,
+    )
+
+    assert verdict.cls is ResponseClass.WRONG_IDENTITY
+    assert verdict.reason == "host_mismatch"
+
+
+def test_unreadable_host_is_refused_not_trusted() -> None:
+    """Проверяет адрес, о происхождении которого сказать нечего.
+
+    Прежде пустой хост проверку личности проходил: условие начиналось с «если
+    хост есть». Ответу, о происхождении которого сказать нечего, доверять нельзя
+    тем более, чем ответу с чужого хоста.
+
+    Returns:
+        None
+    """
+    verdict = classify(
+        status=200,
+        html="<html><body><div class='navbar-toggle-logged'></div></body></html>",
+        final_url="не адрес вовсе",
+        expected_host=HOST,
+    )
+
+    assert verdict.cls is ResponseClass.WRONG_IDENTITY
+    assert verdict.reason == "host_unreadable"
+
+
+def test_subdomain_of_ours_is_still_ours() -> None:
+    """Проверяет, что строгость не задела свои поддомены.
+
+    Returns:
+        None
+    """
+    verdict = classify(
+        status=200,
+        html="<html><body><div class='navbar-toggle-logged'></div></body></html>",
+        final_url=f"https://support.{HOST}/orders/trade",
+        expected_host=HOST,
+    )
+
+    assert verdict.cls is not ResponseClass.WRONG_IDENTITY

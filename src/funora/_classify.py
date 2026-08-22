@@ -31,9 +31,10 @@ import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Final
-from urllib.parse import urlparse
 
 from selectolax.parser import HTMLParser
+
+from ._host import host_of, same_host
 
 __all__ = [
     "ResponseClass",
@@ -337,8 +338,23 @@ def classify(
 
     # Шаг 2. Проверка личности. Идёт до детекторов: ответ с чужого хоста не
     # заслуживает того, чтобы его разбирали, каким бы он ни выглядел.
-    host = urlparse(final_url).hostname or ""
-    if host and host != expected_host and not host.endswith("." + expected_host):
+    # Правило берётся из _host.py, а не пишется здесь заново. Своя копия тут и
+    # была - сравнение хоста с суффиксом, - и она принимала за наш хост адрес
+    # вида https://evil.example\.funpay.com/: разборщик Python видит в нём один
+    # хост, оканчивающийся на .funpay.com, а браузер идёт на evil.example. Это
+    # тот же промах, из-за которого _host.py и появился, и это была четвёртая
+    # его копия.
+    host = host_of(final_url)
+    if not host:
+        # Хост нечитаем: это не расхождение, а невозможность судить. Ответу, о
+        # происхождении которого сказать нечего, доверять нельзя тем более.
+        # Причина названа отдельно, чтобы разбор видел разницу.
+        return Verdict(
+            cls=ResponseClass.WRONG_IDENTITY,
+            reason="host_unreadable",
+            detail={"expected": expected_host, "actual": final_url[:64]},
+        )
+    if not same_host(final_url, expected_host):
         return Verdict(
             cls=ResponseClass.WRONG_IDENTITY,
             reason="host_mismatch",

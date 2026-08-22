@@ -63,6 +63,7 @@ VERDICT_ERRORS: Final[dict[tuple[str, str], type[Exception] | None]] = {
     ("maintenance", "http_503"): RemoteServerError,
     ("maintenance", "signature:maintenance_text"): RemoteServerError,
     ("wrong_identity", "host_mismatch"): UnexpectedResponseError,
+    ("wrong_identity", "host_unreadable"): UnexpectedResponseError,
     ("transport_error", "http_5xx"): RemoteServerError,
     ("transport_error", "http_4xx"): UnexpectedResponseError,
     ("unknown", "empty_body"): UnexpectedResponseError,
