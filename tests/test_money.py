@@ -57,7 +57,7 @@ def test_comparison_is_no_safer_than_addition() -> None:
         None
     """
     with pytest.raises(CurrencyMismatchError):
-        Money(100, "RUB") < Money(100, "USD")
+        assert Money(100, "RUB") < Money(100, "USD")
 
 
 def test_the_symbol_is_not_a_code() -> None:
