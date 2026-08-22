@@ -34,7 +34,7 @@ from typing import Final
 
 from ._diff import Event
 from .budget import SCHEDULING, Scheduling
-from .events import DEDUP_TTL_MS, MIN_ENTRIES_PER_KEY
+from .events import DEDUP_TTL_MS, EVENT_LANE, MIN_ENTRIES_PER_KEY
 
 __all__ = ["Schedule", "Deduplicator", "UNSAFE_FLOOR_MARK"]
 
@@ -43,6 +43,30 @@ __all__ = ["Schedule", "Deduplicator", "UNSAFE_FLOOR_MARK"]
 #: Появляется в состоянии клиента и в журнале, чтобы при разборе блокировки было
 #: видно: опрос шёл чаще, чем позволяет спецификация, и это сделали намеренно.
 UNSAFE_FLOOR_MARK: Final[str] = "unsafe_interval_floor_lowered"
+
+
+#: Полоса событий о самом наблюдении.
+#:
+#: Имя взято из спецификации, где полоса объявлена вместе с правилом: события о
+#: состоянии системы не выбрасываются никогда, потому что выбросить сообщение о
+#: потере событий значит потерять и сам факт потери.
+_CONTROL_PLANE: Final[str] = "control_plane"
+
+
+def _is_data(event: Event) -> bool:
+    """Сообщает, несёт ли событие данные площадки.
+
+    Полоса объявлена спецификацией, а не выведена здесь по именам: перечень
+    имён разошёлся бы с контрактом молча, а полоса решает ещё и то, можно ли
+    выбросить событие при переполнении.
+
+    Args:
+        event (Event): Событие.
+
+    Returns:
+        bool: True, если событие о площадке, а не о самом наблюдении.
+    """
+    return EVENT_LANE.get(event.type) != _CONTROL_PLANE
 
 
 @dataclass
@@ -109,6 +133,16 @@ class Schedule:
     def note(self, events: tuple[Event, ...], now: float) -> int:
         """Учитывает итог опроса и возвращает интервал до следующего.
 
+        Признаком активности считаются только события о данных. События о
+        самом наблюдении - приветствие, жалоба на неполноту, сообщение о потере
+        - данными не являются, и прежде считались наравне с ними.
+
+        Стоило это дорого и молча. Страница, разбирающаяся неполно, порождает
+        жалобу на каждом шаге; жалоба считалась активностью, интервал не рос, и
+        клиент стучался в площадку с минимальным интервалом бесконечно - из-за
+        собственного состояния, а не из-за чужого. Это ровно тот путь, которым
+        приходят к ограничению частоты.
+
         Args:
             events (tuple[Event, ...]): События, порождённые этим опросом.
             now (float): Текущий момент, монотонные секунды.
@@ -116,7 +150,7 @@ class Schedule:
         Returns:
             int: Через сколько миллисекунд спрашивать снова.
         """
-        if events:
+        if any(_is_data(event) for event in events):
             self._last_data_event_at = now
             self._interval_ms = self.numbers.active_interval_ms
             return self.interval_ms

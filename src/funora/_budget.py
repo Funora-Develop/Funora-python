@@ -52,11 +52,15 @@ class TokenBucket:
         limits (BucketLimits): Ёмкость и скорость пополнения.
         tokens (float): Текущий запас. По умолчанию ведро полное.
         updated_at (float): Момент последнего пополнения, монотонные секунды.
+        factor (float): Доля от объявленной ёмкости. Меньше единицы после
+            ограничения частоты: площадка сказала «слишком быстро», и ёмкость
+            урезана до тех пор, пока не наберётся успешных запросов подряд.
     """
 
     limits: BucketLimits
     tokens: float = field(default=-1.0)
     updated_at: float = 0.0
+    factor: float = 1.0
 
     def __post_init__(self) -> None:
         """Заполняет ведро, если начальный запас не задан.
@@ -83,10 +87,28 @@ class TokenBucket:
             return
         elapsed = now - self.updated_at
         self.tokens = min(
-            float(self.limits.capacity),
+            self.limits.capacity * self.factor,
             self.tokens + elapsed * self.limits.refill_per_second,
         )
         self.updated_at = now
+
+    def scale(self, factor: float) -> None:
+        """Урезает ёмкость ведра до доли от объявленной.
+
+        Запас подрезается вместе с ёмкостью: ведро, полное по прежней мерке, при
+        уменьшенной ёмкости отдало бы залпом больше, чем новая ёмкость
+        позволяет, - то есть урезание не подействовало бы до первого исчерпания.
+
+        Args:
+            factor (float): Доля от объявленной ёмкости.
+
+        Returns:
+            None
+        """
+        self.factor = factor
+        ceiling = self.limits.capacity * factor
+        if self.tokens > ceiling:
+            self.tokens = ceiling
 
     def wait_for(self, now: float, cost: float = 1.0) -> int:
         """Сообщает, сколько ждать до появления нужного запаса.
@@ -157,6 +179,37 @@ class Budget:
         for bucket in self._buckets:
             bucket.take(now, cost)
         return Reservation(granted=True, wait_ms=0, bucket="")
+
+    def scale(self, factor: float) -> None:
+        """Урезает ёмкость всех вёдер до доли от объявленной.
+
+        Нужно реакции на ограничение частоты. Прежде она была объявлена
+        спецификацией и не выполнялась нигде: ответ 429 переводился в ошибку и
+        уходил в политику повторов, но ёмкость ведра при этом не менялась -
+        следующий залп был ровно таким же, каким был до ограничения. Это худший
+        из возможных ответов на ограничение.
+
+        Урезается ёмкость, а не запас. Запас восстановится сам по объявленной
+        скорости; ёмкость решает, сколько можно взять залпом, и именно она
+        отвечает на «слишком быстро».
+
+        Args:
+            factor (float): Доля от объявленной ёмкости, от нуля до единицы.
+
+        Returns:
+            None
+
+        Raises:
+            ValueError: Если доля вне разумных границ. Множитель больше единицы
+                означал бы, что ограничение частоты РАЗРЕШАЕТ ходить чаще.
+        """
+        if not 0 < factor <= 1:
+            raise ValueError(
+                f"доля ёмкости {factor} вне границ (0, 1]: множитель больше "
+                "единицы означал бы, что ограничение частоты разрешает ходить чаще"
+            )
+        for bucket in self._buckets:
+            bucket.scale(factor)
 
     def require(self, now: float, cost: float = 1.0) -> Reservation:
         """Занимает бюджет или отказывает, если ждать пришлось бы слишком долго.

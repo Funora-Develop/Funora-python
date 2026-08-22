@@ -84,6 +84,10 @@ class TransportSettings:
             разворачивается в сотни, и одна проверка на двоих ловит только тот
             случай, который и так виден.
         max_redirects (int): Предел числа переходов при ручном следовании.
+        proxy_url (str | None): Через что ходить. None означает прямое
+            соединение. Прокси меняет исходящий адрес, то есть сетевую
+            идентичность целиком: у неё свой запас токенов и своё остывание
+            после ограничения частоты.
         user_agent (str): Значение заголовка User-Agent. Задаётся спецификацией,
             а не оставляется на усмотрение реализации: одинаковое поведение
             шести SDK начинается с того, как они представляются.
@@ -96,6 +100,7 @@ class TransportSettings:
     max_response_bytes: int = MAX_RESPONSE_BYTES
     max_decompressed_bytes: int = MAX_DECOMPRESSED_BYTES
     max_redirects: int = MAX_REDIRECTS
+    proxy_url: str | None = None
     user_agent: str = "Funora/0.0.1 (+https://github.com/Funora-Develop)"
 
 
@@ -222,6 +227,10 @@ def _client_kwargs(settings: TransportSettings) -> dict[str, object]:
         # повреждений, ни строки в журнале - правдоподобные данные не того
         # аккаунта. Заголовок Cookie собирается вручную.
         "cookies": None,
+        # Прокси передаётся библиотеке как есть. Проверку схемы делает пул: там
+        # же, где прокси объявляются, - иначе она обошлась бы передачей готового
+        # транспорта.
+        "proxy": settings.proxy_url,
         "headers": {
             "User-Agent": settings.user_agent,
             # Перечень берётся из спецификации, а не пишется здесь. Локаль

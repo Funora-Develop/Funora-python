@@ -20,9 +20,10 @@ import funora._client as client_module
 from funora._budget import Budget
 from funora._chats import ChatsPage
 from funora._client import Client
+from funora._engine import Engine, Fetch, Pause
 from funora._orders import Completeness
 from funora._thread import Origin, Thread
-from funora._transport import Observation
+from funora._transport import Observation, TransportSettings
 from funora.capabilities import Capability, CapabilityState
 from funora.errors import (
     BudgetExhaustedError,
@@ -554,3 +555,40 @@ def test_redirects_spend_budget_too() -> None:
         return count
 
     assert left(with_hops) < left(plain), "переходы обязаны расходовать бюджет"
+
+
+def test_rate_limit_cuts_the_identity_capacity() -> None:
+    """Проверяет, что ограничение частоты доходит до источника.
+
+    Политика повторов решает про ОДИН запрос: повторить ли его и когда. Реакция
+    идентичности решает, как пойдут все следующие: ёмкость режется вдвое,
+    источник остывает.
+
+    Прежде второго не делалось вовсе. Ответ 429 переводился в ошибку и уходил в
+    политику повторов, а ёмкость оставалась прежней - следующий залп был ровно
+    таким же, каким был до ограничения. Это худший из возможных ответов на
+    просьбу замедлиться.
+
+    Returns:
+        None
+    """
+    from funora._identity import Identity
+    from funora.budget import RATE_LIMIT_RESPONSE
+    from funora.errors import RateLimitedError
+
+    identity = Identity(name="проба@funpay.com")
+    engine = Engine(TransportSettings(), identity.budget, frozenset(), identity)
+
+    steps = engine.read_orders()
+    request = next(steps)
+    assert isinstance(request, Fetch)
+
+    # Ограничение частоты повторяемо, поэтому ядро просит подождать, а не падает.
+    # Проверяется не это, а то, что источник при этом отступил.
+    reply = steps.throw(RateLimitedError("слишком быстро"))
+    assert isinstance(reply, Pause), f"ядро не запросило паузу, а вернуло {reply}"
+
+    assert identity.capacity_factor == RATE_LIMIT_RESPONSE.capacity_multiplier, (
+        "ёмкость не урезана: следующий залп будет прежним"
+    )
+    assert identity.is_cooling(identity.cooldown_until - 1), "источник не остывает"

@@ -754,6 +754,8 @@ def render_budget(spec: Path) -> str:
         "MAX_RESPONSE_BYTES",
         "MAX_DECOMPRESSED_BYTES",
         "MAX_REDIRECTS",
+        "RateLimitResponse",
+        "RATE_LIMIT_RESPONSE",
         "Scheduling",
         "SCHEDULING",
         "PROVISIONAL",
@@ -861,6 +863,80 @@ def render_budget(spec: Path) -> str:
         out.append(f"\n#: {note}\n")
         out.append(f"{const_name}: Final[{kind}] = {limits[key]}\n")
 
+    reaction = doc["rate_limit_response"]
+    known_reaction = {
+        "first",
+        "second_in_window",
+        "third_in_window",
+        "recovery",
+        "capacity_multiplier",
+        "min_capacity_factor",
+        "min_capacity_note",
+        "cooldown_ms",
+        "cooldown_note",
+        "window_ms",
+        "window_note",
+        "successes_per_step",
+        "recovery_multiplier",
+        "successes_note",
+        "asymmetry_rule",
+    }
+    unknown = sorted(set(reaction) - known_reaction)
+    if unknown:
+        raise SystemExit(
+            f"spec/runtime/budget.yaml: в реакции на ограничение поля {unknown}, "
+            "а генератор о них не знает. Реакция на ограничение - последнее, что "
+            "стоит ронять молча"
+        )
+    if not 0 < reaction["capacity_multiplier"] < 1:
+        raise SystemExit(
+            "spec/runtime/budget.yaml: множитель ёмкости при ограничении обязан "
+            "быть между нулём и единицей - иначе ограничение не уменьшает темп"
+        )
+    if reaction["recovery_multiplier"] <= 1:
+        raise SystemExit(
+            "spec/runtime/budget.yaml: множитель восстановления обязан быть больше "
+            "единицы - иначе ёмкость не возвращается никогда"
+        )
+
+    out.append("\n\n@dataclass(frozen=True, slots=True)\n")
+    out.append("class RateLimitResponse:\n")
+    out.append('    """Как источник отвечает на ограничение частоты.\n\n')
+    out.append("    Восстановление медленнее падения намеренно. Симметричное\n")
+    out.append("    восстановление даёт автоколебания: система отступает, тут же\n")
+    out.append("    возвращается к прежней частоте, получает ограничение снова и так\n")
+    out.append("    по кругу.\n\n")
+    out.append("    Attributes:\n")
+    out.append("        capacity_multiplier (float): На сколько умножается ёмкость.\n")
+    out.append("        min_capacity_factor (float): Ниже этой доли ёмкость не падает.\n")
+    out.append("        cooldown_ms (int): Остывание за первое ограничение, мс.\n")
+    out.append("        window_ms (int): Окно учёта ограничений, мс.\n")
+    out.append("        successes_per_step (int): Успехов подряд на шаг восстановления.\n")
+    out.append("        recovery_multiplier (float): Во сколько раз растёт ёмкость.\n")
+    out.append('    """\n\n')
+    out.append("    capacity_multiplier: float\n")
+    out.append("    min_capacity_factor: float\n")
+    out.append("    cooldown_ms: int\n")
+    out.append("    window_ms: int\n")
+    out.append("    successes_per_step: int\n")
+    out.append("    recovery_multiplier: float\n")
+
+    out.append("\n\n#: Реакция на ограничение частоты.\n")
+    out.append("#:\n")
+    out.append("#: Раздел долго называл ступени именами и не давал ни одного числа:\n")
+    out.append("#: реализация не могла его выполнить, даже захотев.\n")
+    out.append("RATE_LIMIT_RESPONSE: Final[RateLimitResponse] = RateLimitResponse(\n")
+    for field_name in (
+        "capacity_multiplier",
+        "min_capacity_factor",
+        "cooldown_ms",
+        "window_ms",
+        "successes_per_step",
+        "recovery_multiplier",
+    ):
+        out.append(f"    {field_name}={reaction[field_name]!r},\n")
+    out.append(")\n")
+
     schedule = doc["scheduling"]
     out.append("\n\n@dataclass(frozen=True, slots=True)\n")
     out.append("class Scheduling:\n")
@@ -951,6 +1027,8 @@ def render_events(spec: Path) -> str:
         "FINGERPRINT_DIGEST_BYTES",
         "FINGERPRINT_LENGTH",
         "MIN_ENTRIES_PER_KEY",
+        "EVENT_LANE",
+        "LANE_DROPPABLE",
         "DEDUP_TTL_MS",
     ):
         out.append(f'    "{name}",\n')
@@ -1025,6 +1103,57 @@ def render_events(spec: Path) -> str:
 
     out.append("\n#: Сколько хранится запись о доставленном событии, миллисекунды.\n")
     out.append(f"DEDUP_TTL_MS: Final[int] = {dedup['ttl_ms']}\n")
+
+    lanes = doc.get("backpressure", {}).get("lanes")
+    if not lanes:
+        raise SystemExit(
+            "spec/events/delivery.yaml: полосы очереди не объявлены. Без них "
+            "реализация сама решает, какое событие можно выбросить при "
+            "переполнении, - и выбросит сообщение о потере событий"
+        )
+
+    known_lane = {"carries", "droppable", "rule", "coalescing"}
+    by_type: dict[str, str] = {}
+    for lane, body in lanes.items():
+        unknown = sorted(set(body) - known_lane)
+        if unknown:
+            raise SystemExit(
+                f"spec/events/delivery.yaml: у полосы {lane} поля {unknown}, а "
+                "генератор о них не знает"
+            )
+        for kind in body["carries"]:
+            if kind in by_type:
+                raise SystemExit(
+                    f"spec/events/delivery.yaml: вид {kind} отнесён сразу к "
+                    f"полосам {by_type[kind]} и {lane}"
+                )
+            by_type[kind] = lane
+
+    missing = sorted(set(derivation) - set(by_type))
+    if missing:
+        raise SystemExit(
+            f"spec/events/delivery.yaml: виды {missing} не отнесены ни к одной "
+            "полосе. Реализация решит сама, можно ли их выбрасывать"
+        )
+
+    out.append("\n\n#: Полоса очереди, к которой относится вид события.\n")
+    out.append("#:\n")
+    out.append("#: Полоса решает две вещи: можно ли выбросить событие при\n")
+    out.append("#: переполнении и считается ли оно признаком активности. События о\n")
+    out.append("#: самом наблюдении - приветствие, жалоба на неполноту, сообщение о\n")
+    out.append("#: потере - данными не являются, и держать по ним опрос на\n")
+    out.append("#: минимальном интервале значит стучаться в площадку из-за\n")
+    out.append("#: собственного состояния.\n")
+    out.append("EVENT_LANE: Final[dict[EventType, str]] = {\n")
+    for name in derivation:
+        out.append(f'    EventType.{_const(name)}: "{by_type[name]}",\n')
+    out.append("}\n")
+
+    out.append("\n#: Можно ли выбрасывать события полосы при переполнении.\n")
+    out.append("LANE_DROPPABLE: Final[dict[str, bool]] = {\n")
+    for lane in sorted(lanes):
+        out.append(f'    "{lane}": {bool(lanes[lane].get("droppable"))},\n')
+    out.append("}\n")
 
     return "".join(out)
 

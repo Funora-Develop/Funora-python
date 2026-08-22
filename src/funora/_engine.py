@@ -53,6 +53,7 @@ from ._diff import (
 )
 from ._gate import check_capability
 from ._host import host_of
+from ._identity import REGISTRY, Identity, identity_of
 from ._orders import Completeness, OrdersPage, parse_orders_page
 from ._poll import Deduplicator, Schedule
 from ._retry import plan_attempt
@@ -70,6 +71,7 @@ from .errors import (
     ConfigurationError,
     FunoraError,
     NetworkError,
+    RateLimitedError,
     TransportError,
     ValidationError,
 )
@@ -249,19 +251,29 @@ class Engine:
         budget (Budget): Бюджет запросов.
         experimental (frozenset[Capability]): Возможности, включённые вызывающим
             явно.
+        identity (Identity | None): Сетевая идентичность, через которую идут
+            запросы. Нужна, чтобы ограничение частоты дошло до источника: оно
+            про источник целиком, а не про один запрос. По умолчанию заводится
+            прямое соединение к хосту из настроек.
     """
 
-    __slots__ = ("_budget", "_settings", "_state")
+    __slots__ = ("_budget", "_identity", "_settings", "_state")
 
     def __init__(
         self,
         settings: TransportSettings,
         budget: Budget,
         experimental: frozenset[Capability] = frozenset(),
+        identity: Identity | None = None,
     ) -> None:
         self._settings = settings
         self._budget = budget
         self._state = _State(opted_in=experimental)
+        self._identity = (
+            identity
+            if identity is not None
+            else REGISTRY.get(identity_of(None, host_of(settings.base_url) or settings.base_url))
+        )
 
     def capability(self, capability: Capability) -> CapabilityState:
         """Возвращает текущее состояние возможности.
@@ -414,17 +426,56 @@ class Engine:
                 # бесплатной ровно тогда, когда площадка нас куда-то гоняет.
                 yield from self.settle(observation.requests_sent - 1)
                 retry_after_ms = observation.retry_after_ms
-                check_integrity(observation)
+                # Целостность проверяется ВНУТРИ классификатора, вторым шагом
+                # после кода ответа. Прежде она стояла здесь, то есть первой, и
+                # это меняло диагноз: ответ 429 либо 503 с оборванным телом
+                # становился сетевым отказом, а не ограничением частоты и не
+                # техническими работами.
+                #
+                # Цена перестановки видна как раз на 429. Сетевой отказ
+                # повторяется коротким отступлением и не режет ёмкость ведра -
+                # то есть клиент продолжал бы стучаться в прежнем темпе ровно
+                # тогда, когда площадка сказала «слишком быстро».
                 verdict = classify(
                     status=observation.status,
                     final_url=observation.final_url,
                     html=observation.html,
                     expected_host=host,
                     identity_css=DEFAULT_IDENTITY_CSS,
+                    declared_length=observation.declared_length,
+                    received_length=observation.content_length,
+                    content_encoding=observation.content_encoding,
                 )
                 error = error_for(verdict, session_ever_valid=self._state.session_ever_valid)
                 if error is not None:
                     raise error
+            except RateLimitedError as exc:
+                # Ограничение частоты - про источник целиком, а не про один
+                # запрос. Политика повторов решает, когда повторить именно этот;
+                # реакция идентичности решает, как пойдут ВСЕ следующие: ёмкость
+                # режется вдвое, идентичность остывает.
+                #
+                # Прежде этого не делалось вовсе: 429 переводился в ошибку и
+                # уходил в политику повторов, а ёмкость оставалась прежней -
+                # следующий залп был ровно таким же, каким был до ограничения.
+                self._identity.note_limit(monotonic())
+                self._note_failure(capability, exc)
+                plan = plan_attempt(
+                    exc,
+                    attempt=attempt,
+                    safety=_safety_of(capability),
+                    retry_after_ms=retry_after_ms,
+                )
+                if not plan.retry:
+                    raise
+                _log.info(
+                    "повтор после ограничения частоты через %d мс (попытка %d)",
+                    plan.delay_ms,
+                    attempt,
+                )
+                yield Pause(plan.delay_ms)
+                attempt += 1
+                continue
             except FunoraError as exc:
                 self._note_failure(capability, exc)
                 plan = plan_attempt(

@@ -52,6 +52,7 @@ from ._orders import (
     parse_orders_page,
 )
 from ._poll import Deduplicator, Schedule
+from ._proxies import Proxy
 from ._retry import Attempt, Safety, plan_attempt, policy_for
 from ._secret import (
     CallableSecretProvider,
@@ -89,6 +90,7 @@ __all__ = [
     "ChatsService",
     "AsyncChatsService",
     "Budget",
+    "Proxy",
     "Reservation",
     # секреты
     "Secret",

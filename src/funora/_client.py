@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Generator
+from dataclasses import replace
 from pathlib import Path
 from time import sleep
 from typing import TYPE_CHECKING, TypeVar
@@ -23,8 +24,11 @@ from typing import TYPE_CHECKING, TypeVar
 from ._budget import Budget
 from ._chats import ChatsPage
 from ._engine import Deliver, Engine, Fetch, Pause, Reply, Request
+from ._host import host_of
+from ._identity import REGISTRY
 from ._orders import OrdersPage
 from ._poll import Schedule
+from ._proxies import DEFAULT_ACCOUNT, Proxy, ProxyPool
 from ._secret import Secret, SecretProvider
 from ._thread import Thread
 from ._transport import Fetcher, TransportSettings
@@ -136,7 +140,7 @@ class Client:
             здесь не поможет, исправлять надо вызов.
     """
 
-    __slots__ = ("_fetcher", "chats", "engine", "orders")
+    __slots__ = ("_fetcher", "chats", "engine", "orders", "pool")
 
     def __init__(
         self,
@@ -146,6 +150,7 @@ class Client:
         experimental: frozenset[Capability] | None = None,
         transport: Fetcher | None = None,
         budget: Budget | None = None,
+        proxies: tuple[Proxy, ...] = (),
     ) -> None:
         resolved_settings = settings or TransportSettings()
 
@@ -160,10 +165,26 @@ class Client:
                 "обратиться к площадке не от кого"
             )
 
+        # Пул заводится до движка: бюджет берётся у выбранной идентичности, а
+        # выбор идентичности - его работа.
+        self.pool = ProxyPool(
+            proxies,
+            host=host_of(resolved_settings.base_url) or resolved_settings.base_url,
+        )
+
+        # Идентичность выбирается один раз и передаётся движку: ограничение
+        # частоты обязано дойти до неё, а не до безымянного бюджета. Наблюдение
+        # перепривяжет аккаунт к другой, если эта остынет.
+        identity_name, proxy_url = self.pool.choose(DEFAULT_ACCOUNT)
+        identity = REGISTRY.get(identity_name)
+        if proxy_url is not None:
+            resolved_settings = replace(resolved_settings, proxy_url=proxy_url)
+
         self.engine = Engine(
             resolved_settings,
-            budget or Budget(),
+            budget or identity.budget,
             experimental or frozenset(),
+            identity,
         )
         self.orders = OrdersService(self)
         self.chats = ChatsService(self)

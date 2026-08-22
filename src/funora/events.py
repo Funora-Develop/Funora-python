@@ -28,6 +28,8 @@ __all__ = [
     "FINGERPRINT_DIGEST_BYTES",
     "FINGERPRINT_LENGTH",
     "MIN_ENTRIES_PER_KEY",
+    "EVENT_LANE",
+    "LANE_DROPPABLE",
     "DEDUP_TTL_MS",
 ]
 
@@ -126,3 +128,38 @@ MIN_ENTRIES_PER_KEY: Final[int] = 256
 
 #: Сколько хранится запись о доставленном событии, миллисекунды.
 DEDUP_TTL_MS: Final[int] = 3600000
+
+
+#: Полоса очереди, к которой относится вид события.
+#:
+#: Полоса решает две вещи: можно ли выбросить событие при
+#: переполнении и считается ли оно признаком активности. События о
+#: самом наблюдении - приветствие, жалоба на неполноту, сообщение о
+#: потере - данными не являются, и держать по ним опрос на
+#: минимальном интервале значит стучаться в площадку из-за
+#: собственного состояния.
+EVENT_LANE: Final[dict[EventType, str]] = {
+    EventType.MESSAGE_CREATED: "data_plane",
+    EventType.CHAT_UNREAD_CHANGED: "data_plane",
+    EventType.ORDER_CREATED: "data_plane",
+    EventType.ORDER_STATUS_CHANGED: "data_plane",
+    EventType.REVIEW_CHANGED: "data_plane",
+    EventType.LOT_PRICE_CHANGED: "data_plane",
+    EventType.LOT_STOCK_CHANGED: "data_plane",
+    EventType.MARKET_OFFER_APPEARED: "monitoring",
+    EventType.MARKET_OFFER_DISAPPEARED: "monitoring",
+    EventType.MARKET_PRICE_CHANGED: "monitoring",
+    EventType.SELLER_ONLINE_CHANGED: "monitoring",
+    EventType.PROTOCOL_HEALTH_CHANGED: "control_plane",
+    EventType.WATCH_PRIMED: "control_plane",
+    EventType.WATCH_DEGRADED: "control_plane",
+    EventType.SNAPSHOT_INCOMPLETE: "control_plane",
+    EventType.EVENT_LOSS: "control_plane",
+}
+
+#: Можно ли выбрасывать события полосы при переполнении.
+LANE_DROPPABLE: Final[dict[str, bool]] = {
+    "control_plane": False,
+    "data_plane": False,
+    "monitoring": True,
+}

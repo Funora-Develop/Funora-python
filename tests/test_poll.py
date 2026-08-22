@@ -21,19 +21,25 @@ from funora.budget import SCHEDULING
 from funora.events import EventType
 
 
-def _event(event_id: str, key: str = "chat:1") -> Event:
+def _event(
+    event_id: str,
+    key: str = "chat:1",
+    event_type: EventType = EventType.MESSAGE_CREATED,
+) -> Event:
     """Собирает событие для проверок.
 
     Args:
         event_id (str): Идентификатор события.
         key (str): Ключ упорядочивания.
+        event_type (EventType): Вид события. Полоса вида решает, считается ли
+            оно признаком активности.
 
     Returns:
         Event: Событие.
     """
     return Event(
         id=event_id,
-        type=EventType.MESSAGE_CREATED,
+        type=event_type,
         account_id="12345678",
         ordering_key=key,
         entity_id="1",
@@ -285,3 +291,54 @@ def test_committed_event_is_suppressed_afterwards() -> None:
     fresh = dedup.filter((_event("a"),), 0.0)
     dedup.commit(fresh, 0.0)
     assert len(dedup.filter((_event("a"),), 1.0)) == 0
+
+
+def test_control_events_do_not_hold_the_interval_down() -> None:
+    """Проверяет, что события о самом наблюдении не считаются активностью.
+
+    Страница, разбирающаяся неполно, порождает жалобу на каждом шаге. Жалоба
+    считалась активностью наравне с данными, интервал не рос, и клиент стучался
+    в площадку с минимальным интервалом бесконечно - из-за собственного
+    состояния, а не из-за чужого. Это ровно тот путь, которым приходят к
+    ограничению частоты.
+
+    Returns:
+        None
+    """
+    from funora.events import EVENT_LANE
+
+    plan = Schedule()
+    now = 1000.0
+    first = plan.note((), now)
+
+    # Служебное событие приходит каждый шаг, данных нет.
+    control = _event("e1", "watch:acc", EventType.SNAPSHOT_INCOMPLETE)
+    assert EVENT_LANE[control.type] == "control_plane", "проверка смотрит не на ту полосу"
+
+    intervals = [first]
+    for step in range(1, 6):
+        intervals.append(plan.note((control,), now + step * 100))
+
+    assert intervals[-1] > intervals[0], (
+        f"интервал не вырос за пять шагов служебных событий: {intervals} - "
+        "клиент стучится с минимальным интервалом из-за собственного состояния"
+    )
+
+
+def test_data_events_do_hold_the_interval_down() -> None:
+    """Проверяет обратное: событие о данных возвращает минимальный интервал.
+
+    Без этой проверки правило вырождается в «интервал растёт всегда», и клиент
+    узнавал бы о новом сообщении покупателя через две минуты.
+
+    Returns:
+        None
+    """
+    plan = Schedule()
+    now = 1000.0
+    for step in range(5):
+        plan.note((), now + step * 100)
+    grown = plan.interval_ms
+
+    after = plan.note((_event("e2", "chat:1", EventType.MESSAGE_CREATED),), now + 600)
+    assert after < grown, "событие о данных не вернуло минимальный интервал"
