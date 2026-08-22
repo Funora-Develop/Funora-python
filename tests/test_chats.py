@@ -215,3 +215,27 @@ def test_lost_preview_is_loud() -> None:
     page = _parse(_fixture().replace("contact-item-message", "contact-item-preview"))
     assert page.completeness is not Completeness.COMPLETE
     assert any(d.field_name == "preview_text" for d in page.defects)
+
+
+def test_duplicate_dialog_ids_are_loud() -> None:
+    """Проверяет, что одинаковые идентификаторы диалогов заметны.
+
+    Курсор наблюдения хранит диалоги словарём, и два одинаковых схлопываются в
+    один: число записей молча расходится с числом строк, а вызывающий получает
+    список, в котором позиций меньше, чем было на странице.
+
+    Проверка стала возможна только после того, как формат снимков научился
+    различать идентификаторы. Прежде маска схлопывала их сама, и такая проверка
+    срабатывала бы на каждой фикстуре.
+
+    Returns:
+        None
+    """
+    import re as _re
+
+    # Все диалоги получают один и тот же идентификатор.
+    same = _re.sub(r'data-id="[^"]*"', 'data-id="T9:d#1"', _fixture())
+    page = _parse(same)
+
+    assert page.completeness is not Completeness.COMPLETE
+    assert any(d.code == "duplicate_identifiers" for d in page.defects)
