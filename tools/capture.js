@@ -356,11 +356,11 @@
      */
     currency() {
       const found = {}
-      // Знак валюты по Unicode либо трёхбуквенный код рядом с числом.
-      // Прежнее выражение брало любой не-словесный знак и притаскивало из
-      // скриптов фигурные скобки, а из переписки - обрывки слов. Обрывок в
-      // один-два знака ничего не раскрывает, но и делать ему в записи нечего.
-      const money = /[\d\u00a0 .,]\s*(\p{Sc}|[A-Z]{3}\b)/gu
+      // Знак валюты по Unicode либо трёхбуквенный код, и обязательно
+      // рядом с цифрой - с любой стороны. Прежнее выражение брало за левую
+      // границу пробел, и «заказ ABC не оплачен» давало код валюты ABC, а
+      // из скриптов притаскивало фигурные скобки.
+      const money = /\d[\s\u00a0]*(\p{Sc}|[A-Z]{3}\b)|(\p{Sc}|\b[A-Z]{3})[\s\u00a0]*\d/gu
       const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
         acceptNode(node) {
           const holder = node.parentElement
@@ -382,7 +382,7 @@
         const text = node.nodeValue || ''
         let match = money.exec(text)
         while (match) {
-          const symbol = match[1]
+          const symbol = match[1] || match[2]
           if (!found[symbol]) found[symbol] = { count: 0, near: [] }
           found[symbol].count += 1
           const holder = node.parentElement
