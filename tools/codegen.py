@@ -864,6 +864,8 @@ def render_budget(spec: Path) -> str:
         "BucketLimits",
         "BUCKETS",
         "MAX_WAIT_MS",
+        "WAIT_ATTEMPTS",
+        "WAIT_GUARD_MS",
         "BURST_WINDOW_MS",
         "RequestClass",
         "ON_REFUSAL",
@@ -941,6 +943,43 @@ def render_budget(spec: Path) -> str:
             )
 
     out.append(f"MAX_WAIT_MS: Final[int] = {doc['exhausted']['max_wait_ms']}\n")
+
+    waiting = doc.get("waiting") or {}
+    attempts = waiting.get("attempts")
+    guard = waiting.get("guard_ms")
+    if not isinstance(attempts, int) or attempts < 2:
+        raise SystemExit(
+            "spec/runtime/budget.yaml: waiting.attempts не объявлен либо меньше "
+            "двух. Единица означала бы, что паузу не выжидают вовсе, и предел "
+            "ожидания отменялся бы с другой стороны"
+        )
+    if not isinstance(guard, int) or guard < 1:
+        raise SystemExit(
+            "spec/runtime/budget.yaml: waiting.guard_ms не объявлен либо меньше "
+            "единицы. Пауза вровень приводит повторную попытку туда, где запаса "
+            "ещё нет из-за последнего бита деления"
+        )
+    if waiting.get("attempts_note") is None or waiting.get("guard_note") is None:
+        raise SystemExit(
+            "spec/runtime/budget.yaml: у правила ожидания нет пояснения. Числа "
+            "без правила применения расходятся у шести реализаций молча"
+        )
+
+    out.append("\n#: Сколько попыток занять бюджет делается всего.\n")
+    out.append("#:\n")
+    out.append("#: Одна пауза и одна повторная попытка. Цикл ожидания превратил бы\n")
+    out.append("#: предел ожидания в пожелание: каждая итерация ждала бы «не дольше\n")
+    out.append("#: предела», а вызов снаружи стал бы неотличим от зависшего процесса.\n")
+    out.append(f"WAIT_ATTEMPTS: Final[int] = {attempts}\n")
+
+    out.append("\n#: Сколько миллисекунд прибавляется к вычисленной паузе.\n")
+    out.append("#:\n")
+    out.append("#: Пауза округляется вверх и строго больше точной величины. Вровень\n")
+    out.append("#: привело бы повторную попытку ровно на границу, где запаса ещё нет\n")
+    out.append("#: из-за последнего бита деления, - и вызов отказал бы, прождав всё\n")
+    out.append("#: положенное.\n")
+    out.append(f"WAIT_GUARD_MS: Final[int] = {guard}\n")
+
     out.append("\n#: Окно, за которое считается право на залп.\n")
     out.append("#:\n")
     out.append("#: Ёмкость и залп ограничивают разное. Ёмкость - запас: она\n")

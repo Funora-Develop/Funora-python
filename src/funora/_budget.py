@@ -30,6 +30,7 @@ from .budget import (
     FLOOR_SHARE,
     MAX_WAIT_MS,
     ON_REFUSAL,
+    WAIT_GUARD_MS,
     BucketLimits,
     RequestClass,
 )
@@ -139,6 +140,13 @@ class TokenBucket:
         после себя. Он и есть правило допуска по классу: чем менее защищён
         класс, тем больше он обязан оставить, и тем раньше он уступает.
 
+        Пауза округляется вверх и строго больше точной величины: к целой части
+        прибавляется WAIT_GUARD_MS. Вровень привело бы повторную попытку ровно
+        на границу, где запаса ещё нет из-за последнего бита деления, - и вызов
+        отказал бы, прождав всё положенное. Величина объявлена спецификацией, а
+        не выбрана здесь: трасса меток отправки сравнивается между реализациями,
+        и округление обязано совпадать.
+
         Args:
             now (float): Текущий момент, монотонные секунды.
             cost (float): Сколько нужно занять.
@@ -157,13 +165,14 @@ class TokenBucket:
             if self.limits.refill_per_second <= 0:
                 return MAX_WAIT_MS
             by_tokens = (
-                int(((needed - self.tokens) / self.limits.refill_per_second) * 1000) + 1
+                int(((needed - self.tokens) / self.limits.refill_per_second) * 1000)
+                + WAIT_GUARD_MS
             )
 
         by_burst = 0
         if self.allowance < cost:
             per_second = self.limits.burst / (BURST_WINDOW_MS / 1000)
-            by_burst = int(((cost - self.allowance) / per_second) * 1000) + 1
+            by_burst = int(((cost - self.allowance) / per_second) * 1000) + WAIT_GUARD_MS
 
         return max(by_tokens, by_burst)
 

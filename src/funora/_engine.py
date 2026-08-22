@@ -68,6 +68,7 @@ from .budget import (
     COUNTS_REDIRECTS,
     COUNTS_RETRIES,
     MAX_QUEUE_DEPTH_PER_KEY,
+    WAIT_ATTEMPTS,
     RequestClass,
 )
 from .capabilities import CAPABILITY_INITIAL, Capability, CapabilityState
@@ -1034,30 +1035,30 @@ class Engine:
 
         yield from self.wait_out_cooldown()
 
-        reservation = self._budget.require(
-            monotonic(), cost=cost, request_class=request_class
-        )
-        if reservation.granted:
-            return
-
-        _log.info(
-            "бюджет: ведро %s занято, пауза %d мс",
-            reservation.bucket,
-            reservation.wait_ms,
-        )
-        yield Pause(reservation.wait_ms)
-
-        # Вторая попытка обязана быть последней: цикл ожидания здесь превратил бы
-        # предел ожидания в пожелание, а вызов снаружи стал бы неотличим от
+        # Число попыток объявлено спецификацией, а не выбрано здесь: цикл
+        # ожидания превратил бы предел max_wait_ms в пожелание - каждая итерация
+        # ждала бы «не дольше предела», а вызов снаружи стал бы неотличим от
         # зависшего процесса.
-        again = self._budget.require(
-            monotonic(), cost=cost, request_class=request_class
-        )
-        if not again.granted:
-            raise BudgetExhaustedError(
-                f"бюджет не освободился за {reservation.wait_ms} мс ожидания "
-                f"(ведро {again.bucket}). Запрос не отправлен"
+        waited = 0
+        for attempt in range(WAIT_ATTEMPTS):
+            reservation = self._budget.require(
+                monotonic(), cost=cost, request_class=request_class
             )
+            if reservation.granted:
+                return
+            if attempt + 1 == WAIT_ATTEMPTS:
+                raise BudgetExhaustedError(
+                    f"бюджет не освободился за {waited} мс ожидания "
+                    f"(ведро {reservation.bucket}). Запрос не отправлен"
+                )
+
+            _log.info(
+                "бюджет: ведро %s занято, пауза %d мс",
+                reservation.bucket,
+                reservation.wait_ms,
+            )
+            waited += reservation.wait_ms
+            yield Pause(reservation.wait_ms)
 
     def settle(
         self,

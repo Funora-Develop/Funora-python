@@ -29,9 +29,11 @@ from typing import Any, Final
 
 from ._canonical import canonical_dumps
 from ._diff import Event, _fingerprint
+from ._identity import REGISTRY, identity_of
 from ._poll import Deduplicator
+from .budget import WAIT_ATTEMPTS, RequestClass
 from .contract import RUNNER_PROTOCOL
-from .errors import ConfigurationError, FunoraError, ValidationError
+from .errors import BudgetExhaustedError, ConfigurationError, FunoraError, ValidationError
 from .events import EventType
 
 __all__ = ["PROTOCOL", "answer", "main"]
@@ -143,11 +145,12 @@ def _digest(fields: dict[str, str]) -> str:
     )
 
 
-def _scenario(reference: str) -> dict[str, Any]:
-    """Достаёт сценарий набора resume по ссылке вида «scenarios[3]».
+def _scenario(reference: str, source: str = "resume.vectors.json") -> dict[str, Any]:
+    """Достаёт сценарий набора по ссылке вида «scenarios[3]».
 
     Args:
         reference (str): Ссылка на сценарий.
+        source (str): Имя файла векторов в каталоге spec/conformance.
 
     Returns:
         dict[str, Any]: Сценарий целиком.
@@ -159,7 +162,7 @@ def _scenario(reference: str) -> dict[str, Any]:
     if match is None:
         raise ValidationError(f"ссылка на сценарий {reference!r} не разбирается")
 
-    path = _spec_file("resume.vectors.json")
+    path = _spec_file(source)
     document = json.loads(path.read_text(encoding="utf-8"))
     try:
         scenario: dict[str, Any] = document["scenarios"][int(match.group(1))]
@@ -274,6 +277,90 @@ def _run_scenario(scenario: dict[str, Any]) -> list[list[str]]:
     return delivered
 
 
+def _requests(scenario: dict[str, Any]) -> list[dict[str, Any]]:
+    """Разворачивает запросы трассы из перечня либо порождающего правила.
+
+    Правило нужно там, где запросов сотня и перечень был бы нечитаем: двадцать
+    аккаунтов по пять запросов пишутся одной строкой, а читаются так же.
+
+    Args:
+        scenario (dict[str, Any]): Сценарий набора rate-budget.
+
+    Returns:
+        list[dict[str, Any]]: Запросы в порядке появления.
+    """
+    listed: list[dict[str, Any]] | None = scenario.get("requests")
+    if listed is not None:
+        return listed
+
+    rule = scenario["generate"]
+    return [
+        {
+            "at_ms": rule["at_ms"],
+            "class": rule["class"],
+            "account": f"аккаунт-{account}",
+        }
+        for account in range(rule["accounts"])
+        for _ in range(rule["per_account"])
+    ]
+
+
+def _run_trace(scenario: dict[str, Any]) -> list[int | None]:
+    """Прогоняет трассу запросов по виртуальным часам.
+
+    Часы виртуальные и двигает их вызывающий. Бюджет не спит: он отвечает,
+    сколько ждать, - иначе набор шёл бы столько же, сколько занимает настоящее
+    ожидание, и проверял бы заодно точность таймера.
+
+    Бюджет берётся у СЕТЕВОЙ ИДЕНТИЧНОСТИ, а не заводится под каждый аккаунт, и
+    в этом проверяемое: ограничение накладывает площадка, и накладывает она его
+    на пару из исходящего адреса и целевого хоста. Двадцать клиентов, каждый со
+    своим бюджетом, дают двадцатикратную нагрузку с одного адреса при формально
+    соблюдённых правилах.
+
+    Args:
+        scenario (dict[str, Any]): Сценарий: запросы и признак ожидания.
+
+    Returns:
+        list[int | None]: Метка отправки каждого запроса в миллисекундах
+        виртуальных часов. None означает, что запрос не ушёл вовсе.
+    """
+    # Реестр общий на процесс, и остатки чужого сценария сделали бы трассу
+    # зависимой от порядка прогона. Набор обязан давать один ответ всегда.
+    REGISTRY.reset()
+    budget = REGISTRY.get(identity_of(None, "funpay.com")).budget
+
+    attempts = WAIT_ATTEMPTS if scenario.get("waits", True) else 1
+    now_ms = 0
+    sent: list[int | None] = []
+
+    for request in _requests(scenario):
+        now_ms = max(now_ms, int(request.get("at_ms", 0)))
+        request_class = RequestClass(request.get("class", "interactive"))
+        cost = float(request.get("cost", 1))
+
+        moment: int | None = None
+        for attempt in range(attempts):
+            try:
+                reservation = budget.require(
+                    now_ms / 1000, cost=cost, request_class=request_class
+                )
+            except BudgetExhaustedError:
+                # Отказ по классу отменяемому либо ожидание дольше предела.
+                # И то и другое означает, что запрос не отправлен вовсе.
+                break
+            if reservation.granted:
+                moment = now_ms
+                break
+            if attempt + 1 == attempts:
+                break
+            now_ms += reservation.wait_ms
+
+        sent.append(moment)
+
+    return sent
+
+
 def answer(case: dict[str, Any]) -> dict[str, Any]:
     """Отвечает на один случай набора.
 
@@ -295,6 +382,20 @@ def answer(case: dict[str, Any]) -> dict[str, Any]:
         if kind == "fingerprint":
             got = _digest(_resolve(case["vector"]))
             return _compare(case_id, got, case.get("expected"))
+
+        if kind == "rate_budget":
+            trace = _scenario(case["vector"], "rate-budget.vectors.json")
+            if trace.get("concurrent"):
+                # Пропуск СО ССЫЛКОЙ. Одновременное поступление решает общая
+                # очередь с приоритетами, а эталонная реализация ходит на
+                # площадку по одному запросу за раз. Пройти сценарий по порядку
+                # поступления значило бы показать согласие там, где его нет.
+                return {
+                    "id": case_id,
+                    "outcome": "skip",
+                    "not_implemented": trace["requires"],
+                }
+            return {"id": case_id, "outcome": "pass", "sent": _run_trace(trace)}
 
         if kind == "resume":
             # Сверяет раннер: реализация возвращает, что дошло на каждом шаге, а
