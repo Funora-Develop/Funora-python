@@ -62,7 +62,12 @@ from ._thread import Thread, parse_thread
 from ._transport import Observation, TransportSettings
 from ._verdicts import error_for
 from ._watch import Router, StepResult, health_changed, incomplete, loss, primed
-from .budget import MAX_QUEUE_DEPTH_PER_KEY, RequestClass
+from .budget import (
+    COUNTS_REDIRECTS,
+    COUNTS_RETRIES,
+    MAX_QUEUE_DEPTH_PER_KEY,
+    RequestClass,
+)
 from .capabilities import CAPABILITY_INITIAL, Capability, CapabilityState
 from .errors import (
     AuthenticationError,
@@ -443,7 +448,16 @@ class Engine:
             # держится отдельной переменной, чтобы обработчик не зависел от
             # того, успел ли ответ появиться.
             retry_after_ms: int | None = None
-            yield from self.spend_budget(_class_of(capability))
+            # Признак решает СТОИМОСТЬ повтора, а не право идти. Повтор при
+            # выключенном признаке проходит через бюджет с нулевой ценой:
+            # токенов не тратит, но долю более защищённых классов держит и
+            # остывание идентичности выжидает.
+            #
+            # Отменять вызов целиком нельзя. Тогда клиент, получивший 429,
+            # повторял бы запрос мимо собственного отступления - шторм повторов
+            # стал бы не бесплатным, а неостановимым.
+            cost = 1.0 if (attempt == 1 or COUNTS_RETRIES) else 0.0
+            yield from self.spend_budget(_class_of(capability), cost=cost)
             try:
                 reply = yield Fetch(path)
                 if not isinstance(reply, Observation):
@@ -459,8 +473,12 @@ class Engine:
                 # Не списывать вовсе нельзя - спецификация требует считать
                 # отправленные запросы, и цепочка переходов оказалась бы
                 # бесплатной ровно тогда, когда площадка нас куда-то гоняет.
+                # То же для переходов: при выключенном признаке они проходят
+                # через бюджет ценой ноль, а не мимо него.
                 yield from self.settle(
-                    observation.requests_sent - 1, _class_of(capability)
+                    observation.requests_sent - 1,
+                    _class_of(capability),
+                    cost=1.0 if COUNTS_REDIRECTS else 0.0,
                 )
                 retry_after_ms = observation.retry_after_ms
                 # Целостность проверяется ВНУТРИ классификатора, вторым шагом
@@ -831,7 +849,10 @@ class Engine:
         yield Pause(wait_ms)
 
     def spend_budget(
-        self, request_class: RequestClass = RequestClass.INTERACTIVE
+        self,
+        request_class: RequestClass = RequestClass.INTERACTIVE,
+        *,
+        cost: float = 1.0,
     ) -> Generator[Request, Reply, None]:
         """Занимает бюджет под один отправляемый запрос.
 
@@ -865,7 +886,9 @@ class Engine:
         # секунд - ровно тогда, когда площадка сказала «слишком быстро».
         yield from self.wait_out_cooldown()
 
-        reservation = self._budget.require(monotonic(), request_class=request_class)
+        reservation = self._budget.require(
+            monotonic(), cost=cost, request_class=request_class
+        )
         if reservation.granted:
             return
 
@@ -879,7 +902,9 @@ class Engine:
         # Вторая попытка обязана быть последней: цикл ожидания здесь превратил бы
         # предел ожидания в пожелание, а вызов снаружи стал бы неотличим от
         # зависшего процесса.
-        again = self._budget.require(monotonic(), request_class=request_class)
+        again = self._budget.require(
+            monotonic(), cost=cost, request_class=request_class
+        )
         if not again.granted:
             raise BudgetExhaustedError(
                 f"бюджет не освободился за {reservation.wait_ms} мс ожидания "
@@ -887,7 +912,11 @@ class Engine:
             )
 
     def settle(
-        self, count: int, request_class: RequestClass = RequestClass.INTERACTIVE
+        self,
+        count: int,
+        request_class: RequestClass = RequestClass.INTERACTIVE,
+        *,
+        cost: float = 1.0,
     ) -> Generator[Request, Reply, None]:
         """Доплачивает бюджет за запросы, которые уже ушли.
 
@@ -914,7 +943,9 @@ class Engine:
             None
         """
         for _ in range(max(0, count)):
-            reservation = self._budget.reserve(monotonic(), request_class=request_class)
+            reservation = self._budget.reserve(
+                monotonic(), cost, request_class=request_class
+            )
             if reservation.granted:
                 continue
 
@@ -925,7 +956,7 @@ class Engine:
             # растёт, а зациклиться на нём хуже, чем недосчитать один токен и
             # сказать об этом вслух.
             if not self._budget.reserve(
-                monotonic(), request_class=request_class
+                monotonic(), cost, request_class=request_class
             ).granted:
                 _log.warning(
                     "бюджет не доплачен за уже отправленный запрос: ведро %s занято",

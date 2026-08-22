@@ -219,3 +219,60 @@ def test_settle_charges_the_debt_to_the_calling_class() -> None:
         "ядро записало долг за переходы на interactive. На минуту это поднимет "
         "порог допуска всем прочим классам - будто покупателю кто-то отвечал"
     )
+
+
+def test_a_free_retry_still_waits_out_the_cooldown() -> None:
+    """Проверяет, что нулевая цена не отменяет отступления.
+
+    Выбор был поведенческим, и спецификация о нём молчала. Два добросовестных
+    прочтения: false снимает вызов бюджета целиком либо оставляет вызов с
+    нулевой ценой. Расходятся они ровно в шторме повторов при пустом ведре - в
+    том самом положении, ради которого правило и написано.
+
+    Решение: false означает нулевую цену. Отменять вызов нельзя - тогда клиент,
+    получивший 429, повторял бы запрос мимо собственного отступления, и шторм
+    повторов стал бы не бесплатным, а неостановимым.
+
+    Returns:
+        None
+    """
+    from funora._identity import Identity
+
+    identity = Identity(name="проба@funpay.com", budget=Budget())
+    identity.note_limit(NOW)
+
+    assert identity.is_cooling(NOW), "остывание не назначено - проверять нечего"
+
+    # Даже бесплатный запрос идёт через бюджет, а значит через ядро, а значит
+    # выжидает остывание. Проверка на уровне бюджета: снятый класс не проходит
+    # ни за какую цену.
+    free = identity.budget.reserve(NOW, 0.0, RequestClass.MONITORING)
+    identity.note_limit(NOW + 1)
+    after_second = identity.budget.reserve(NOW + 1, 0.0, RequestClass.MONITORING)
+
+    assert free.granted, "после первого ограничения наблюдение ещё не снято"
+    assert not after_second.granted, (
+        "запрос ценой ноль прошёл, хотя класс снят с очереди вторым ограничением"
+    )
+
+
+def test_zero_cost_still_respects_the_class_floor() -> None:
+    """Проверяет, что нулевая цена не отменяет правила допуска.
+
+    Иначе повтор наблюдения проходил бы там, где обычный запрос наблюдения
+    уступает, - то есть выключенный признак чинил бы бесплатность одного
+    механизма поломкой другого.
+
+    Returns:
+        None
+    """
+    budget = Budget()
+    for request_class in (RequestClass.INTERACTIVE, RequestClass.AUTOMATION, RequestClass.POLL):
+        budget.reserve(NOW, 1.0, request_class)
+    _drain(budget, NOW, ACCOUNT.capacity * 0.30)
+
+    free = budget.reserve(NOW, 0.0, RequestClass.MONITORING)
+    assert not free.granted, (
+        "запрос ценой ноль прошёл мимо порога допуска: наблюдение обошло долю "
+        "более защищённых классов, ничего не заплатив"
+    )

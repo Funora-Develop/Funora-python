@@ -970,6 +970,15 @@ def render_budget(spec: Path) -> str:
     out.append(f"DEMAND_WINDOW_MS: Final[int] = {window}\n")
 
     out.append("\n#: Расходуют ли бюджет повторы.\n")
+    meaning = doc["counting"].get("false_means")
+    if meaning != "cost_zero":
+        raise SystemExit(
+            "spec/runtime/budget.yaml: раздел counting обязан назвать, что означает "
+            f"false, и единственное объявленное значение - cost_zero, а стоит "
+            f"{meaning!r}. Без этого две реализации разойдутся ровно в шторме "
+            "повторов при пустом ведре"
+        )
+
     out.append(f"COUNTS_RETRIES: Final[bool] = {bool(doc['counting']['counts_retries'])}\n")
 
     out.append("\n#: Расходуют ли бюджет переходы по редиректам.\n")
