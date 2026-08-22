@@ -8,7 +8,7 @@
 
 <p align="center">
   <img alt="status" src="https://img.shields.io/badge/status-draft-6E7681?style=flat-square">
-  <img alt="pypi" src="https://img.shields.io/badge/pypi-funora%20reserved-3B6FA0?style=flat-square">
+  <img alt="pypi" src="https://img.shields.io/badge/pypi-not%20published-6E7681?style=flat-square">
   <img alt="license" src="https://img.shields.io/badge/license-Apache--2.0-2F7D95?style=flat-square">
   <img alt="FunPay" src="https://img.shields.io/badge/FunPay-unofficial-B4501E?style=flat-square">
 </p>
@@ -33,9 +33,10 @@ Python SDK для FunPay. Здесь протокол прорабатывает
 реализуют его заново по спецификации, а не портируют этот код построчно.
 
 ```python
-from funora import Client
+from funora import Client, EnvSecretProvider
 
-with Client(secret) as client:
+# Секрет берётся из FUNORA_GOLDEN_KEY и в коде не появляется ни разу.
+with Client(EnvSecretProvider()) as client:
     page = client.orders.list()
     for order in page.rows():
         print(order.order_id, order.description_text)
@@ -46,9 +47,9 @@ with Client(secret) as client:
 готовыми. Перевод бота сводится к `await`.
 
 ```python
-from funora import AsyncClient
+from funora import AsyncClient, EnvSecretProvider
 
-async with AsyncClient(secret) as client:
+async with AsyncClient(EnvSecretProvider()) as client:
     page = await client.orders.list()
     for order in page.rows():
         print(order.order_id, order.description_text)
@@ -130,7 +131,7 @@ async with AsyncClient(secret) as client:
 ## Проект целиком
 
 Funora - это один контракт, реализованный нативно на нескольких языках. Меняется язык,
-но не ментальная модель: `Client`, сервисы, события, роутер, фильтры, middleware и
+но не ментальная модель: `Client`, сервисы, события, роутер и
 таксономия ошибок означают одно и то же везде.
 
 | Репозиторий | Что это | Статус |
@@ -139,7 +140,7 @@ Funora - это один контракт, реализованный натив
 | [Funora-spec](https://github.com/Funora-Develop/Funora-spec) | Канонический контракт, который реализует каждый SDK. | `design` |
 | [Funora-codegen](https://github.com/Funora-Develop/Funora-codegen) | Генерирует скучную повторяющуюся часть каждого SDK. | `design` |
 | [Funora-conformance](https://github.com/Funora-Develop/Funora-conformance) | Тестовый контракт между языками. | `design` |
-| [Funora-python](https://github.com/Funora-Develop/Funora-python) | Эталонная реализация контракта Funora. | `design` |
+| [Funora-python](https://github.com/Funora-Develop/Funora-python) | Эталонная реализация контракта Funora. | `draft` |
 | [Funora-javascript](https://github.com/Funora-Develop/Funora-javascript) | Исходник на TypeScript, на выходе JavaScript и декларации типов. | `planned` |
 | [Funora-java](https://github.com/Funora-Develop/Funora-java) | Java SDK. | `planned` |
 | [Funora-dotnet](https://github.com/Funora-Develop/Funora-dotnet) | .NET SDK. | `planned` |
