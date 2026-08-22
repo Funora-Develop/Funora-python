@@ -509,6 +509,26 @@ def parse_thread(html: str, *, observed_at: datetime, host: str = "funpay.com") 
 
     defects.extend(_shape_defects(tree))
 
+    # Идентификаторы сообщений хранятся множеством: курсор переписки - это набор
+    # уже виденных. Два одинаковых схлопываются в один, и второе сообщение
+    # объявляется виденным, не будучи доставленным ни разу.
+    #
+    # Для списков заказов и диалогов такая проверка уже стоит, а здесь её не
+    # было, и цена ошибки тут выше: непрочитанное сообщение покупателя.
+    seen = [entry.message_id.value for entry in entries if entry.message_id.is_observed]
+    if len(set(seen)) != len(seen):
+        defects.append(
+            Defect(
+                severity=Severity.PAGE,
+                code="duplicate_identifiers",
+                detail=(
+                    f"сообщений с прочитанным идентификатором {len(seen)}, "
+                    f"различимых {len(set(seen))}: часть событий не породится никогда"
+                ),
+                field_name="message_id",
+            )
+        )
+
     for name in _PAGE_LEVEL_FIELDS:
         if entries and all(not getattr(entry, name).is_observed for entry in entries):
             defects.append(
