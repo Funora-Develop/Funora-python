@@ -60,6 +60,8 @@ from .errors import IncompleteResultError, ProtocolChangedError
 from .extraction import (
     PRESENCE_BY_CLASS,
     ROW_MARKER_BY_STATUS,
+    SELECTOR_GROUPS,
+    SELECTORS,
     STATUS_BY_CELL_CLASS,
     OrderStatus,
 )
@@ -74,19 +76,16 @@ __all__ = [
 ]
 
 #: Контейнер таблицы заказов.
-_TABLE: Final[str] = ".orders-table"
+_TABLE: Final[str] = SELECTORS["orders.container"]
 
 #: Заголовок таблицы. Несёт те же классы ячеек, что и строки.
-_HEADER: Final[str] = ".tc-header"
+_HEADER: Final[str] = SELECTORS["orders.container.header"]
 
 #: Контейнер строк. Второй, независимый от класса строки признак.
-_ROWS_CONTAINER: Final[str] = ".dyn-table-body"
-
-#: Хвостовой маркер документа.
-_TAIL: Final[str] = ".wrapper-footer"
+_ROWS_CONTAINER: Final[str] = SELECTORS["orders.rows_container"]
 
 #: Селектор строки заказа.
-_ROW: Final[str] = "a.tc-item"
+_ROW: Final[str] = SELECTORS["orders.row"]
 
 #: Идентификатор заказа в адресе строки.
 _ID_IN_HREF: Final[re.Pattern[str]] = re.compile(r"/orders/([^/?#]+)")
@@ -350,7 +349,7 @@ def _status(row: Node) -> tuple[Observed[OrderStatus], str | None]:
         tuple[Observed[OrderStatus], str | None]: Состояние и причина
         повреждения, если носители разошлись между собой.
     """
-    cell = row.css_first(".tc-status")
+    cell = row.css_first(SELECTOR_GROUPS["orders.fields.status.carriers"][0])
     if cell is None:
         return Observed.missing("selector_no_match:status"), None
 
@@ -408,8 +407,8 @@ def _parse_row(row: Node, index: int) -> tuple[OrderListEntry | None, list[Defec
     # первый [data-href] строки; в снимке их два, и оба ведут на одного человека,
     # поэтому ошибки не было видно. Появись data-href в описании лота - и первым
     # оказался бы он, а контрагентом молча стал бы адрес товара.
-    user_link = row.css_first(".tc-user [data-href]")
-    media = row.css_first(".tc-user .media-user")
+    user_link = row.css_first(SELECTORS["orders.fields.counterparty_link"])
+    media = row.css_first(SELECTORS["orders.fields.counterparty_online"])
     online = _presence(media)
     status, disagreement = _status(row)
     if disagreement is not None:
@@ -432,17 +431,27 @@ def _parse_row(row: Node, index: int) -> tuple[OrderListEntry | None, list[Defec
         href=href,
         row_index=index,
         status=status,
-        status_carrier=_carrier(row.css_first(".tc-status")),
-        order_number_text=_text(row.css_first(".tc-order"), "order_number_text"),
-        description_text=_text(row.css_first(".order-desc > div"), "description_text"),
-        category_text=_text(row.css_first(".order-desc .text-muted"), "category_text"),
-        counterparty_name=_text(row.css_first(".tc-user .media-user-name"), "counterparty_name"),
+        status_carrier=_carrier(row.css_first(SELECTOR_GROUPS["orders.fields.status.carriers"][0])),
+        order_number_text=_text(
+            row.css_first(SELECTORS["orders.fields.order_number_text"]), "order_number_text"
+        ),
+        description_text=_text(
+            row.css_first(SELECTORS["orders.fields.description"]), "description_text"
+        ),
+        category_text=_text(row.css_first(SELECTORS["orders.fields.category"]), "category_text"),
+        counterparty_name=_text(
+            row.css_first(SELECTORS["orders.fields.counterparty_name"]), "counterparty_name"
+        ),
         counterparty_href=attribute(user_link, "data-href", "counterparty_href"),
         counterparty_online=online,
-        amount_text=_text(row.css_first(".tc-price"), "amount_text"),
-        currency_symbol_text=_text(row.css_first(".tc-price .unit"), "currency_symbol_text"),
-        time_text=_text(row.css_first(".tc-date-time"), "time_text"),
-        time_ago_text=_text(row.css_first(".tc-date-left"), "time_ago_text"),
+        amount_text=_text(row.css_first(SELECTORS["orders.fields.amount_text"]), "amount_text"),
+        currency_symbol_text=_text(
+            row.css_first(SELECTORS["orders.fields.currency_symbol_text"]), "currency_symbol_text"
+        ),
+        time_text=_text(row.css_first(SELECTORS["orders.fields.time_text"]), "time_text"),
+        time_ago_text=_text(
+            row.css_first(SELECTORS["orders.fields.time_ago_text"]), "time_ago_text"
+        ),
     )
 
     for name in (

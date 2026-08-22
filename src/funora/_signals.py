@@ -27,6 +27,8 @@ from typing import Final
 
 from selectolax.parser import HTMLParser, Node
 
+from .extraction import SELECTORS
+
 __all__ = [
     "BLANK",
     "ATTR_ALLOWLIST",
@@ -288,7 +290,7 @@ def relations(html: str) -> Relations:
     tree = HTMLParser(html)
 
     equal = differing = incomplete = 0
-    contacts = tree.css("a.contact-item")
+    contacts = tree.css(SELECTORS["chats.contact_list.item"])
     for node in contacts:
         attrs = node.attributes or {}
         node_msg = attrs.get("data-node-msg")
@@ -300,7 +302,7 @@ def relations(html: str) -> Relations:
         else:
             differing += 1
 
-    badge = tree.css_first("span.badge-chat")
+    badge = tree.css_first(SELECTORS["chats.unread_badge"])
     if badge is None:
         state = "не найден"
     else:

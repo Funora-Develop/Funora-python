@@ -64,6 +64,7 @@ SOURCES: Final[frozenset[str]] = frozenset(
         "spec/capabilities.yaml",
         "spec/errors/errors.yaml",
         "spec/events/delivery.yaml",
+        "spec/extraction/chats.yaml",
         "spec/extraction/orders.yaml",
         "spec/extraction/session.yaml",
         "spec/protocol/response-classes.yaml",
@@ -1497,6 +1498,82 @@ def render_operations(spec: Path) -> str:
     return "".join(out)
 
 
+def _selectors(spec: Path) -> tuple[dict[str, str], dict[str, tuple[str, ...]]]:
+    """Собирает селекторы разбора из файлов извлечения.
+
+    Ключ выводится из пути внутри документа, а не объявляется отдельным полем:
+    путь однозначен, не зависит от языка реализации и не даёт завести два имени
+    одному селектору.
+
+    Псевдоселекторы self и self[...] пропускаются. Они означают «сам элемент
+    строки», а не запрос к документу, и подставить их в css_first нельзя.
+
+    Args:
+        spec (Path): Корень рабочей копии Funora-spec.
+
+    Returns:
+        tuple[dict[str, str], dict[str, tuple[str, ...]]]: Одиночные селекторы
+        по ключу и перечни селекторов по ключу группы.
+
+    Raises:
+        SystemExit: Если два разных селектора претендуют на один ключ.
+    """
+    found: dict[str, str] = {}
+    groups: dict[str, list[str]] = {}
+
+    def walk(node: Any, path: str, origin: str) -> None:
+        """Обходит документ, собирая значения ключа selector.
+
+        Args:
+            node (Any): Узел документа.
+            path (str): Путь до узла.
+            origin (str): Имя файла без расширения.
+
+        Returns:
+            None
+        """
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == "selector" and isinstance(value, str):
+                    if value == "self" or value.startswith("self["):
+                        continue
+                    name = f"{origin}.{path}" if path else origin
+                    # Перечень объявляется списком, и порядок в нём значим:
+                    # признаки проверяются по очереди. Ключ с индексом
+                    # переставал бы совпадать при вставке одного элемента в
+                    # середину, поэтому перечень отдаётся кортежем целиком.
+                    if name.endswith("]"):
+                        group = name[: name.rindex("[")]
+                        groups.setdefault(group, []).append(value)
+                        continue
+                    if name in found and found[name] != value:
+                        raise SystemExit(
+                            f"spec/extraction: два селектора на один ключ {name}: "
+                            f"{found[name]!r} и {value!r}"
+                        )
+                    found[name] = value
+                else:
+                    walk(value, f"{path}.{key}" if path else key, origin)
+        elif isinstance(node, list):
+            for index, value in enumerate(node):
+                walk(value, f"{path}[{index}]", origin)
+
+    for relative in sorted(SOURCES):
+        if not relative.startswith("spec/extraction/"):
+            continue
+        walk(_load(spec, relative), "", Path(relative).stem)
+
+    if not found:
+        raise SystemExit("spec/extraction: не объявлено ни одного селектора")
+    both = set(found) & set(groups)
+    if both:
+        raise SystemExit(
+            f"spec/extraction: ключи {sorted(both)} объявлены и одиночным "
+            "селектором, и перечнем"
+        )
+    return found, {name: tuple(items) for name, items in groups.items()}
+
+
 def render_extraction(spec: Path) -> str:
     """Порождает словари извлечения: статусы заказа и присутствие контрагента.
 
@@ -1560,6 +1637,8 @@ def render_extraction(spec: Path) -> str:
         "STATUS_BY_CELL_CLASS",
         "ROW_MARKER_BY_STATUS",
         "PRESENCE_BY_CLASS",
+        "SELECTORS",
+        "SELECTOR_GROUPS",
     ):
         out.append('    "' + name + '",\n')
     out.append("]\n")
@@ -1617,6 +1696,39 @@ def render_extraction(spec: Path) -> str:
     out.append("PRESENCE_BY_CLASS: Final[dict[str, bool]] = {\n")
     for name, value in presence.items():
         out.append('    "' + name + '": ' + str(bool(value)) + ",\n")
+    out.append("}\n")
+
+    selectors, groups = _selectors(spec)
+    out.append("\n\n#: Селекторы разбора, объявленные спецификацией.\n")
+    out.append("#:\n")
+    out.append("#: Прежде каждый из них жил в двух местах: объявлением в\n")
+    out.append("#: spec/extraction и литералом в коде. Площадка меняет разметку -\n")
+    out.append("#: правят один файл из двух, и расхождение молчит: проверки гоняют\n")
+    out.append("#: разбор по снимкам, а текст спецификации с кодом не сверял никто.\n")
+    out.append("#:\n")
+    out.append("#: Ключ выведен из пути внутри документа: он однозначен и не\n")
+    out.append("#: зависит от языка реализации.\n")
+    out.append("SELECTORS: Final[dict[str, str]] = {\n")
+    for key in sorted(selectors):
+        # repr, а не подстановка в кавычки: селектор вправе содержать кавычки
+        # сам - input[type="password"] разорвал бы строку.
+        out.append(f'    "{key}": {selectors[key]!r},\n')
+    out.append("}\n")
+
+    out.append("\n\n#: Перечни селекторов, объявленные спецификацией.\n")
+    out.append("#:\n")
+    out.append("#: Порядок значим: признаки проверяются по очереди, и две\n")
+    out.append("#: реализации, проверившие их в разном порядке, разойдутся на\n")
+    out.append("#: странице, где признаки противоречат друг другу.\n")
+    out.append("#:\n")
+    out.append("#: Кортежем, а не ключами с индексом: вставка одного элемента в\n")
+    out.append("#: середину перечня переставила бы все последующие ключи.\n")
+    out.append("SELECTOR_GROUPS: Final[dict[str, tuple[str, ...]]] = {\n")
+    for key in sorted(groups):
+        out.append(f'    "{key}": (\n')
+        for item in groups[key]:
+            out.append(f"        {item!r},\n")
+        out.append("    ),\n")
     out.append("}\n")
 
     return "".join(out)

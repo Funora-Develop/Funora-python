@@ -36,31 +36,32 @@ from ._host import host_of, same_host
 from ._observed import Observed
 from ._result import Completeness, Defect, Severity, collect_rows
 from .errors import IncompleteResultError, ProtocolChangedError
+from .extraction import SELECTOR_GROUPS, SELECTORS
 
 __all__ = ["Origin", "Message", "Thread", "parse_thread"]
 
 #: Контейнер сообщений.
-_LIST: Final[str] = ".chat-message-list"
+_LIST: Final[str] = SELECTORS["chats.message.container"]
 
 #: Селектор сообщения.
-_MESSAGE: Final[str] = ".chat-msg-item"
+_MESSAGE: Final[str] = SELECTORS["chats.message.item"]
 
 #: Тело сообщения.
-_BODY: Final[str] = ".chat-msg-body"
+_BODY: Final[str] = SELECTORS["chats.message.fields.body"]
 
 #: Обёртка предупреждения внутри тела. Селектор обязан включать тело: класс
 #: alert встречается на страницах и вне переписки, где к происхождению сообщения
 #: отношения не имеет.
-_ALERT: Final[str] = ".chat-msg-body .alert"
+_ALERT: Final[str] = SELECTOR_GROUPS["chats.system_message.markers"][1]
 
 #: Ссылка на профиль автора.
-_AUTHOR_LINK: Final[str] = "a.chat-msg-author-link"
+_AUTHOR_LINK: Final[str] = SELECTORS["chats.message.fields.author_link"]
 
 #: Текст сообщения.
-_TEXT: Final[str] = ".chat-msg-text"
+_TEXT: Final[str] = SELECTORS["chats.message.fields.text"]
 
 #: Дата сообщения.
-_DATE: Final[str] = ".chat-msg-date"
+_DATE: Final[str] = SELECTORS["chats.message.fields.time_text"]
 
 #: Имя автора.
 #:
