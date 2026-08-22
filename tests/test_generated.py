@@ -420,3 +420,75 @@ def test_implemented_capabilities_are_the_ones_actually_called() -> None:
         f"вызывается, но не объявлено выполняемым: {sorted(called - declared)} - "
         "состояние такой возможности будет отвергнуто зря"
     )
+
+
+def test_safety_comes_from_the_spec_not_from_a_hand_written_list() -> None:
+    """Проверяет, что безопасность операций больше не рукописная.
+
+    Безопасность - половина нормативного входа решения о повторе; вторая
+    половина, класс ошибки, порождается из errors.yaml и проверяется на
+    свежесть. Первая жила рукописным перечислением с примечанием «значения взяты
+    из спецификации», и смена безопасности операции с safe на unsafe не
+    отражалась нигде: ни в порождённом коде, ни в проверке.
+
+    Повторить небезопасную операцию значит выполнить её дважды - отправить
+    покупателю второе сообщение.
+
+    Returns:
+        None
+    """
+    import funora._retry as retry_module
+    from funora.operations import OPERATIONS, Safety
+
+    assert retry_module.Safety is Safety, (
+        "модуль повторов держит своё перечисление безопасности вместо порождённого"
+    )
+    assert OPERATIONS, "таблица операций пуста"
+    assert {operation.safety for operation in OPERATIONS.values()} <= set(Safety)
+
+
+def test_every_operation_names_a_declared_capability() -> None:
+    """Проверяет, что операции не ссылаются на несуществующие возможности.
+
+    Связь объявлена в двух файлах спецификации, и до порождения её не сверял
+    никто: операция могла требовать возможности, которой нет, и обнаружилось бы
+    это на вызове.
+
+    Returns:
+        None
+    """
+    from funora.capabilities import Capability
+    from funora.operations import OPERATIONS
+
+    declared = {item.value for item in Capability}
+    for name, operation in OPERATIONS.items():
+        assert operation.capability in declared, (
+            f"операция {name} требует возможности {operation.capability}, "
+            "которой нет в перечислении"
+        )
+
+
+def test_read_operations_are_declared_safe() -> None:
+    """Проверяет безопасность выполняемых сегодня операций.
+
+    Все три выполняемые операции - чтения, и объявлены безопасными. Проверка
+    ловит правку в спецификации, которая объявит чтение небезопасным: цикл
+    наблюдения повторяет чтения свободно, и небезопасное чтение он повторять бы
+    не стал - то есть наблюдение молча остановилось бы на первом же отказе сети.
+
+    Returns:
+        None
+    """
+    from funora._engine import IMPLEMENTED
+    from funora.operations import OPERATIONS, Safety
+
+    by_capability = {op.capability: op for op in OPERATIONS.values()}
+    for capability in IMPLEMENTED:
+        operation = by_capability.get(capability.value)
+        assert operation is not None, (
+            f"возможность {capability.value} выполняется, а операции под неё в спецификации нет"
+        )
+        assert operation.safety is Safety.SAFE, (
+            f"операция {operation.name} объявлена {operation.safety}, а цикл "
+            "наблюдения повторяет её как безопасную"
+        )

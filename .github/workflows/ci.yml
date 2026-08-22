@@ -35,6 +35,26 @@ jobs:
           path: .funora-spec
           persist-credentials: false
 
+      # Зелёная сборка без этого шага доказывает «совпадает со спецификацией,
+      # какой она была в момент сборки», а не «совпадает с версией X». При шести
+      # SDK и независимом версионировании спецификации это и есть тот вопрос,
+      # ради которого заведён spec/version.yaml.
+      - name: Против какой спецификации собрано
+        run: |
+          rev=$(git -C .funora-spec rev-parse HEAD)
+          ver=$(grep -m1 '^spec_version:' .funora-spec/spec/version.yaml | cut -d'"' -f2)
+          status=$(grep -m1 '^status:' .funora-spec/spec/version.yaml | awk '{print $2}')
+          echo "спецификация: версия $ver, статус $status, ревизия $rev"
+          {
+            echo "### Спецификация"
+            echo ""
+            echo "| поле | значение |"
+            echo "| --- | --- |"
+            echo "| версия | \`$ver\` |"
+            echo "| статус | \`$status\` |"
+            echo "| ревизия | \`$rev\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python-version }}

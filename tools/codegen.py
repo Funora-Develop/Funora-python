@@ -49,6 +49,36 @@ from typing import ClassVar, Final
 '''
 
 
+#: Файлы спецификации, которые читает генератор.
+#:
+#: Перечень объявлен, а не выводится по факту чтения, и это не бюрократия.
+#: Проверка покрытия сверяет с ним реестр spec/conformance/coverage.yaml, где у
+#: каждого файла спецификации объявлен механизм связи с реализацией. Выведи
+#: перечень по факту - и реестр начнёт сверяться сам с собой.
+#:
+#: Генератор отказывается читать необъявленное: файл, добавленный в чтение
+#: молча, обошёл бы реестр и остался бы вне покрытия, оставаясь при этом
+#: прочитанным. Ровно такая незаметность и была причиной завести реестр.
+SOURCES: Final[frozenset[str]] = frozenset(
+    {
+        "spec/capabilities.yaml",
+        "spec/errors/errors.yaml",
+        "spec/events/delivery.yaml",
+        "spec/extraction/orders.yaml",
+        "spec/extraction/session.yaml",
+        "spec/protocol/response-classes.yaml",
+        "spec/protocol/retry-policy.yaml",
+        "spec/runtime/budget.yaml",
+        "spec/services/account.yaml",
+        "spec/services/catalog.yaml",
+        "spec/services/chats.yaml",
+        "spec/services/lots.yaml",
+        "spec/services/market.yaml",
+        "spec/services/orders.yaml",
+    }
+)
+
+
 def _load(spec: Path, relative: str) -> dict[str, Any]:
     """Читает файл спецификации.
 
@@ -61,7 +91,14 @@ def _load(spec: Path, relative: str) -> dict[str, Any]:
 
     Raises:
         FileNotFoundError: Если файла нет.
+        SystemExit: Если файл не объявлен в SOURCES.
     """
+    if relative not in SOURCES:
+        raise SystemExit(
+            f"генератор читает {relative}, не объявив этого в SOURCES. "
+            "Необъявленное чтение обходит реестр покрытия: файл оказывается "
+            "прочитанным и при этом вне учёта"
+        )
     path = spec / relative
     if not path.is_file():
         raise FileNotFoundError(f"нет файла спецификации: {path}")
@@ -448,7 +485,7 @@ def render_response_classes(spec: Path) -> str:
         )
     ]
 
-    out.append('__all__ = ["VERDICT_ERRORS", "RESPONSE_CLASSES"]\n')
+    out.append('__all__ = ["VERDICT_ERRORS", "RESPONSE_CLASSES", "STATUS_CLASS"]\n')
 
     out.append("\n#: Классы ответа, объявленные спецификацией.\n")
     out.append("#:\n")
@@ -458,6 +495,30 @@ def render_response_classes(spec: Path) -> str:
     for name in doc["classes"]:
         out.append(f'        "{name}",\n')
     out.append("    }\n)\n")
+
+    session = _load(spec, "spec/extraction/session.yaml")
+    codes = {int(key): value for key, value in session["status_codes"].items() if key.isdigit()}
+    strange = sorted(value for value in codes.values() if value not in doc["classes"])
+    if strange:
+        raise SystemExit(
+            f"spec/extraction/session.yaml: коды ответа отображаются в {strange}, "
+            "а таких классов ответа нет. Имена обязаны совпадать со словарём из "
+            "spec/protocol/response-classes.yaml: иначе перевод одного имени в "
+            "другое остаётся рукописным и нигде не записанным"
+        )
+
+    out.append("\n#: Класс ответа по коду, когда тело разбирать бессмысленно.\n")
+    out.append("#:\n")
+    out.append("#: Прежде таблица жила рукописной копией в классификаторе. Правка\n")
+    out.append("#: спецификации не давала ни одного признака: сборка зелёная,\n")
+    out.append("#: спецификация зелёная, а расхождение обнаружилось бы в работе - и\n")
+    out.append("#: ровно на той ошибке, от которой спецификация предостерегает\n")
+    out.append("#: отдельным разделом: код 429, принятый за блокировку, навсегда\n")
+    out.append("#: останавливает опрос.\n")
+    out.append("STATUS_CLASS: Final[dict[int, str]] = {\n")
+    for code in sorted(codes):
+        out.append(f'    {code}: "{codes[code]}",\n')
+    out.append("}\n")
 
     out.append("\n#: Пара «класс ответа, причина» и ошибка, которую она означает.\n")
     out.append("VERDICT_ERRORS: Final[dict[tuple[str, str], type[Exception] | None]] = {\n")
@@ -889,6 +950,163 @@ def render_events(spec: Path) -> str:
     return "".join(out)
 
 
+def render_operations(spec: Path) -> str:
+    """Порождает таблицу операций служб.
+
+    Раздел services спецификации не читался генератором вовсе, а именно там
+    объявлена безопасность операции - половина нормативного входа решения о
+    повторе. Вторая половина, класс ошибки, порождается из errors.yaml и
+    проверяется на свежесть; первая жила рукописным перечислением в _retry.py с
+    примечанием «значения взяты из спецификации».
+
+    Смена безопасности операции с safe на unsafe не отражалась нигде: ни в
+    порождённом коде, ни в проверке. Когда появится первая операция записи, цена
+    этого расхождения станет ценой повторно отправленного сообщения.
+
+    Args:
+        spec (Path): Корень рабочей копии Funora-spec.
+
+    Returns:
+        str: Содержимое модуля.
+
+    Raises:
+        SystemExit: Если у операции незнакомое поле либо значение вне словаря.
+    """
+    services = sorted((spec / "spec" / "services").glob("*.yaml"))
+    if not services:
+        raise SystemExit("spec/services: не найдено ни одного файла служб")
+
+    # Поля перечислены поимённо. Незнакомое поле - отказ: раздел дописали, а
+    # генератор об этом не знает, и знать об этом должен человек. Ровно так из
+    # budget.yaml молча терялись шесть чисел из семи.
+    known = {
+        "summary",
+        "capability",
+        "safety",
+        "request_class",
+        "returns",
+        "returns_schema",
+        "returns_note",
+        "errors",
+        "notes",
+        "pagination",
+        "pagination_planned",
+        "idempotency_key_from",
+        "requires_reconciliation",
+        "cost_hint",
+        "governor",
+        "reversible_by",
+        "transport_lane",
+        "cacheable",
+        "guards",
+        "preconditions",
+        "audit",
+        "renamed_from",
+        "rename_reason",
+        "completeness_required",
+    }
+    safety_values = {"safe", "idempotent", "unsafe"}
+    classes = set(_load(spec, "spec/runtime/budget.yaml")["classes"])
+    capabilities = set(_load(spec, "spec/capabilities.yaml")["capabilities"])
+
+    operations: dict[str, dict[str, Any]] = {}
+    for path in services:
+        doc = _load(spec, f"spec/services/{path.name}")
+        for name, body in (doc.get("operations") or {}).items():
+            unknown = sorted(set(body) - known)
+            if unknown:
+                raise SystemExit(
+                    f"spec/services/{path.name}: у операции {name} поля {unknown}, "
+                    "а генератор о них не знает. Молча уронить их значило бы "
+                    "завести в контракте объявление, которого нет в реализации"
+                )
+            if body["safety"] not in safety_values:
+                raise SystemExit(
+                    f"spec/services/{path.name}: у операции {name} безопасность "
+                    f"{body['safety']!r} вне словаря {sorted(safety_values)}"
+                )
+            if body["request_class"] not in classes:
+                raise SystemExit(
+                    f"spec/services/{path.name}: у операции {name} класс запроса "
+                    f"{body['request_class']!r}, а такого класса нет в "
+                    "spec/runtime/budget.yaml"
+                )
+            if body["capability"] not in capabilities:
+                raise SystemExit(
+                    f"spec/services/{path.name}: операция {name} названа "
+                    f"возможностью {body['capability']!r}, которой нет в "
+                    "spec/capabilities.yaml"
+                )
+            if name in operations:
+                raise SystemExit(f"операция {name} объявлена дважды")
+            operations[name] = body
+
+    extra = (
+        "Безопасность операции - половина нормативного входа решения о повторе.\n"
+        "Вторая половина, класс ошибки, порождается из errors.yaml. Пока эта\n"
+        "половина была рукописной, смена безопасности в спецификации не\n"
+        "отражалась нигде - ни в коде, ни в проверке.\n"
+        "\n"
+        "Повторить небезопасную операцию значит выполнить её дважды: отправить\n"
+        "покупателю второе сообщение, поднять лот второй раз, списать деньги\n"
+        "второй раз.\n"
+    )
+
+    out = [
+        HEADER.format(
+            title="Операции служб и их свойства.",
+            source="spec/services/*.yaml",
+            extra=extra,
+        ).replace(
+            "from typing import ClassVar, Final",
+            "from dataclasses import dataclass\nfrom enum import StrEnum\nfrom typing import Final",
+        )
+    ]
+
+    out.append('__all__ = ["Safety", "Operation", "OPERATIONS"]\n')
+
+    out.append("\n\nclass Safety(StrEnum):\n")
+    out.append('    """Безопасность операции при повторе.\n\n')
+    out.append("    safe - повтор ничего не меняет: операция только читает.\n")
+    out.append("    idempotent - повтор с тем же ключом идемпотентности даёт тот же\n")
+    out.append("    результат.\n")
+    out.append("    unsafe - повтор выполняет действие дважды.\n")
+    out.append('    """\n\n')
+    for value in sorted(safety_values):
+        out.append(f'    {value.upper()} = "{value}"\n')
+
+    out.append("\n\n@dataclass(frozen=True, slots=True)\n")
+    out.append("class Operation:\n")
+    out.append('    """Свойства одной операции службы.\n\n')
+    out.append("    Attributes:\n")
+    out.append("        name (str): Идентификатор операции.\n")
+    out.append("        capability (str): Возможность, которой операция требует.\n")
+    out.append("        safety (Safety): Безопасность при повторе.\n")
+    out.append("        request_class (str): Класс запроса для бюджета.\n")
+    out.append("        returns (str): Тип результата, как объявлен спецификацией.\n")
+    out.append('    """\n\n')
+    out.append("    name: str\n")
+    out.append("    capability: str\n")
+    out.append("    safety: Safety\n")
+    out.append("    request_class: str\n")
+    out.append("    returns: str\n")
+
+    out.append("\n\n#: Операции служб по идентификатору.\n")
+    out.append("OPERATIONS: Final[dict[str, Operation]] = {\n")
+    for name in sorted(operations):
+        body = operations[name]
+        out.append(f'    "{name}": Operation(\n')
+        out.append(f'        name="{name}",\n')
+        out.append(f'        capability="{body["capability"]}",\n')
+        out.append(f"        safety=Safety.{body['safety'].upper()},\n")
+        out.append(f'        request_class="{body["request_class"]}",\n')
+        out.append(f'        returns="{body["returns"]}",\n')
+        out.append("    ),\n")
+    out.append("}\n")
+
+    return "".join(out)
+
+
 def render_extraction(spec: Path) -> str:
     """Порождает словари извлечения: статусы заказа и присутствие контрагента.
 
@@ -1023,6 +1241,7 @@ TARGETS: Final[dict[str, Callable[[Path], str]]] = {
     "budget.py": render_budget,
     "events.py": render_events,
     "extraction.py": render_extraction,
+    "operations.py": render_operations,
 }
 
 
