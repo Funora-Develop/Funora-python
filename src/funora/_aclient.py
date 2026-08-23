@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
@@ -29,6 +29,7 @@ from ._chats import ChatsPage
 from ._engine import Deliver, Engine, Fetch, Pause, Reply, Request
 from ._host import host_of
 from ._identity import REGISTRY
+from ._observed import Observed
 from ._orders import OrdersPage
 from ._poll import Schedule
 from ._proxies import DEFAULT_ACCOUNT, Proxy, ProxyPool
@@ -37,7 +38,7 @@ from ._thread import Thread
 from ._transport import AsyncFetcher, TransportSettings
 from ._watch import Router, adispatch
 from .capabilities import Capability, CapabilityState
-from .errors import ConfigurationError, FunoraError
+from .errors import ConfigurationError, FunoraError, HandlerError
 
 if TYPE_CHECKING:
     from ._transport import Observation
@@ -212,6 +213,47 @@ class AsyncClient:
         """
         await self._fetcher.close()
 
+    @property
+    def locale(self) -> Observed[str]:
+        """Возвращает локаль интерфейса, как её отдала площадка.
+
+        Локаль привязана к аккаунту, а не к адресу: переключить её запросом
+        нельзя. Разбор от смены языка не ломается - он структурный, - но поля,
+        приходящие текстом (описание заказа, подпись времени, имя собеседника),
+        возвращаются на этом языке.
+
+        Returns:
+            Observed[str]: Локаль либо причина, по которой её не видно. До
+            первого чтения - не наблюдалась.
+        """
+        return self.engine._state.locale
+
+    @property
+    def stopped(self) -> FunoraError | None:
+        """Возвращает ошибку, остановившую клиента.
+
+        Полная остановка наступает по признаку fail_closed у политики повторов:
+        сегодня это отказ в доступе и страница проверки. Обе - ответ площадки
+        на поведение клиента, а не сбой связи.
+
+        Returns:
+            FunoraError | None: Ошибка либо None, если клиент работает.
+        """
+        return self.engine.stopped
+
+    def resume(self) -> None:
+        """Снимает полную остановку и разрешает снова ходить на площадку.
+
+        Решение принимает человек: он один знает, разобрался ли с причиной.
+        Сама по себе остановка не истекает и по времени не снимается -
+        истекающая означала бы возврат на площадку, которая отказала в доступе,
+        без чьего-либо ведома.
+
+        Returns:
+            None
+        """
+        self.engine.resume()
+
     def capability(self, capability: Capability) -> CapabilityState:
         """Возвращает текущее состояние возможности.
 
@@ -233,6 +275,7 @@ class AsyncClient:
         state_path: Path | None = None,
         max_threads_per_step: int = 5,
         concurrency: int = 1,
+        on_handler_error: Callable[[HandlerError], None] | None = None,
     ) -> None:
         """Ведёт наблюдение: опрашивает площадку и раздаёт события обработчикам.
 
@@ -288,6 +331,7 @@ class AsyncClient:
         *,
         router: Router | None = None,
         concurrency: int = 1,
+        on_handler_error: Callable[[HandlerError], None] | None = None,
     ) -> T:
         """Прокручивает ядро, выполняя то, о чём оно просит.
 
@@ -333,6 +377,17 @@ class AsyncClient:
                         "ядро просит раздать события, но реестр обработчиков не передан"
                     )
                 reply = await adispatch(router, request.events, concurrency=concurrency)
+                # Итог раздачи дальше уходит ядру, а ядро читает у него
+                # delivered, advance, fatal и длину failed. Причина отказа
+                # живёт только здесь, и не отдать её сейчас значит потерять
+                # насовсем.
+                if on_handler_error is not None:
+                    # Имя намеренно не failure: так зовут переменную, которой
+                    # цикл бросает ошибку ВНУТРЬ ядра. Затерев её здесь, мы
+                    # отправили бы отказ обработчика в ядро как условие
+                    # площадки и уронили бы наблюдение вместо жалобы.
+                    for handler_error in reply.errors:
+                        on_handler_error(handler_error)
 
     async def _fetch(self, path: str) -> Observation:
         """Выполняет одно обращение к площадке.

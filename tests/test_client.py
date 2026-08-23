@@ -17,6 +17,7 @@ from time import monotonic
 import pytest
 
 import funora._client as client_module
+import funora._engine as engine_module
 from funora._budget import Budget
 from funora._chats import ChatsPage
 from funora._client import Client
@@ -24,8 +25,10 @@ from funora._engine import Engine, Fetch, Pause
 from funora._orders import Completeness
 from funora._thread import Origin, Thread
 from funora._transport import Observation, TransportSettings
+from funora.budget import MAX_WAIT_MS
 from funora.capabilities import Capability, CapabilityState
 from funora.errors import (
+    AccessBlockedError,
     BudgetExhaustedError,
     ConfigurationError,
     InvalidCredentialsError,
@@ -122,7 +125,36 @@ def no_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
         list[float]: Список длительностей, которые клиент собирался проспать.
     """
     slept: list[float] = []
-    monkeypatch.setattr(client_module, "sleep", slept.append)
+
+    # Часы двигаются вместе со сном. Подмена, глотающая сон и оставляющая часы
+    # на месте, показывает ведро, которое не пополняется никогда, и остывание,
+    # которое не истекает никогда: проверка тогда проходит или падает по
+    # причине, которой в жизни не бывает.
+    started = monotonic()
+    offset = [0.0]
+
+    def fake_sleep(seconds: float) -> None:
+        """Считает паузу и продвигает часы на неё же.
+
+        Args:
+            seconds (float): Сколько клиент собирался проспать.
+
+        Returns:
+            None
+        """
+        slept.append(seconds)
+        offset[0] += seconds
+
+    def fake_monotonic() -> float:
+        """Возвращает время с учётом проспанного.
+
+        Returns:
+            float: Монотонные секунды.
+        """
+        return started + offset[0]
+
+    monkeypatch.setattr(client_module, "sleep", fake_sleep)
+    monkeypatch.setattr(engine_module, "monotonic", fake_monotonic)
     return slept
 
 
@@ -242,7 +274,19 @@ def test_rate_limited_is_retried_and_respects_the_header(no_sleep: list[float]) 
     with _client([limited, good]) as client:
         page = client.orders.list()
         assert page.completeness is Completeness.COMPLETE
-        assert no_sleep == [2.0], "пауза обязана быть взята из заголовка"
+        # Пауз две, и обе обязательны. Первая - подсказка площадки из
+        # заголовка Retry-After. Вторая - остаток собственного остывания
+        # идентичности: спецификация велит после первого ограничения не только
+        # урезать ёмкость, но и выдержать минуту.
+        #
+        # Вместе они дают ровно минуту, а не минуту с двумя секундами: часы
+        # идут и во время первой паузы.
+        assert no_sleep[0] == 2.0, "первая пауза обязана быть взята из заголовка"
+        assert len(no_sleep) == 2, f"ожидались две паузы, получено {no_sleep}"
+        assert abs(sum(no_sleep) - 60) < 0.01, (
+            f"собственное остывание после первого ограничения - минута, "
+            f"получилось {sum(no_sleep):.1f} с"
+        )
 
 
 def test_rate_limited_gives_up_after_the_policy_limit(no_sleep: list[float]) -> None:
@@ -397,8 +441,16 @@ def test_exhausted_budget_does_not_send_the_request(no_sleep: list[float]) -> No
     # восполниться, и проверка станет зелёной, ничего не проверив.
     budget = Budget(names=("write",))
     now = monotonic()
-    while budget.reserve(now).granted:
-        pass
+    # Опустошать надо ЗАПАС, а не право на залп. Залп восстанавливается за
+    # доли секунды, и остановка на нём дала бы ведро, полное на три четверти:
+    # клиент подождал бы сто миллисекунд и спокойно сходил.
+    while True:
+        reservation = budget.reserve(now)
+        if reservation.granted:
+            continue
+        if reservation.wait_ms > MAX_WAIT_MS:
+            break
+        now += reservation.wait_ms / 1000
 
     fetcher = _FakeFetcher([_observation(_page("orders-trade.logged.ru"))])
     with Client(transport=fetcher, budget=budget) as client:  # type: ignore[arg-type]
@@ -592,3 +644,138 @@ def test_rate_limit_cuts_the_identity_capacity() -> None:
         "ёмкость не урезана: следующий залп будет прежним"
     )
     assert identity.is_cooling(identity.cooldown_until - 1), "источник не остывает"
+
+
+def test_the_header_reaches_the_identity(no_sleep: list[float]) -> None:
+    """Проверяет, что просьба площадки доходит до отступления всей идентичности.
+
+    Слабое место связки. Заголовок Retry-After читается транспортом, политика
+    его урезает, идентичность обязана его учесть - и если движок не передаст
+    его дальше, всё сойдётся кроме главного: аккаунт вернётся к работе раньше,
+    чем просила площадка.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    # Часы берутся ТЕ ЖЕ, что у движка. Фикстура no_sleep подменяет его часы
+    # своими, отсчитывая от момента своей установки, а настоящий monotonic идёт
+    # дальше: разница между установкой фикстуры и первой строкой проверки
+    # оказывалась вычтенной из отступления. На быстрой машине она нулевая, на
+    # медленной - десятые доли миллисекунды, и проверка падала «на 300 с вместо
+    # 300 с».
+    started = engine_module.monotonic()
+    limited = _observation("", status=429, retry_after_ms=300_000)
+    good = _observation(_page("orders-trade.logged.ru"))
+
+    with Client(  # type: ignore[arg-type]
+        transport=_FakeFetcher([limited, good])
+    ) as client:
+        client.orders.list()
+        identity = client.engine._identity
+
+    assert identity.limits_seen == 1, "ограничение не учтено вовсе"
+
+    # Смотреть надо на остывание ИДЕНТИЧНОСТИ, а не на паузы. Паузу в пять
+    # минут выдаст политика повторов сама по себе - она читает заголовок
+    # напрямую. Разница в том, отступил ли один запрос или весь аккаунт: без
+    # признака account_scoped идентичность остыла бы за минуту, и всё
+    # остальное - цикл опроса, чужие вызовы того же процесса - пошло бы через
+    # минуту, а не через пять.
+    assert identity.cooldown_until - started >= 300.0, (
+        f"площадка просила пять минут, а идентичность отступила на "
+        f"{identity.cooldown_until - started:.0f} с. Значит отступил один "
+        "запрос, а не аккаунт"
+    )
+
+
+def test_blocked_stops_the_client_until_a_human_says_otherwise(
+    no_sleep: list[float],
+) -> None:
+    """Проверяет полную остановку по отказу в доступе.
+
+    Признак fail_closed стоял у двух политик со словами «опрос останавливается
+    полностью», и останавливать было нечему: реализация отказывала одним
+    запросом и продолжала работать. Следующий шаг цикла шёл на площадку заново.
+
+    Цена ошибки несимметрична: лишняя остановка стоит задержки, лишний стук
+    после отказа в доступе стоит аккаунта.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    blocked = _observation("", status=403)
+    good = _observation(_page("orders-trade.logged.ru"))
+    fetcher = _FakeFetcher([blocked, good, good])
+
+    with Client(transport=fetcher) as client:  # type: ignore[arg-type]
+        with pytest.raises(AccessBlockedError):
+            client.orders.list()
+
+        assert client.stopped is not None, "клиент не остановлен после отказа в доступе"
+        calls_after_block = fetcher.calls
+
+        # Второй вызов обязан отказать НЕ СХОДИВ.
+        with pytest.raises(AccessBlockedError):
+            client.orders.list()
+        assert fetcher.calls == calls_after_block, (
+            "клиент пошёл на площадку, которая только что отказала в доступе"
+        )
+
+        client.resume()
+        assert client.stopped is None, "остановка не снялась вручную"
+        client.orders.list()
+        assert fetcher.calls > calls_after_block, "после снятия клиент не пошёл"
+
+
+def test_an_ordinary_failure_does_not_stop_the_client(no_sleep: list[float]) -> None:
+    """Проверяет обратную половину: сбой связи клиента не останавливает.
+
+    Останавливающий на всём подряд неотличим от неработающего: сетевой отказ
+    одного запроса не повод прекращать работу до вмешательства человека.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    good = _observation(_page("orders-trade.logged.ru"))
+    limited = _observation("", status=429, retry_after_ms=1000)
+
+    with Client(transport=_FakeFetcher([limited, good])) as client:  # type: ignore[arg-type]
+        client.orders.list()
+        assert client.stopped is None, "ограничение частоты остановило клиента насовсем"
+
+
+def test_reading_a_page_observes_its_locale(no_sleep: list[float]) -> None:
+    """Проверяет, что локаль читается на настоящем пути чтения.
+
+    Отдельная проверка на функцию доказывает, что читать умеем. Эта - что
+    вправду читаем: связка «прочитали страницу - узнали локаль» слабое место,
+    и без неё функция осталась бы вызываемой ниоткуда.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    # Метка подставляется в снимок здесь, а не правится в фикстуре. Скелет
+    # маскирует значения атрибутов, и в сохранённом снимке в lang лежит подпись:
+    # на нём чтение локали не исполняется по устройству формата, а не по ошибке.
+    page = _page("orders-trade.logged.ru").replace('lang="T2:a#1"', 'lang="ru"', 1)
+    assert 'lang="ru"' in page, "подпись локали в снимке выглядит иначе - поправьте подстановку"
+
+    with Client(transport=_FakeFetcher([_observation(page)])) as client:  # type: ignore[arg-type]
+        assert not client.locale.is_observed, "локаль известна до первого чтения"
+        client.orders.list()
+
+        assert client.locale.or_none() == "ru", (
+            f"страница прочитана, а локаль наблюдалась как {client.locale}"
+        )

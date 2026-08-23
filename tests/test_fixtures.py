@@ -19,13 +19,20 @@ import pytest
 from selectolax.parser import HTMLParser
 
 from funora._classify import ResponseClass, classify
-from funora._skeleton import SKELETON_FORMAT, SUPPORTED_SKELETON_FORMATS, _self_check
+from funora._skeleton import (
+    NUMBERED_SKELETON_FORMATS,
+    SUPPORTED_SKELETON_FORMATS,
+    SkeletonError,
+    _self_check,
+    skeletonize,
+)
 
 #: Каталог с фикстурами страниц.
 PAGES = Path(__file__).parent / "fixtures" / "pages"
 
 #: Ожидаемый вердикт для каждой фикстуры.
 EXPECTED = {
+    "order.logged.ru": ResponseClass.OK,
     "orders-trade.logged.ru": ResponseClass.OK,
     "chat.logged.ru": ResponseClass.OK,
     "chat-thread.logged.ru": ResponseClass.OK,
@@ -271,8 +278,14 @@ def test_rows_are_distinguishable_in_current_format() -> None:
     проходила впустую - и выглядела при этом пройденной. Дважды на это
     наступали.
 
-    Проверка идёт по снимкам текущего формата: снятые прежними версиями
-    различимость восстановить не могут, и требовать её от них нечестно.
+    Проверка идёт по снимкам НУМЕРУЮЩИХ версий, а не одной текущей. Снятые до
+    нумерации различимость восстановить не могут, и требовать её от них
+    нечестно; снятые после - обязаны, сколько бы версий с тех пор ни прошло.
+
+    Прежде здесь стояло равенство текущему формату, и первый же подъём версии
+    по другой причине оставил проверку без единого снимка. Она честно упала на
+    «проверять нечего» - но это и была вся её защита: сравнение с одной версией
+    отменяет проверку при каждом подъёме.
 
     Returns:
         None
@@ -280,7 +293,7 @@ def test_rows_are_distinguishable_in_current_format() -> None:
     checked = 0
     for name in sorted(EXPECTED):
         data = json.loads((PAGES / f"{name}.provenance.json").read_text(encoding="utf-8"))
-        if data["format"] != SKELETON_FORMAT:
+        if data["format"] not in NUMBERED_SKELETON_FORMATS:
             continue
 
         tree = HTMLParser(_read(name))
@@ -295,4 +308,57 @@ def test_rows_are_distinguishable_in_current_format() -> None:
             )
             checked += 1
 
-    assert checked, "ни одного снимка текущего формата со строками - проверять нечего"
+    assert checked, "ни одного снимка нумерующей версии со строками - проверять нечего"
+
+
+#: Пары «что подсунули - что должно случиться».
+#:
+#: Кириллица выбрана не для красоты: аудитория площадки русскоязычная, и утечка
+#: текста выглядела бы именно так. Латиница здесь ничего не доказала бы - её
+#: полно в именах классов и в путях, которые формат сохраняет намеренно.
+LEAKS: dict[str, str] = {
+    "кириллица в имени класса": '<div class="кнопка">x</div>',
+    "кириллица в имени атрибута": '<div class="a" данные="1">x</div>',
+}
+
+
+@pytest.mark.parametrize(("label", "html"), sorted(LEAKS.items()))
+def test_cyrillic_in_a_structural_line_is_refused(label: str, html: str) -> None:
+    """Проверяет, что кириллица в структурной строке отвергается.
+
+    Формат обещает: текстов в скелете нет. Обещание держится не тем, что при
+    захвате всё вычистили, а тем, что скелет проверяет себя сам - разбор
+    приходит от стороннего парсера, и смена его поведения не должна тихо
+    превратить безопасный формат в небезопасный.
+
+    Ветка про кириллицу существовала и не проверялась ничем: снять её можно
+    было незаметно, и весь набор оставался зелёным. Между тем это ровно то
+    место, где утечка и произошла бы: класс и имя атрибута сохраняются
+    дословно, потому что без них не написать селектора.
+
+    Args:
+        label (str): Что подсунули.
+        html (str): Разметка.
+
+    Returns:
+        None
+    """
+    with pytest.raises(SkeletonError, match="кириллиц"):
+        skeletonize(html)
+
+
+def test_cyrillic_text_does_not_reach_the_skeleton() -> None:
+    """Проверяет обратную половину: текст на кириллице маскируется, а не падает.
+
+    Отвергать страницу из-за русского текста было бы негодно - он там всегда.
+    Текст обязан превратиться в подпись, и в скелете кириллицы не остаться.
+
+    Returns:
+        None
+    """
+    skeleton = skeletonize('<div class="a">Алёша купил ключ</div>')
+
+    leaked = sorted({ch for ch in skeleton if "Ѐ" <= ch <= "ӿ"})
+    assert not leaked, f"кириллица дошла до скелета: {''.join(leaked)}"
+    assert "Алёша" not in skeleton
+    assert "T16:cs" in skeleton or "T" in skeleton, "текст не превратился в подпись"

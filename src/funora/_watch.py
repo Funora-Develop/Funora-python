@@ -33,10 +33,11 @@ from .budget import HANDLER_TIMEOUT_MS, MAX_CONCURRENT_HANDLERS
 from .errors import (
     ConfigurationError,
     FunoraError,
+    HandlerCancelledError,
     HandlerError,
     HandlerTimeoutError,
 )
-from .events import ORDERING_KEY, EventType
+from .events import ORDERING_KEY, REVISION_SEPARATOR, EventType
 
 __all__ = [
     "Router",
@@ -70,6 +71,9 @@ _INCOMPLETE: Final[EventType] = EventType.SNAPSHOT_INCOMPLETE
 #: Событие, которым объявляется потеря событий.
 _LOSS: Final[EventType] = EventType.EVENT_LOSS
 
+#: Вид события о смене состояния доступа.
+_HEALTH: Final[EventType] = EventType.PROTOCOL_HEALTH_CHANGED
+
 #: Причина, по которой наблюдение объявляется начавшимся.
 _COLD_START: Final[str] = "cold_start"
 
@@ -77,7 +81,11 @@ _COLD_START: Final[str] = "cold_start"
 #:
 #: Управляющий знак, а не двоеточие: причина неполноты приходит со страницы
 #: и содержать двоеточие вправе.
-_PART_SEP: Final[str] = "\x1f"
+#:
+#: Величина берётся из порождённого файла. Прежде здесь стоял литерал U+001F -
+#: тот же знак, которым склеивается сам отпечаток, - и составная версия
+#: клала разделитель отпечатка внутрь его же части.
+_PART_SEP: Final[str] = REVISION_SEPARATOR
 
 
 #: Виды событий, которые эта реализация вправду порождает.
@@ -103,6 +111,7 @@ PRODUCIBLE: Final[frozenset[EventType]] = frozenset(
         EventType.WATCH_PRIMED,
         EventType.SNAPSHOT_INCOMPLETE,
         EventType.EVENT_LOSS,
+        EventType.PROTOCOL_HEALTH_CHANGED,
     }
 )
 
@@ -287,6 +296,7 @@ def dispatch_core(
                     event.type,
                     event.ordering_key,
                     type(exc).__name__,
+                    exc_info=exc,
                 )
                 break
             broke = True
@@ -297,11 +307,17 @@ def dispatch_core(
             )
             error.__cause__ = exc
             errors.append(error)
+            # exc_info обязателен. Трассировка сохранена в error.__cause__ и
+            # никуда дальше не идёт: движок читает у результата delivered,
+            # advance, fatal и длину failed, а errors не читает никто. Без неё
+            # в журнале остаётся имя класса без единой строки о том, ГДЕ упало,
+            # а событие приходит снова каждый шаг - и так по кругу.
             _log.warning(
                 "обработчик упал на событии %s (ключ %s): %s",
                 event.type,
                 event.ordering_key,
                 type(exc).__name__,
+                exc_info=exc,
             )
             break
 
@@ -402,6 +418,7 @@ async def _adispatch_serially(router: Router, events: tuple[Event, ...]) -> Step
                 HANDLER_TIMEOUT_MS,
                 event.type,
                 event.ordering_key,
+                exc_info=exc,
             )
             timeout = HandlerTimeoutError(
                 f"обработчик {getattr(handler, '__name__', handler)!r} не уложился "
@@ -410,6 +427,31 @@ async def _adispatch_serially(router: Router, events: tuple[Event, ...]) -> Step
             )
             timeout.__cause__ = exc
             reply = timeout
+        except asyncio.CancelledError as exc:
+            # CancelledError - потомок BaseException, а не Exception, поэтому
+            # ветка ниже её не ловила и она пробивала раздачу насквозь: партия
+            # теряла и доставленное, и недоставленное, курсор не сохранялся.
+            #
+            # Но проглотить её целиком нельзя. Отмена, пришедшая ИЗВНЕ, - это
+            # отмена всей задачи, и съев её, мы сделали бы задачу неотменяемой.
+            # Различить два случая позволяет счётчик отмен самой задачи: он
+            # больше нуля ровно тогда, когда отменяют нас, а не когда отменился
+            # обработчик.
+            task = asyncio.current_task()
+            if task is not None and task.cancelling() > 0:
+                raise
+            _log.warning(
+                "обработчик отменился на событии %s (ключ %s)",
+                event.type,
+                event.ordering_key,
+                exc_info=exc,
+            )
+            cancelled = HandlerCancelledError(
+                f"обработчик {getattr(handler, '__name__', handler)!r} отменён "
+                f"на событии {event.type} с ключом {event.ordering_key}"
+            )
+            cancelled.__cause__ = exc
+            reply = cancelled
         except Exception as exc:  # noqa: BLE001
             reply = exc
 
@@ -595,6 +637,52 @@ def primed(account_id: str, observed_at: datetime, entities: tuple[str, ...]) ->
             # ответ на «за чем».
             "entities": list(entities),
             "reason": _COLD_START,
+        },
+    )
+
+
+def health_changed(
+    account_id: str,
+    observed_at: datetime,
+    *,
+    before: str,
+    after: str,
+    reason: str,
+    writes_paused: bool,
+) -> Event:
+    """Собирает событие о смене состояния доступа к площадке.
+
+    Смена, о которой не сказали, неотличима от её отсутствия: вызывающий видит,
+    что автоматика записи молчит, и не знает почему. Отсюда правило - всякая
+    смена состояния порождает событие, а переход в то же состояние не порождает
+    ничего: поток сообщений о неизменном заглушил бы сообщение об изменении.
+
+    Args:
+        account_id (str): Идентификатор аккаунта.
+        observed_at (datetime): Момент наблюдения.
+        before (str): Прежнее состояние.
+        after (str): Новое состояние.
+        reason (str): Машиночитаемая причина перехода.
+        writes_paused (bool): Приостановлена ли автоматика записи.
+
+    Returns:
+        Event: Событие protocol.health_changed.
+    """
+    return make_event(
+        account_id=account_id,
+        event_type=_HEALTH,
+        entity_id=account_id,
+        # Версия - новое состояние, как объявлено нормативным перечнем
+        # источников версии. Возврат в прежнее состояние даёт прежний
+        # отпечаток, и гашение повторов срабатывает само.
+        revision=after,
+        observed_at=observed_at,
+        key_field="account_id",
+        payload={
+            "before": before,
+            "after": after,
+            "reason_code": reason,
+            "writes_paused": writes_paused,
         },
     )
 

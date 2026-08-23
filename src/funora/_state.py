@@ -29,9 +29,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
+from ._canonical import canonical_dumps
 from .contract import ADAPTER_FAMILY as _ADAPTER_FAMILY
 from .contract import CANONICAL_FORM_VERSION
-from .errors import StateSchemaIncompatibleError
+from .errors import CursorIncompatibleError, StateSchemaIncompatibleError
 
 __all__ = ["StateFile", "STATE_FORMAT"]
 
@@ -53,7 +54,14 @@ __all__ = ["StateFile", "STATE_FORMAT"]
 #: Молча принять такой файл значило бы выдать приветствие и жалобу на неполноту
 #: повторно - по разу за срок гашения. Не смертельно, но необъяснимо со стороны
 #: пользователя: он увидит «наблюдение началось» у работающего месяц клиента.
-STATE_FORMAT: Final[str] = "funora-state-v3"
+#:
+#: v4: метки гашения повторов перестали быть монотонными секундами и стали
+#: моментами от эпохи. Прежние файлы принять нельзя: дробное показание
+#: секундомера, прочитанное как момент от эпохи, попадает в тысяча девятьсот
+#: семидесятый - и весь кэш гашения молча выбрасывается по сроку. Это ровно
+#: то, что спецификация запрещает прямо: молчаливое чтение с начала порождает
+#: повторную обработку всего, что уже обработано.
+STATE_FORMAT: Final[str] = "funora-state-v4"
 
 #: Семейство адаптера, к которому относится состояние.
 #:
@@ -81,10 +89,12 @@ class StateFile:
             нет: первый запуск - штатное событие.
 
         Raises:
-            StateSchemaIncompatibleError: Если файл записан другой версией
-                формата либо другим семейством адаптера. Молчаливый старт с
-                нуля здесь неотличим от штатной работы и приводит к повторной
-                обработке всего, что уже обработано.
+            StateSchemaIncompatibleError: Если файл не читается вовсе либо
+                записан другой версией схемы файла.
+            CursorIncompatibleError: Если сохранённая позиция снята с другого
+                семейства адаптера либо собрана другой канонической формой.
+                Молчаливый старт с нуля здесь неотличим от штатной работы и
+                приводит к повторной обработке всего, что уже обработано.
         """
         if not self.path.is_file():
             return {}
@@ -110,16 +120,27 @@ class StateFile:
                 f"ожидался {STATE_FORMAT!r}"
             )
 
+        # Семейство адаптера и каноническая форма - про КУРСОР, а версия схемы
+        # файла выше - про файл. Спецификация делит их прямо: 1801 говорит
+        # «курсор принадлежит другой версии формата или другому семейству
+        # адаптера», 1802 - «версия схемы сохранённого состояния не
+        # поддерживается». Обе ветки ниже подпадают под первое и возбуждали
+        # второе.
+        #
+        # Разница не в номере. Она в том, что делать: чужая схема файла лечится
+        # выходом новой версии SDK, чужое семейство - никогда. Курсор, снятый с
+        # другой площадки, не станет совместимым от обновления.
         stored_family = raw.get("adapter_family")
         if stored_family != ADAPTER_FAMILY:
-            raise StateSchemaIncompatibleError(
+            raise CursorIncompatibleError(
                 f"файл состояния {self.path} снят с семейства {stored_family!r}, "
-                f"ожидалось {ADAPTER_FAMILY!r}"
+                f"ожидалось {ADAPTER_FAMILY!r}. Сохранённая позиция принадлежит "
+                "другой площадке и совместимой не станет"
             )
 
         stored_canonical = raw.get("canonical_form_version")
         if stored_canonical is not None and stored_canonical != CANONICAL_FORM_VERSION:
-            raise StateSchemaIncompatibleError(
+            raise CursorIncompatibleError(
                 f"файл состояния {self.path} записан канонической формой "
                 f"{stored_canonical!r}, ожидалась {CANONICAL_FORM_VERSION!r}. "
                 "Сохранённые отпечатки собраны по другим правилам и не совпадут "
@@ -146,7 +167,11 @@ class StateFile:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_suffix(self.path.suffix + ".tmp")
 
-        body = json.dumps(
+        # Каноническая форма, а не json.dumps с умолчаниями. Прежде файл
+        # штамповал в себя canonical_form_version и писался с пробелами после
+        # двоеточия и запятой, с числами с плавающей точкой и без нормализации
+        # Unicode: то есть утверждал про себя то, чего никто не делал.
+        body = canonical_dumps(
             {
                 "format": STATE_FORMAT,
                 "adapter_family": ADAPTER_FAMILY,
@@ -157,9 +182,7 @@ class StateFile:
                 # на пригодность - можно только надеяться.
                 "canonical_form_version": CANONICAL_FORM_VERSION,
                 "payload": payload,
-            },
-            ensure_ascii=False,
-            sort_keys=True,
+            }
         )
         temporary.write_text(body, encoding="utf-8", newline="\n")
         os.replace(temporary, self.path)

@@ -47,6 +47,15 @@ class Operation:
         safety (Safety): Безопасность при повторе.
         request_class (str): Класс запроса для бюджета.
         returns (str): Тип результата, как объявлен спецификацией.
+        errors (tuple[str, ...]): Устойчивые идентификаторы ошибок,
+            которыми операция вправе завершиться. Ровно то, что
+            вызывающий выписывает в except.
+
+            Перечень объявлен спецификацией на каждую операцию и до
+            сих пор до пакета не доходил: генератор принимал ключ
+            errors и выбрасывал его. Расхождение между обещанным и
+            возбуждаемым не ловило ничто, и вызывающий, выписавший
+            except по контракту, ловил не всё.
     """
 
     name: str
@@ -54,6 +63,7 @@ class Operation:
     safety: Safety
     request_class: str
     returns: str
+    errors: tuple[str, ...]
 
 
 #: Операции служб по идентификатору.
@@ -64,6 +74,11 @@ OPERATIONS: Final[dict[str, Operation]] = {
         safety=Safety.SAFE,
         request_class="interactive",
         returns="Account",
+        errors=(
+            "funora.auth.session_expired",
+            "funora.protocol.changed",
+            "funora.transport",
+        ),
     ),
     "account.refresh": Operation(
         name="account.refresh",
@@ -71,6 +86,11 @@ OPERATIONS: Final[dict[str, Operation]] = {
         safety=Safety.SAFE,
         request_class="interactive",
         returns="Account",
+        errors=(
+            "funora.auth.session_expired",
+            "funora.protocol.changed",
+            "funora.transport",
+        ),
     ),
     "capabilities": Operation(
         name="capabilities",
@@ -78,6 +98,7 @@ OPERATIONS: Final[dict[str, Operation]] = {
         safety=Safety.SAFE,
         request_class="poll",
         returns="CapabilityProfile",
+        errors=(),
     ),
     "catalog.categories": Operation(
         name="catalog.categories",
@@ -85,6 +106,10 @@ OPERATIONS: Final[dict[str, Operation]] = {
         safety=Safety.SAFE,
         request_class="interactive",
         returns="Category[]",
+        errors=(
+            "funora.protocol.changed",
+            "funora.transport",
+        ),
     ),
     "catalog.field_schema": Operation(
         name="catalog.field_schema",
@@ -92,6 +117,11 @@ OPERATIONS: Final[dict[str, Operation]] = {
         safety=Safety.SAFE,
         request_class="interactive",
         returns="FieldSchema",
+        errors=(
+            "funora.capability.unsupported",
+            "funora.protocol.changed",
+            "funora.transport",
+        ),
     ),
     "chats.history": Operation(
         name="chats.history",
@@ -99,6 +129,13 @@ OPERATIONS: Final[dict[str, Operation]] = {
         safety=Safety.SAFE,
         request_class="interactive",
         returns="Thread",
+        errors=(
+            "funora.domain.not_found",
+            "funora.auth.session_expired",
+            "funora.protocol.changed",
+            "funora.protocol.unexpected_response",
+            "funora.transport",
+        ),
     ),
     "chats.history_before": Operation(
         name="chats.history_before",
@@ -106,6 +143,11 @@ OPERATIONS: Final[dict[str, Operation]] = {
         safety=Safety.SAFE,
         request_class="interactive",
         returns="Message[]",
+        errors=(
+            "funora.capability.unsupported",
+            "funora.state.cursor_incompatible",
+            "funora.transport",
+        ),
     ),
     "chats.list": Operation(
         name="chats.list",
@@ -113,6 +155,12 @@ OPERATIONS: Final[dict[str, Operation]] = {
         safety=Safety.SAFE,
         request_class="poll",
         returns="ChatsPage",
+        errors=(
+            "funora.auth.session_expired",
+            "funora.protocol.changed",
+            "funora.protocol.unexpected_response",
+            "funora.transport",
+        ),
     ),
     "chats.mark_read": Operation(
         name="chats.mark_read",
@@ -120,6 +168,10 @@ OPERATIONS: Final[dict[str, Operation]] = {
         safety=Safety.IDEMPOTENT,
         request_class="automation",
         returns="void",
+        errors=(
+            "funora.capability.unsupported",
+            "funora.transport",
+        ),
     ),
     "chats.send_image": Operation(
         name="chats.send_image",
@@ -127,6 +179,11 @@ OPERATIONS: Final[dict[str, Operation]] = {
         safety=Safety.UNSAFE,
         request_class="interactive",
         returns="Message",
+        errors=(
+            "funora.capability.unsupported",
+            "funora.budget.exhausted",
+            "funora.transport",
+        ),
     ),
     "chats.send_text": Operation(
         name="chats.send_text",
@@ -134,6 +191,13 @@ OPERATIONS: Final[dict[str, Operation]] = {
         safety=Safety.UNSAFE,
         request_class="interactive",
         returns="Message",
+        errors=(
+            "funora.domain.not_found",
+            "funora.budget.exhausted",
+            "funora.auth.session_expired",
+            "funora.transport.timeout",
+            "funora.transport",
+        ),
     ),
     "lots.activate": Operation(
         name="lots.activate",
@@ -141,6 +205,12 @@ OPERATIONS: Final[dict[str, Operation]] = {
         safety=Safety.IDEMPOTENT,
         request_class="automation",
         returns="Lot",
+        errors=(
+            "funora.capability.unsupported",
+            "funora.domain.not_found",
+            "funora.auth.session_expired",
+            "funora.transport",
+        ),
     ),
     "lots.deactivate": Operation(
         name="lots.deactivate",
@@ -148,6 +218,12 @@ OPERATIONS: Final[dict[str, Operation]] = {
         safety=Safety.IDEMPOTENT,
         request_class="automation",
         returns="Lot",
+        errors=(
+            "funora.capability.unsupported",
+            "funora.domain.not_found",
+            "funora.auth.session_expired",
+            "funora.transport",
+        ),
     ),
     "lots.list_own": Operation(
         name="lots.list_own",
@@ -155,6 +231,11 @@ OPERATIONS: Final[dict[str, Operation]] = {
         safety=Safety.SAFE,
         request_class="interactive",
         returns="Lot[]",
+        errors=(
+            "funora.auth.session_expired",
+            "funora.protocol.changed",
+            "funora.transport",
+        ),
     ),
     "lots.promote": Operation(
         name="lots.promote",
@@ -162,6 +243,12 @@ OPERATIONS: Final[dict[str, Operation]] = {
         safety=Safety.UNSAFE,
         request_class="automation",
         returns="RaiseResult",
+        errors=(
+            "funora.capability.unsupported",
+            "funora.domain.precondition_failed",
+            "funora.transport.timeout",
+            "funora.transport",
+        ),
     ),
     "lots.update_price": Operation(
         name="lots.update_price",
@@ -169,6 +256,13 @@ OPERATIONS: Final[dict[str, Operation]] = {
         safety=Safety.IDEMPOTENT,
         request_class="automation",
         returns="Lot",
+        errors=(
+            "funora.capability.unsupported",
+            "funora.domain.precondition_failed",
+            "funora.domain.not_found",
+            "funora.auth.session_expired",
+            "funora.transport",
+        ),
     ),
     "market.offers": Operation(
         name="market.offers",
@@ -176,6 +270,11 @@ OPERATIONS: Final[dict[str, Operation]] = {
         safety=Safety.SAFE,
         request_class="monitoring",
         returns="Offer[]",
+        errors=(
+            "funora.protocol.changed",
+            "funora.transport.rate_limited",
+            "funora.transport",
+        ),
     ),
     "market.snapshot": Operation(
         name="market.snapshot",
@@ -183,6 +282,11 @@ OPERATIONS: Final[dict[str, Operation]] = {
         safety=Safety.SAFE,
         request_class="monitoring",
         returns="MarketSnapshot",
+        errors=(
+            "funora.protocol.changed",
+            "funora.transport.rate_limited",
+            "funora.transport",
+        ),
     ),
     "orders.get": Operation(
         name="orders.get",
@@ -190,6 +294,12 @@ OPERATIONS: Final[dict[str, Operation]] = {
         safety=Safety.SAFE,
         request_class="interactive",
         returns="Order",
+        errors=(
+            "funora.domain.not_found",
+            "funora.auth.session_expired",
+            "funora.protocol.changed",
+            "funora.transport",
+        ),
     ),
     "orders.list": Operation(
         name="orders.list",
@@ -197,6 +307,12 @@ OPERATIONS: Final[dict[str, Operation]] = {
         safety=Safety.SAFE,
         request_class="interactive",
         returns="OrdersPage",
+        errors=(
+            "funora.auth.session_expired",
+            "funora.protocol.changed",
+            "funora.protocol.unexpected_response",
+            "funora.transport",
+        ),
     ),
     "session.health": Operation(
         name="session.health",
@@ -204,5 +320,11 @@ OPERATIONS: Final[dict[str, Operation]] = {
         safety=Safety.SAFE,
         request_class="poll",
         returns="SessionHealth",
+        errors=(
+            "funora.auth.session_expired",
+            "funora.auth.access_blocked",
+            "funora.auth.challenge_required",
+            "funora.transport",
+        ),
     ),
 }

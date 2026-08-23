@@ -28,7 +28,7 @@ __all__ = [
 ]
 
 #: Версия спецификации, которую реализует пакет.
-SPEC_VERSION: Final[str] = "0.1.0"
+SPEC_VERSION: Final[str] = "0.2.0"
 
 #: Состояние спецификации: draft либо released.
 #:
@@ -42,7 +42,7 @@ SPEC_STATUS: Final[str] = "draft"
 #: Меняется отдельно от версии спецификации: одна и та же модель
 #: может сериализоваться по-новому, и это ломает сохранённые
 #: отпечатки и ключи гашения повторов.
-CANONICAL_FORM_VERSION: Final[int] = 1
+CANONICAL_FORM_VERSION: Final[int] = 3
 
 #: Версия протокола запуска набора соответствия.
 RUNNER_PROTOCOL: Final[int] = 1

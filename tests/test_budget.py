@@ -27,10 +27,52 @@ def test_full_bucket_grants_immediately() -> None:
     assert Budget().reserve(0.0).granted
 
 
-def test_capacity_is_the_narrowest_bucket() -> None:
-    """Проверяет, что подряд выдаётся не больше самого узкого ведра.
+def test_the_narrowest_bucket_governs_the_pace() -> None:
+    """Проверяет, что темп задаёт самое узкое из вложенных вёдер.
 
-    Вёдра вложены, и общее ограничение задаёт то, которое кончится первым.
+    Прежняя редакция считала, сколько запросов проходит подряд, и ждала
+    ёмкости узкого ведра. С появлением второго предела - залпа - это перестало
+    быть правдой: подряд проходит burst, а не capacity, сколько бы ни было
+    накоплено.
+
+    Смысл проверки от этого не изменился. Вложенность значит, что ограничивает
+    узкое: за долгий отрезок клиент получает столько, сколько отпускает
+    account, а не host.
+
+    Returns:
+        None
+    """
+    budget = Budget()
+    granted = 0
+    now = 0.0
+    step = 0.25
+
+    # Сто виртуальных секунд с мелким шагом: шаг короче окна залпа, поэтому
+    # право на залп успевает восстанавливаться, а запас нет.
+    while now < 100.0:
+        if budget.reserve(now).granted:
+            granted += 1
+        now += step
+
+    account = BUCKETS["account"]
+    expected = account.capacity + account.refill_per_second * 100.0
+    assert abs(granted - expected) <= 2, (
+        f"за сто секунд выдано {granted}, а узкое ведро отпускает около "
+        f"{expected:.0f}. Значит темп задаёт не оно"
+    )
+
+    host = BUCKETS["host"]
+    assert granted < host.capacity + host.refill_per_second * 100.0, (
+        "выдано столько, сколько отпустило бы общее ведро: вложенность не работает"
+    )
+
+
+def test_burst_caps_what_goes_out_back_to_back() -> None:
+    """Проверяет второй предел: залп не зависит от накопленного.
+
+    Ведро, полное до краёв, всё равно не выпустит больше burst запросов подряд.
+    Без этого предела клиент, простоявший минуту, выпускает шестьдесят запросов
+    в одну секунду - и первым от собственного залпа страдает сам аккаунт.
 
     Returns:
         None
@@ -39,9 +81,12 @@ def test_capacity_is_the_narrowest_bucket() -> None:
     granted = 0
     while budget.reserve(0.0).granted:
         granted += 1
-        assert granted <= 1000, "ведро не кончается, значит расход не работает"
+        assert granted <= 1000, "залп не ограничивает ничего"
 
-    assert granted == min(BUCKETS["host"].capacity, BUCKETS["account"].capacity)
+    assert granted == min(BUCKETS["host"].burst, BUCKETS["account"].burst), (
+        f"подряд прошло {granted} запросов при объявленном залпе "
+        f"{min(BUCKETS['host'].burst, BUCKETS['account'].burst)}"
+    )
 
 
 def test_refusal_names_the_bucket() -> None:
@@ -65,18 +110,17 @@ def test_refusal_names_the_bucket() -> None:
 
 
 def test_nothing_is_spent_on_refusal() -> None:
-    """Проверяет, что отказавший запрос не тратит чужой запас.
+    """Проверяет, что отказ не тратит бюджет.
 
-    Занимать надо либо во всех вёдрах сразу, либо ни в одном. Частичный расход
-    означал бы утечку бюджета при частых отказах: общее ведро пустеет, а запросы
-    при этом не уходят.
+    Частичный расход означал бы, что отказавший запрос всё равно потратил чужой
+    запас, и при частых отказах бюджет утекал бы в никуда.
 
     Returns:
         None
     """
     budget = Budget()
-    for _ in range(BUCKETS["account"].capacity):
-        assert budget.reserve(0.0).granted
+    while budget.reserve(0.0).granted:
+        pass
 
     first = budget.reserve(0.0)
     for _ in range(20):
@@ -85,7 +129,7 @@ def test_nothing_is_spent_on_refusal() -> None:
 
     assert not first.granted
     assert not later.granted
-    assert later.wait_ms == first.wait_ms, "отказы потратили запас общего ведра"
+    assert later.wait_ms <= first.wait_ms, "двадцать отказов удлинили ожидание: отказ тратит бюджет"
 
 
 def test_bucket_refills_over_time() -> None:
@@ -154,20 +198,25 @@ def test_reading_never_exhausts_the_budget_outright() -> None:
 
 
 def test_slow_bucket_refuses_instead_of_waiting_forever() -> None:
-    """Проверяет отказ там, где ожидание было бы слишком долгим.
-
-    У ведра записи такт восстанавливается около минуты, а ждать разрешено пять
-    секунд. Ждать дольше означало бы, что вызов снаружи неотличим от зависшего.
+    """Проверяет, что медленное ведро отказывает, а не заставляет ждать вечно.
 
     Returns:
         None
     """
     budget = Budget(names=("write",))
-    while budget.reserve(0.0).granted:
-        pass
+    now = 0.0
+    while True:
+        reservation = budget.reserve(now)
+        if reservation.granted:
+            continue
+        if reservation.wait_ms > MAX_WAIT_MS:
+            break
+        # Ждём только право на залп: запас у этого ведра восстанавливается раз
+        # в минуту, и до него дело дойдёт быстро.
+        now += reservation.wait_ms / 1000
 
     with pytest.raises(BudgetExhaustedError) as exc:
-        budget.require(0.0)
+        budget.require(now)
     assert "не отправлен" in str(exc.value)
 
 

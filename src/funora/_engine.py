@@ -39,7 +39,7 @@ from typing import Final
 
 from ._budget import Budget
 from ._chats import ChatsPage, parse_chats_page
-from ._classify import DEFAULT_IDENTITY_CSS, classify
+from ._classify import DEFAULT_IDENTITY_CSS, Verdict, classify
 from ._diff import (
     UNREAD_STATUS,
     Delivery,
@@ -51,9 +51,11 @@ from ._diff import (
     orders_cursor,
     thread_cursor,
 )
+from ._extract import observe_locale
 from ._gate import check_capability
 from ._host import host_of
 from ._identity import REGISTRY, Identity, identity_of
+from ._observed import Observed
 from ._orders import Completeness, OrdersPage, parse_orders_page
 from ._poll import Deduplicator, Schedule
 from ._retry import plan_attempt
@@ -61,9 +63,17 @@ from ._state import StateFile
 from ._thread import Thread, parse_thread
 from ._transport import Observation, TransportSettings
 from ._verdicts import error_for
-from ._watch import Router, StepResult, incomplete, loss, primed
-from .budget import MAX_QUEUE_DEPTH_PER_KEY
+from ._watch import Router, StepResult, health_changed, incomplete, loss, primed
+from .budget import (
+    COUNTS_REDIRECTS,
+    COUNTS_RETRIES,
+    MAX_QUEUE_DEPTH_PER_KEY,
+    WAIT_ATTEMPTS,
+    WAIT_GUARD_MS,
+    RequestClass,
+)
 from .capabilities import CAPABILITY_INITIAL, Capability, CapabilityState
+from .contract import SUPPORTED_LOCALES
 from .errors import (
     AuthenticationError,
     BudgetError,
@@ -76,6 +86,13 @@ from .errors import (
     ValidationError,
 )
 from .operations import OPERATIONS, Safety
+from .response_classes import (
+    HEALTH_BY_VERDICT,
+    INITIAL_HEALTH,
+    WRITES_PAUSED_IN,
+    Health,
+)
+from .retry import RETRY_POLICIES
 
 __all__ = ["Fetch", "Pause", "Deliver", "Request", "Engine", "ORDERS_PATH", "CHATS_PATH"]
 
@@ -144,6 +161,12 @@ class _State:
             лечением.
         opted_in (frozenset[Capability]): Возможности, включённые вызывающим
             явно.
+        health (Health): Состояние доступа к площадке. От него зависит,
+            приостановлена ли автоматика записи.
+        locale (Observed[str]): Локаль интерфейса, как её отдала площадка.
+            Чтения не отменяет: разбор структурный и от смены языка не
+            ломается. Но поля, приходящие текстом, возвращаются на этом языке,
+            и вызывающий вправе знать, на каком.
     """
 
     capabilities: dict[Capability, CapabilityState] = field(
@@ -151,6 +174,8 @@ class _State:
     )
     session_ever_valid: bool = False
     opted_in: frozenset[Capability] = frozenset()
+    health: Health = INITIAL_HEALTH
+    locale: Observed[str] = field(default_factory=lambda: Observed.missing("not_read_yet"))
 
 
 def check_integrity(observation: Observation) -> None:
@@ -219,6 +244,48 @@ IMPLEMENTED: Final[frozenset[Capability]] = frozenset(
 )
 
 
+def _scoped(error: Exception) -> bool:
+    """Сообщает, отступает ли по этой ошибке вся идентичность.
+
+    Признак объявлен политикой повторов. Источников запросов много - цикл
+    опроса, планировщики наблюдений, пользовательские записи, - и по
+    отдельности они друг о друге не знают. Отступи каждый только за себя,
+    суммарное давление почти не упало бы.
+
+    Args:
+        error (Exception): Ошибка, вызвавшая отступление.
+
+    Returns:
+        bool: True, если политика объявила отступление общим для аккаунта.
+    """
+    policy = RETRY_POLICIES.get(getattr(error, "stable_id", ""))
+    return bool(policy and policy.account_scoped)
+
+
+def _class_of(capability: Capability) -> RequestClass:
+    """Находит класс запроса по возможности, которой он требует.
+
+    Класс решает, кого вытесняют при нехватке ёмкости. Проставляет его служба, а
+    не пользователь: пользователь не знает, чем его вызов мешает соседнему.
+
+    Прежде класс объявлялся у каждой операции и до бюджета не доходил вовсе -
+    собственный мониторинг продавца вытеснял ответы покупателям на общих
+    основаниях, ровно то, ради чего доли и придуманы.
+
+    Args:
+        capability (Capability): Возможность, под которую идёт запрос.
+
+    Returns:
+        RequestClass: Объявленный класс. Для возможности без операции -
+        interactive: самый защищённый. Вызов, о котором контракт молчит, не
+        должен из-за этого молчания уступить наблюдению за рынком.
+    """
+    for operation in OPERATIONS.values():
+        if operation.capability == capability.value:
+            return RequestClass(operation.request_class)
+    return RequestClass.INTERACTIVE
+
+
 def _safety_of(capability: Capability) -> Safety:
     """Находит безопасность операции по возможности, которой она требует.
 
@@ -257,7 +324,14 @@ class Engine:
             прямое соединение к хосту из настроек.
     """
 
-    __slots__ = ("_budget", "_identity", "_settings", "_state")
+    __slots__ = (
+        "_budget",
+        "_health_changes",
+        "_identity",
+        "_settings",
+        "_state",
+        "_stopped",
+    )
 
     def __init__(
         self,
@@ -269,6 +343,17 @@ class Engine:
         self._settings = settings
         self._budget = budget
         self._state = _State(opted_in=experimental)
+        #: Смены состояния доступа, ждущие выдачи партией.
+        self._health_changes: list[tuple[Health, Health, str]] = []
+
+        #: Ошибка, остановившая клиента, если он остановлен.
+        #:
+        #: Полная остановка, а не отказ одного запроса. Отказ в доступе и
+        #: страница проверки - не сбой, а ответ площадки на поведение клиента:
+        #: продолжать стучаться после них означает подтверждать подозрение.
+        #: Цена ошибки несимметрична - лишняя остановка стоит задержки, лишний
+        #: стук стоит аккаунта.
+        self._stopped: FunoraError | None = None
         self._identity = (
             identity
             if identity is not None
@@ -408,7 +493,16 @@ class Engine:
             # держится отдельной переменной, чтобы обработчик не зависел от
             # того, успел ли ответ появиться.
             retry_after_ms: int | None = None
-            yield from self.spend_budget()
+            # Признак решает СТОИМОСТЬ повтора, а не право идти. Повтор при
+            # выключенном признаке проходит через бюджет с нулевой ценой:
+            # токенов не тратит, но долю более защищённых классов держит и
+            # остывание идентичности выжидает.
+            #
+            # Отменять вызов целиком нельзя. Тогда клиент, получивший 429,
+            # повторял бы запрос мимо собственного отступления - шторм повторов
+            # стал бы не бесплатным, а неостановимым.
+            cost = 1.0 if (attempt == 1 or COUNTS_RETRIES) else 0.0
+            yield from self.spend_budget(_class_of(capability), cost=cost)
             try:
                 reply = yield Fetch(path)
                 if not isinstance(reply, Observation):
@@ -424,7 +518,13 @@ class Engine:
                 # Не списывать вовсе нельзя - спецификация требует считать
                 # отправленные запросы, и цепочка переходов оказалась бы
                 # бесплатной ровно тогда, когда площадка нас куда-то гоняет.
-                yield from self.settle(observation.requests_sent - 1)
+                # То же для переходов: при выключенном признаке они проходят
+                # через бюджет ценой ноль, а не мимо него.
+                yield from self.settle(
+                    observation.requests_sent - 1,
+                    _class_of(capability),
+                    cost=1.0 if COUNTS_REDIRECTS else 0.0,
+                )
                 retry_after_ms = observation.retry_after_ms
                 # Целостность проверяется ВНУТРИ классификатора, вторым шагом
                 # после кода ответа. Прежде она стояла здесь, то есть первой, и
@@ -446,8 +546,11 @@ class Engine:
                     received_length=observation.content_length,
                     content_encoding=observation.content_encoding,
                 )
+                self.note_locale(observation.html)
+                self.note_health(verdict)
                 error = error_for(verdict, session_ever_valid=self._state.session_ever_valid)
                 if error is not None:
+                    self.note_stop(error)
                     raise error
             except RateLimitedError as exc:
                 # Ограничение частоты - про источник целиком, а не про один
@@ -458,7 +561,29 @@ class Engine:
                 # Прежде этого не делалось вовсе: 429 переводился в ошибку и
                 # уходил в политику повторов, а ёмкость оставалась прежней -
                 # следующий залп был ровно таким же, каким был до ограничения.
-                self._identity.note_limit(monotonic())
+                # Признак account_scoped у политики означает, что отступает
+                # вся идентичность, а не один запрос. Заголовок при этом уже
+                # урезан политикой по max_retry_after_ms.
+                self._identity.note_limit(
+                    monotonic(),
+                    retry_after_ms=retry_after_ms if _scoped(exc) else None,
+                )
+
+                # Третья ступень. Третье ограничение в окне - уже не про темп, а
+                # про то, как площадка относится к аккаунту: состояние доступа
+                # становится rate_limited, и автоматика записи приостанавливается.
+                #
+                # Разница со второй ступенью в том, кто решает. Пауза второй
+                # истекает вместе с остыванием; состояние третьей не истекает -
+                # оно снимается успешным ответом либо явным действием
+                # пользователя. Иначе клиент вернулся бы писать на площадку,
+                # которая трижды сказала «слишком быстро», и не спросил никого.
+                if self._identity.limits_seen >= 3:
+                    self.enter_health(
+                        Health.RATE_LIMITED,
+                        reason=f"rate_limited_{self._identity.limits_seen}_in_window",
+                    )
+
                 self._note_failure(capability, exc)
                 plan = plan_attempt(
                     exc,
@@ -658,7 +783,227 @@ class Engine:
 
         return tuple(events), cursors, followed
 
-    def spend_budget(self) -> Generator[Request, Reply, None]:
+    def drain_health(self, account_id: str, observed_at: datetime) -> tuple[Event, ...]:
+        """Отдаёт накопленные смены состояния доступа событиями.
+
+        Смены копятся во время чтения и выдаются партией: породить событие
+        посреди чтения значило бы отдать его вне партии - без порядка, без
+        гашения повторов и без учёта в курсоре.
+
+        Args:
+            account_id (str): Идентификатор аккаунта.
+            observed_at (datetime): Момент наблюдения, общий для партии.
+
+        Returns:
+            tuple[Event, ...]: События protocol.health_changed. Пустой кортеж,
+            если состояние не менялось.
+        """
+        if not self._health_changes:
+            return ()
+        events = tuple(
+            health_changed(
+                account_id,
+                observed_at,
+                before=str(before),
+                after=str(after),
+                reason=reason,
+                writes_paused=after in WRITES_PAUSED_IN,
+            )
+            for before, after, reason in self._health_changes
+        )
+        self._health_changes.clear()
+        return events
+
+    def enter_health(self, target: Health, *, reason: str) -> None:
+        """Переводит состояние доступа принудительно.
+
+        Нужно там, где состояние определяется не вердиктом одного ответа, а
+        накопленным счётом: третье ограничение частоты в окне говорит о
+        площадке больше, чем каждое из них по отдельности.
+
+        Args:
+            target (Health): Новое состояние.
+            reason (str): Машиночитаемая причина перехода.
+
+        Returns:
+            None
+        """
+        if target is self._state.health:
+            return
+        before = self._state.health
+        self._state.health = target
+        self._health_changes.append((before, target, reason))
+        _log.warning(
+            "состояние доступа: %s -> %s (%s). Автоматика записи %s",
+            before,
+            target,
+            reason,
+            "приостановлена" if target in WRITES_PAUSED_IN else "разрешена",
+        )
+
+    def note_locale(self, html: str) -> None:
+        """Запоминает локаль страницы и сверяет её с объявленными.
+
+        Локаль вне перечня НЕ отменяет чтение: разбор опирается на классы
+        разметки, а не на текст. Отказать из-за неё значило бы отвергнуть
+        страницу, которую реализация читает целиком и верно.
+
+        Опускается возможность protocol.locale - она и означает «интерфейс на
+        той локали, для которой у адаптера есть шаблоны».
+
+        Args:
+            html (str): Разметка прочитанной страницы.
+
+        Returns:
+            None
+        """
+        observed = observe_locale(html)
+        if not observed.is_observed:
+            self._state.locale = observed
+            return
+
+        known = self._state.locale.or_none()
+        self._state.locale = observed
+        if observed.value == known:
+            return
+
+        if observed.value in SUPPORTED_LOCALES:
+            self._state.capabilities[Capability.PROTOCOL_LOCALE] = CapabilityState.SUPPORTED
+            return
+
+        self._state.capabilities[Capability.PROTOCOL_LOCALE] = CapabilityState.UNSUPPORTED
+        _log.warning(
+            "интерфейс отдан на локали %r, объявлены %s. Разбор от этого не "
+            "ломается - он структурный, - но поля, приходящие текстом, придут "
+            "на этом языке",
+            observed.value,
+            ", ".join(SUPPORTED_LOCALES),
+        )
+
+    def note_health(self, verdict: Verdict) -> None:
+        """Обновляет состояние доступа по вердикту классификатора.
+
+        Смена копится, а не порождает событие немедленно: события выдаются
+        партией на шаге наблюдения, и породить его посреди чтения значило бы
+        отдать вызывающему событие вне партии - без порядка, без гашения
+        повторов и без учёта в курсоре.
+
+        Переход в то же состояние не копится. Иначе каждый повторный отказ
+        порождал бы событие, и поток сообщений о неизменном состоянии заглушил
+        бы сообщение о его изменении.
+
+        Args:
+            verdict (Verdict): Вердикт классификатора.
+
+        Returns:
+            None
+        """
+        target = HEALTH_BY_VERDICT.get(str(verdict.cls))
+        if target is None or target is self._state.health:
+            return
+
+        before = self._state.health
+        self._state.health = target
+        self._health_changes.append((before, target, verdict.reason))
+        _log.info(
+            "состояние доступа: %s -> %s (%s). Автоматика записи %s",
+            before,
+            target,
+            verdict.reason,
+            "приостановлена" if target in WRITES_PAUSED_IN else "разрешена",
+        )
+
+    def note_stop(self, error: FunoraError) -> None:
+        """Останавливает клиента, если политика ошибки объявила полную остановку.
+
+        Признак fail_closed стоит у отказа в доступе и у страницы проверки.
+        Обе - ответ площадки на поведение клиента, а не сбой связи, и повторять
+        их бессмысленно: короткое отступление тут запрещено прямо.
+
+        Args:
+            error (FunoraError): Ошибка, полученная от классификатора.
+
+        Returns:
+            None
+        """
+        policy = RETRY_POLICIES.get(getattr(error, "stable_id", ""))
+        if policy is None or not policy.fail_closed:
+            return
+        if self._stopped is not None:
+            return
+
+        self._stopped = error
+        _log.error(
+            "клиент остановлен: %s. Возобновление - только явным вызовом resume(): "
+            "истекающая остановка означала бы возврат на площадку, которая "
+            "отказала в доступе, без чьего-либо ведома",
+            type(error).__name__,
+        )
+
+    def resume(self) -> None:
+        """Снимает полную остановку.
+
+        Решение вернуться принимает человек: он один знает, разобрался ли с
+        причиной. Сама по себе остановка не истекает и по времени не снимается.
+
+        Returns:
+            None
+        """
+        if self._stopped is None:
+            return
+        _log.warning(
+            "остановка снята вручную: клиент снова пойдёт на площадку после %s",
+            type(self._stopped).__name__,
+        )
+        self._stopped = None
+
+    @property
+    def stopped(self) -> FunoraError | None:
+        """Возвращает ошибку, остановившую клиента.
+
+        Returns:
+            FunoraError | None: Ошибка либо None, если клиент работает.
+        """
+        return self._stopped
+
+    def wait_out_cooldown(self) -> Generator[Request, Reply, None]:
+        """Выжидает остывание идентичности, если оно идёт.
+
+        Пауза выдаётся вызывающему, а не спится здесь: ядро не спит само -
+        спать синхронно и асинхронно разные вещи, а решать, сколько ждать, одна
+        и та же.
+
+        Ожидание однократное. Второй проверки нет намеренно: остывание
+        назначается ограничением, а не тикает само, и цикл ожидания здесь
+        превратил бы одно ограничение в бесконечную паузу, если бы часы пошли
+        назад.
+
+        Пауза округляется объявленной величиной, а не литералом. Спецификация
+        распространяет правило на всякую паузу, вычисленную из монотонных
+        секунд: после неё вызывающий спрашивает то же самое снова, и пауза
+        вровень приводит его туда, где условие ещё не выполнено.
+
+        Returns:
+            Generator[Request, Reply, None]: Сопрограмма, выдающая паузу.
+        """
+        now = monotonic()
+        if not self._identity.is_cooling(now):
+            return
+
+        wait_ms = int((self._identity.cooldown_until - now) * 1000) + WAIT_GUARD_MS
+        _log.info(
+            "идентичность %s остывает после ограничения: пауза %d мс",
+            self._identity.name,
+            wait_ms,
+        )
+        yield Pause(wait_ms)
+
+    def spend_budget(
+        self,
+        request_class: RequestClass = RequestClass.INTERACTIVE,
+        *,
+        cost: float = 1.0,
+    ) -> Generator[Request, Reply, None]:
         """Занимает бюджет под один отправляемый запрос.
 
         Расходуется именно отправляемый запрос, а не логическая операция:
@@ -678,28 +1023,54 @@ class Engine:
             BudgetExhaustedError: Если ждать пришлось бы дольше предела. Запрос
                 при этом не отправляется вовсе.
         """
-        reservation = self._budget.require(monotonic())
-        if reservation.granted:
-            return
+        # Остывание идентичности - первая половина первой ступени реакции на
+        # ограничение частоты, и до сих пор её не соблюдал никто. Спецификация
+        # говорит «уменьшить ёмкость вдвое И ВЫДЕРЖАТЬ ПАУЗУ»; ёмкость
+        # уменьшалась, пауза считалась, записывалась в журнал - и спрашивал о
+        # ней только выбор прокси. При прямом соединении, то есть у всех, кто
+        # прокси не завёл, следующий запрос уходил немедленно.
+        #
+        # Хуже того, урезание ёмкости само по себе почти не тормозит:
+        # Budget.scale опускает потолок ведра, а скорость пополнения не трогает.
+        # Значит без паузы клиент возвращался к прежнему темпу через несколько
+        # секунд - ровно тогда, когда площадка сказала «слишком быстро».
+        if self._stopped is not None:
+            # Та же ошибка, что остановила клиента, а не новая и не общая:
+            # вызывающий обязан видеть причину, а не «клиент остановлен».
+            raise self._stopped
 
-        _log.info(
-            "бюджет: ведро %s занято, пауза %d мс",
-            reservation.bucket,
-            reservation.wait_ms,
-        )
-        yield Pause(reservation.wait_ms)
+        yield from self.wait_out_cooldown()
 
-        # Вторая попытка обязана быть последней: цикл ожидания здесь превратил бы
-        # предел ожидания в пожелание, а вызов снаружи стал бы неотличим от
+        # Число попыток объявлено спецификацией, а не выбрано здесь: цикл
+        # ожидания превратил бы предел max_wait_ms в пожелание - каждая итерация
+        # ждала бы «не дольше предела», а вызов снаружи стал бы неотличим от
         # зависшего процесса.
-        again = self._budget.require(monotonic())
-        if not again.granted:
-            raise BudgetExhaustedError(
-                f"бюджет не освободился за {reservation.wait_ms} мс ожидания "
-                f"(ведро {again.bucket}). Запрос не отправлен"
-            )
+        waited = 0
+        for attempt in range(WAIT_ATTEMPTS):
+            reservation = self._budget.require(monotonic(), cost=cost, request_class=request_class)
+            if reservation.granted:
+                return
+            if attempt + 1 == WAIT_ATTEMPTS:
+                raise BudgetExhaustedError(
+                    f"бюджет не освободился за {waited} мс ожидания "
+                    f"(ведро {reservation.bucket}). Запрос не отправлен"
+                )
 
-    def settle(self, count: int) -> Generator[Request, Reply, None]:
+            _log.info(
+                "бюджет: ведро %s занято, пауза %d мс",
+                reservation.bucket,
+                reservation.wait_ms,
+            )
+            waited += reservation.wait_ms
+            yield Pause(reservation.wait_ms)
+
+    def settle(
+        self,
+        count: int,
+        request_class: RequestClass = RequestClass.INTERACTIVE,
+        *,
+        cost: float = 1.0,
+    ) -> Generator[Request, Reply, None]:
         """Доплачивает бюджет за запросы, которые уже ушли.
 
         Метод нужен переходам. Их число заранее неизвестно, поэтому бюджет за
@@ -725,7 +1096,7 @@ class Engine:
             None
         """
         for _ in range(max(0, count)):
-            reservation = self._budget.reserve(monotonic())
+            reservation = self._budget.reserve(monotonic(), cost, request_class=request_class)
             if reservation.granted:
                 continue
 
@@ -735,7 +1106,7 @@ class Engine:
             # клиентом и тот успел раньше. Настаивать дальше нельзя: долг не
             # растёт, а зациклиться на нём хуже, чем недосчитать один токен и
             # сказать об этом вслух.
-            if not self._budget.reserve(monotonic()).granted:
+            if not self._budget.reserve(monotonic(), cost, request_class=request_class).granted:
                 _log.warning(
                     "бюджет не доплачен за уже отправленный запрос: ведро %s занято",
                     reservation.bucket,
@@ -927,7 +1298,10 @@ class Engine:
             )
             fresh = (*head, *dedup.filter((*losses, *messages), now))
 
-            batch = fresh
+            # Смены состояния доступа идут первыми в партии. Порядок значим:
+            # получатель, узнав, что автоматика записи приостановлена, обязан
+            # увидеть это ДО событий, на которые он собрался бы отвечать.
+            batch = (*self.drain_health(account_id, orders.observed_at), *fresh)
             greeting: Event | None = None
             if not greeted:
                 # Холодный старт молчит о данных и говорит один раз о себе:
@@ -1012,7 +1386,7 @@ class Engine:
                 # доставлено, а обработчик его не видел.
                 state.save(
                     {
-                        "dedup": dedup.snapshot(),
+                        "dedup": dedup.snapshot(now),
                         # Номера попыток переживают перезапуск вместе с гашением.
                         # Иначе перезапуск обнулял бы их, и событие, падавшее
                         # пятый раз, приходило бы с номером один - то есть

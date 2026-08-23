@@ -59,6 +59,18 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      # Раннер набора соответствия живёт в репозитории спецификации и написан на
+      # JavaScript: принадлежать одной реализации из шести ему нельзя. Без его
+      # зависимостей набор падал бы на «Cannot find module», и это выглядело бы
+      # поломкой реализации, а не недостачей сборки.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+
+      - name: Зависимости раннера
+        run: npm ci
+        working-directory: .funora-spec
+
       - run: python -m pip install --upgrade pip
       - run: pip install -e ".[dev]"
 

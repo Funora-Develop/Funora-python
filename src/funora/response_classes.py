@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Final
 
 from .errors import (
@@ -28,7 +29,15 @@ from .errors import (
     UnexpectedResponseError,
 )
 
-__all__ = ["VERDICT_ERRORS", "RESPONSE_CLASSES", "STATUS_CLASS"]
+__all__ = [
+    "VERDICT_ERRORS",
+    "RESPONSE_CLASSES",
+    "STATUS_CLASS",
+    "Health",
+    "INITIAL_HEALTH",
+    "HEALTH_BY_VERDICT",
+    "WRITES_PAUSED_IN",
+]
 
 #: Классы ответа, объявленные спецификацией.
 #:
@@ -87,3 +96,60 @@ VERDICT_ERRORS: Final[dict[tuple[str, str], type[Exception] | None]] = {
     ("unknown", "identity_marker_absent"): ProtocolChangedError,
     ("unknown", "body_unparsable"): UnexpectedResponseError,
 }
+
+
+class Health(StrEnum):
+    """Состояние доступа к площадке.
+
+    От него зависит, приостановлена ли автоматика записи. Перечень
+    объявлен схемой события protocol.health_changed и повторён в
+    spec/protocol/response-classes.yaml вместе с правилами перехода.
+    """
+
+    AUTHENTICATED = "authenticated"
+    DEGRADED = "degraded"
+    PROTOCOL_CHANGED = "protocol_changed"
+    RATE_LIMITED = "rate_limited"
+    CHALLENGED = "challenged"
+    BLOCKED = "blocked"
+
+
+#: Начальное состояние.
+#:
+#: До первого ответа состояние не проверяется: клиент не знает о
+#: площадке ничего, пока не сходил.
+INITIAL_HEALTH: Final[Health] = Health.AUTHENTICATED
+
+#: В какое состояние переводит класс ответа.
+#:
+#: None означает «состояние не меняется». Сетевой отказ и
+#: неопознанный ответ говорят о нас и о дороге, а не о том, как
+#: площадка к нам относится: менять по ним состояние доступа значило
+#: бы объявлять аккаунт ограниченным из-за оборванного соединения.
+HEALTH_BY_VERDICT: Final[dict[str, Health | None]] = {
+    "ok": Health.AUTHENTICATED,
+    "login_required": Health.DEGRADED,
+    "challenge": Health.CHALLENGED,
+    "blocked": Health.BLOCKED,
+    "rate_limited": Health.RATE_LIMITED,
+    "maintenance": Health.DEGRADED,
+    "wrong_identity": Health.DEGRADED,
+    "transport_error": None,
+    "unknown": None,
+}
+
+#: Состояния, в которых автоматика записи приостановлена.
+#:
+#: Возобновление - только явным действием пользователя либо
+#: возвратом в начальное состояние по успешному ответу. Сама по себе
+#: пауза не истекает: истекающая означала бы, что клиент снова пишет
+#: на площадку, которая только что отказала, и не спросил никого.
+WRITES_PAUSED_IN: Final[frozenset[Health]] = frozenset(
+    {
+        Health.DEGRADED,
+        Health.PROTOCOL_CHANGED,
+        Health.RATE_LIMITED,
+        Health.CHALLENGED,
+        Health.BLOCKED,
+    }
+)

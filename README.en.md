@@ -2,13 +2,13 @@
   <img src="https://raw.githubusercontent.com/Funora-Develop/.github/main/assets/funora-python.svg" width="76" height="76" alt="">
 </p>
 
-<h1 align="center">Funora для Python</h1>
+<h1 align="center">Funora for Python</h1>
 
 <p align="center"><em>Reference implementation of the Funora contract.</em></p>
 
 <p align="center">
   <img alt="status" src="https://img.shields.io/badge/status-draft-6E7681?style=flat-square">
-  <img alt="pypi" src="https://img.shields.io/badge/pypi-funora%20reserved-3B6FA0?style=flat-square">
+  <img alt="pypi" src="https://img.shields.io/badge/pypi-not%20published-6E7681?style=flat-square">
   <img alt="license" src="https://img.shields.io/badge/license-Apache--2.0-2F7D95?style=flat-square">
   <img alt="FunPay" src="https://img.shields.io/badge/FunPay-unofficial-B4501E?style=flat-square">
 </p>
@@ -34,9 +34,10 @@ other languages reimplement from the spec rather than porting this code line by
 line.
 
 ```python
-from funora import Client
+from funora import Client, EnvSecretProvider
 
-with Client(secret) as client:
+# The secret comes from FUNORA_GOLDEN_KEY and never appears in the code.
+with Client(EnvSecretProvider()) as client:
     page = client.orders.list()
     for order in page.rows():
         print(order.order_id, order.description_text)
@@ -47,9 +48,9 @@ retry policy, budget spending and the cursor rules are written once and handed t
 both ready-made. Porting a bot comes down to `await`.
 
 ```python
-from funora import AsyncClient
+from funora import AsyncClient, EnvSecretProvider
 
-async with AsyncClient(secret) as client:
+async with AsyncClient(EnvSecretProvider()) as client:
     page = await client.orders.list()
     for order in page.rows():
         print(order.order_id, order.description_text)
@@ -134,7 +135,7 @@ markup, with text and attribute values replaced by signatures.
 ## The wider project
 
 Funora is one contract implemented natively in several languages. You change the language,
-not the mental model: `Client`, services, events, router, filters, middleware and the error
+not the mental model: `Client`, services, events, router and the error
 taxonomy mean the same thing everywhere.
 
 | Repository | What it is | Status |
@@ -143,7 +144,7 @@ taxonomy mean the same thing everywhere.
 | [Funora-spec](https://github.com/Funora-Develop/Funora-spec) | The canonical contract every SDK implements. | `design` |
 | [Funora-codegen](https://github.com/Funora-Develop/Funora-codegen) | Generates the boring, repetitive part of every SDK. | `design` |
 | [Funora-conformance](https://github.com/Funora-Develop/Funora-conformance) | The test contract between languages. | `design` |
-| [Funora-python](https://github.com/Funora-Develop/Funora-python) | Reference implementation of the Funora contract. | `design` |
+| [Funora-python](https://github.com/Funora-Develop/Funora-python) | Reference implementation of the Funora contract. | `draft` |
 | [Funora-javascript](https://github.com/Funora-Develop/Funora-javascript) | TypeScript source, JavaScript and type declarations on output. | `planned` |
 | [Funora-java](https://github.com/Funora-Develop/Funora-java) | Java SDK. | `planned` |
 | [Funora-dotnet](https://github.com/Funora-Develop/Funora-dotnet) | .NET SDK. | `planned` |

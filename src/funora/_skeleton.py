@@ -66,6 +66,9 @@ from urllib.parse import urlparse
 from selectolax.parser import HTMLParser, Node
 
 from ._host import same_host
+from .skeleton_format import ACCEPTED_SKELETON_FORMATS
+from .skeleton_format import NUMBERED_SKELETON_FORMATS as GENERATED_NUMBERED_FORMATS
+from .skeleton_format import SKELETON_FORMAT as GENERATED_SKELETON_FORMAT
 
 __all__ = [
     "skeletonize",
@@ -74,6 +77,7 @@ __all__ = [
     "SkeletonError",
     "SKELETON_FORMAT",
     "SUPPORTED_SKELETON_FORMATS",
+    "NUMBERED_SKELETON_FORMATS",
     "DEFAULT_OWN_HOST",
 ]
 
@@ -88,7 +92,17 @@ DEFAULT_OWN_HOST: Final[str] = "funpay.com"
 #: строку запроса и на значения атрибутов: без них пятьдесят диалогов страницы
 #: оставались неразличимы - идентификатор диалога лежит и там, и там, но не в
 #: пути.
-SKELETON_FORMAT: Final[str] = "structural-skeleton-v5"
+#: Величина берётся из порождённого файла, а не пишется здесь: формат снимков -
+#: общая проверочная база, и вторая реализация обязана строить такой же.
+SKELETON_FORMAT: Final[str] = GENERATED_SKELETON_FORMAT
+
+#: Версии, в которых идентификаторы различимы между собой.
+#:
+#: Нужны проверкам: снимок, снятый до нумерации, различимость восстановить не
+#: может, и требовать её от него нечестно. Перечень объявлен спецификацией, а не
+#: выведен из порядка версий - вывод по порядку сломался бы на первой же версии,
+#: поднятой по другой причине.
+NUMBERED_SKELETON_FORMATS: Final[frozenset[str]] = GENERATED_NUMBERED_FORMATS
 
 #: Форматы, которые проект умеет читать.
 #:
@@ -96,13 +110,7 @@ SKELETON_FORMAT: Final[str] = "structural-skeleton-v5"
 #: нумерация восстанавливает различимость только при захвате, а из уже
 #: замаскированного файла исходные значения не вернуть. Файлы прежних версий
 #: остаются пригодными для всего, что не зависит от различимости.
-SUPPORTED_SKELETON_FORMATS: Final[frozenset[str]] = frozenset(
-    {
-        "structural-skeleton-v3",
-        "structural-skeleton-v4",
-        "structural-skeleton-v5",
-    }
-)
+SUPPORTED_SKELETON_FORMATS: Final[frozenset[str]] = ACCEPTED_SKELETON_FORMATS
 
 #: Атрибуты, значение которых обрабатывается как путь.
 #:
@@ -116,6 +124,20 @@ _URL_ATTRS: Final[frozenset[str]] = frozenset(
 
 #: Атрибуты, значение которых сохраняется как есть.
 _VERBATIM_ATTRS: Final[frozenset[str]] = frozenset({"class"})
+
+#: Атрибуты, несущие метку языка.
+#:
+#: Сохраняются дословно, но только если значение вправду похоже на метку.
+#: Метка языка говорит о странице, а не о человеке: «ru» не сообщает о продавце
+#: ничего, чего не сообщал бы адрес площадки.
+#:
+#: Пока они маскировались, всякий снимок нёс в lang подпись, и разбор объявлял
+#: по нему локаль неподдержанной - собственные фикстуры заставляли реализацию
+#: говорить неправду.
+_LANGUAGE_ATTRS: Final[frozenset[str]] = frozenset({"lang", "hreflang"})
+
+#: Как выглядит метка языка по BCP 47.
+_LANGUAGE_TAG: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$")
 
 #: Теги, содержимое которых не сохраняется.
 #:
@@ -166,6 +188,17 @@ _SEG_TEXT: Final[str] = "{t}"
 
 _RE_LATIN = re.compile(r"[A-Za-z]")
 _RE_DIGIT = re.compile(r"[0-9]")
+
+#: Признак того, что сегмент пути - идентификатор, а не слово маршрута.
+#:
+#: Цифра либо ЗАГЛАВНАЯ буква. Второе заведено версией v6: идентификаторы
+#: площадки - восемь заглавных латинских букв без единой цифры, и первый же
+#: снимок страницы отдельного заказа принёс /orders/SBVZKXAF/ дословно.
+#:
+#: Граница проведена по регистру потому, что слова маршрута пишутся строчными по
+#: соглашению об адресах. Ошибаться правило будет в сторону лишней маскировки, и
+#: это верная сторона.
+_RE_OPAQUE = re.compile(r"[0-9A-Z]")
 
 
 class SkeletonError(RuntimeError):
@@ -226,8 +259,9 @@ def mask_path(
     Правило разное для своего хоста и для чужого, и разница не в осторожности.
 
     На своём хосте форма пути сохраняется: по ней узнаётся назначение ссылки,
-    а сегменты состоят из служебных слов площадки. Идентификаторы там числовые
-    и заменяются подписью.
+    а сегменты состоят из служебных слов площадки. Идентификатор заменяется
+    подписью, и признак его - цифра либо заглавная буква: идентификаторы
+    площадки бывают и вовсе без цифр, восемью заглавными латинскими буквами.
 
     На чужом хосте маскируется весь путь. Ссылки на чужие адреса пишут люди в
     переписке, и в них живёт то, ради чего их и пишут: ``t.me/ivanpetrov``,
@@ -294,7 +328,7 @@ def mask_path(
         if foreign:
             out.append(_SEG_TEXT)
             continue
-        if _RE_DIGIT.search(part):
+        if _RE_OPAQUE.search(part):
             out.append(_numbered(part, ordinals))
         elif not part.isascii():
             out.append(_SEG_TEXT)
@@ -362,6 +396,11 @@ def _mask_attr(name: str, value: str, ordinals: dict[str, int]) -> str:
     """
     if name in _VERBATIM_ATTRS:
         return value
+    if name in _LANGUAGE_ATTRS and _LANGUAGE_TAG.match(value.strip()):
+        # Условие про форму существенно: атрибут обычный, и положить в него
+        # можно что угодно. Дословно сохраняется лишь то, что вправду похоже на
+        # метку языка, остальное маскируется по общему правилу.
+        return value.strip()
     if name in _URL_ATTRS:
         return mask_path(value, DEFAULT_OWN_HOST, ordinals)
     if not value:
@@ -452,6 +491,12 @@ def _self_check(skeleton: str) -> None:
     """
     for line in skeleton.splitlines():
         body = line.strip()
+        if not body:
+            # Пустая строка появляется у сохранённого снимка в конце файла.
+            # Без этого условия готовую фикстуру нельзя перепроверить тем же
+            # кодом, которым она построена, - а перепроверять её придётся при
+            # каждой смене формата.
+            continue
         if _SIGNATURE_RE.match(body):
             continue
         if not body.startswith("<"):

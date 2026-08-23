@@ -54,12 +54,17 @@ from typing import Final
 from selectolax.parser import HTMLParser, Node
 
 from ._extract import attribute
+from ._money import Money
 from ._observed import Confidence, Observed
 from ._result import Completeness, Defect, Severity, collect_rows
 from .errors import IncompleteResultError, ProtocolChangedError
 from .extraction import (
+    AMBIGUOUS_CURRENCY_SYMBOLS,
+    CURRENCY_BY_SYMBOL,
     PRESENCE_BY_CLASS,
     ROW_MARKER_BY_STATUS,
+    SELECTOR_GROUPS,
+    SELECTORS,
     STATUS_BY_CELL_CLASS,
     OrderStatus,
 )
@@ -74,19 +79,16 @@ __all__ = [
 ]
 
 #: Контейнер таблицы заказов.
-_TABLE: Final[str] = ".orders-table"
+_TABLE: Final[str] = SELECTORS["orders.container"]
 
 #: Заголовок таблицы. Несёт те же классы ячеек, что и строки.
-_HEADER: Final[str] = ".tc-header"
+_HEADER: Final[str] = SELECTORS["orders.container.header"]
 
 #: Контейнер строк. Второй, независимый от класса строки признак.
-_ROWS_CONTAINER: Final[str] = ".dyn-table-body"
-
-#: Хвостовой маркер документа.
-_TAIL: Final[str] = ".wrapper-footer"
+_ROWS_CONTAINER: Final[str] = SELECTORS["orders.rows_container"]
 
 #: Селектор строки заказа.
-_ROW: Final[str] = "a.tc-item"
+_ROW: Final[str] = SELECTORS["orders.row"]
 
 #: Идентификатор заказа в адресе строки.
 _ID_IN_HREF: Final[re.Pattern[str]] = re.compile(r"/orders/([^/?#]+)")
@@ -124,9 +126,13 @@ class OrderListEntry:
         counterparty_name (Observed[str]): Имя контрагента, текст.
         counterparty_href (Observed[str]): Адрес профиля контрагента.
         counterparty_online (Observed[bool]): Признак присутствия контрагента.
-        amount_text (Observed[str]): Сумма, текст. Числом не разбирается:
-            символ валюты есть, а кода по стандарту - нет, и собрать money
-            из символа нельзя.
+        price (Observed[Money]): Сумма заказа с кодом валюты. Собирается из
+            собственного текста ячейки и знака из соседнего узла по таблице,
+            наблюдённой переключателем площадки. Знак вне таблицы даёт
+            ненаблюдённое значение и повреждение уровня поля, а не угаданный код.
+        amount_text (Observed[str]): Сумма и знак, текст ячейки целиком. Поле
+            остаётся рядом с price: по нему видно, как выглядит цена, которую
+            разобрать не удалось.
         currency_symbol_text (Observed[str]): Символ валюты, текст. Лежит в
             отдельном узле ячейки цены.
         time_text (Observed[str]): Время заказа, текст. Наблюдались
@@ -147,6 +153,7 @@ class OrderListEntry:
     counterparty_name: Observed[str]
     counterparty_href: Observed[str]
     counterparty_online: Observed[bool]
+    price: Observed[Money]
     amount_text: Observed[str]
     currency_symbol_text: Observed[str]
     time_text: Observed[str]
@@ -231,6 +238,73 @@ def _text(node: Node | None, name: str) -> Observed[str]:
         return Observed.missing(f"selector_no_match:{name}")
     value = " ".join((node.text() or "").split())
     return Observed.present(value) if value else Observed.empty("")
+
+
+#: Как выглядит сумма, годная к разбору.
+#:
+#: Только цифры и одна точка. Запятая НЕ принимается: она бывает и десятичным
+#: разделителем, и разделителем разрядов, и какой из двух перед нами - из строки
+#: не видно. Принять её значило бы однажды прочитать «1,5» как полторы тысячи.
+_AMOUNT = re.compile(r"^-?\d+(?:\.(\d{1,4}))?$")
+
+
+def _money(cell: Node | None, row: Node) -> tuple[Observed[Money], str | None]:
+    """Собирает сумму заказа с кодом валюты.
+
+    Знак валюты лежит в ОТДЕЛЬНОМ узле ячейки цены, а не в тексте рядом с
+    суммой, - это наблюдено, и потому разбирать «1500 знак» из строки не
+    приходится. Сумма берётся собственным текстом ячейки, без вложенных узлов:
+    текст целиком склеил бы её со знаком.
+
+    Код валюты берётся по таблице, наблюдённой переключателем площадки. Знак
+    вне таблицы кодом НЕ становится: значение объявляется ненаблюдённым, и это
+    повреждение уровня поля. Придуманное соответствие приписало бы чужую валюту
+    чужому заказу молча, и заметил бы это не разработчик, а продавец.
+
+    Масштаб берётся из самой строки, а не из валюты: он хранится в записи money
+    именно затем, чтобы не выводиться. «7.86» даёт scale 2, «100» - scale 0.
+
+    Args:
+        cell (Node | None): Узел ячейки цены либо None.
+        row (Node): Строка заказа - в ней ищется узел знака.
+
+    Returns:
+        tuple[Observed[Money], str | None]: Сумма и код повреждения, если знак
+        найден и кодом не стал. Отсутствие узла повреждением не является:
+        селектор мог не найти ничего на странице иного вида.
+    """
+    if cell is None:
+        return Observed.missing("selector_no_match:price"), None
+
+    # Собственный текст узла, без вложенных: знак валюты лежит в дочернем span,
+    # и text() целиком вернул бы «4682.01 знак».
+    raw = "".join((cell.text(deep=False) or "").split())
+    symbol_node = row.css_first(SELECTORS["orders.fields.currency_symbol_text"])
+    symbol = ((symbol_node.text() if symbol_node is not None else "") or "").strip()
+
+    if not symbol:
+        return Observed.missing("selector_no_match:currency_symbol"), None
+
+    if symbol in AMBIGUOUS_CURRENCY_SYMBOLS:
+        # Знак известен и не решает. Это не то же, что «знака нет в таблице»:
+        # там ждут наблюдения, здесь наблюдение уже есть и говорит «неясно».
+        return Observed.missing("currency_symbol_ambiguous"), "currency_symbol_ambiguous"
+
+    code = CURRENCY_BY_SYMBOL.get(symbol)
+    if code is None:
+        # Знака нет в таблице - НЕ повреждение, и это то же решение, что принято
+        # для носителя статуса: так выглядит валюта, которой в таблице ещё нет,
+        # а не поломка разбора. Заодно это единственное, что даёт разбирать
+        # скелеты: там знак заменён подписью, и объяви мы это повреждением -
+        # каждая фикстура стала бы неполной страницей.
+        return Observed.missing("currency_symbol_not_mapped"), None
+
+    match = _AMOUNT.match(raw)
+    if match is None:
+        return Observed.missing("amount_not_numeric"), "amount_not_numeric"
+
+    scale = len(match.group(1) or "")
+    return Observed.present(Money(int(raw.replace(".", "")), code, scale)), None
 
 
 def _classes(node: Node | None, *, without: str) -> frozenset[str]:
@@ -350,7 +424,7 @@ def _status(row: Node) -> tuple[Observed[OrderStatus], str | None]:
         tuple[Observed[OrderStatus], str | None]: Состояние и причина
         повреждения, если носители разошлись между собой.
     """
-    cell = row.css_first(".tc-status")
+    cell = row.css_first(SELECTOR_GROUPS["orders.fields.status.carriers"][0])
     if cell is None:
         return Observed.missing("selector_no_match:status"), None
 
@@ -408,9 +482,21 @@ def _parse_row(row: Node, index: int) -> tuple[OrderListEntry | None, list[Defec
     # первый [data-href] строки; в снимке их два, и оба ведут на одного человека,
     # поэтому ошибки не было видно. Появись data-href в описании лота - и первым
     # оказался бы он, а контрагентом молча стал бы адрес товара.
-    user_link = row.css_first(".tc-user [data-href]")
-    media = row.css_first(".tc-user .media-user")
+    user_link = row.css_first(SELECTORS["orders.fields.counterparty_link"])
+    media = row.css_first(SELECTORS["orders.fields.counterparty_online"])
     online = _presence(media)
+    price, money_defect = _money(row.css_first(SELECTORS["orders.fields.amount_text"]), row)
+    if money_defect is not None:
+        defects.append(
+            Defect(
+                severity=Severity.FIELD,
+                code=money_defect,
+                detail="знак валюты найден, а кодом не стал - сумма не собрана",
+                row_index=index,
+                field_name="price",
+            )
+        )
+
     status, disagreement = _status(row)
     if disagreement is not None:
         # Расхождение носителей - не мелочь и не косметика. Оно означает, что
@@ -432,17 +518,28 @@ def _parse_row(row: Node, index: int) -> tuple[OrderListEntry | None, list[Defec
         href=href,
         row_index=index,
         status=status,
-        status_carrier=_carrier(row.css_first(".tc-status")),
-        order_number_text=_text(row.css_first(".tc-order"), "order_number_text"),
-        description_text=_text(row.css_first(".order-desc > div"), "description_text"),
-        category_text=_text(row.css_first(".order-desc .text-muted"), "category_text"),
-        counterparty_name=_text(row.css_first(".tc-user .media-user-name"), "counterparty_name"),
+        status_carrier=_carrier(row.css_first(SELECTOR_GROUPS["orders.fields.status.carriers"][0])),
+        order_number_text=_text(
+            row.css_first(SELECTORS["orders.fields.order_number_text"]), "order_number_text"
+        ),
+        description_text=_text(
+            row.css_first(SELECTORS["orders.fields.description"]), "description_text"
+        ),
+        category_text=_text(row.css_first(SELECTORS["orders.fields.category"]), "category_text"),
+        counterparty_name=_text(
+            row.css_first(SELECTORS["orders.fields.counterparty_name"]), "counterparty_name"
+        ),
         counterparty_href=attribute(user_link, "data-href", "counterparty_href"),
         counterparty_online=online,
-        amount_text=_text(row.css_first(".tc-price"), "amount_text"),
-        currency_symbol_text=_text(row.css_first(".tc-price .unit"), "currency_symbol_text"),
-        time_text=_text(row.css_first(".tc-date-time"), "time_text"),
-        time_ago_text=_text(row.css_first(".tc-date-left"), "time_ago_text"),
+        price=price,
+        amount_text=_text(row.css_first(SELECTORS["orders.fields.amount_text"]), "amount_text"),
+        currency_symbol_text=_text(
+            row.css_first(SELECTORS["orders.fields.currency_symbol_text"]), "currency_symbol_text"
+        ),
+        time_text=_text(row.css_first(SELECTORS["orders.fields.time_text"]), "time_text"),
+        time_ago_text=_text(
+            row.css_first(SELECTORS["orders.fields.time_ago_text"]), "time_ago_text"
+        ),
     )
 
     for name in (

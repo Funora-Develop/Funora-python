@@ -23,7 +23,17 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Final
 
-from .budget import BUCKETS, MAX_WAIT_MS, BucketLimits
+from .budget import (
+    BUCKETS,
+    BURST_WINDOW_MS,
+    DEMAND_WINDOW_MS,
+    FLOOR_SHARE,
+    MAX_WAIT_MS,
+    ON_REFUSAL,
+    WAIT_GUARD_MS,
+    BucketLimits,
+    RequestClass,
+)
 from .errors import BudgetExhaustedError
 
 __all__ = ["TokenBucket", "Budget", "Reservation"]
@@ -62,6 +72,13 @@ class TokenBucket:
     updated_at: float = 0.0
     factor: float = 1.0
 
+    #: Право на залп: сколько ещё можно отправить, не переводя дыхания.
+    #:
+    #: Второй предел, независимый от запаса. Ведро, полное до краёв, всё равно
+    #: не выпустит больше burst запросов подряд: запас копится в простое, а
+    #: право на залп восстанавливается равномерно, burst единиц за окно.
+    allowance: float = 0.0
+
     def __post_init__(self) -> None:
         """Заполняет ведро, если начальный запас не задан.
 
@@ -70,6 +87,8 @@ class TokenBucket:
         """
         if self.tokens < 0:
             self.tokens = float(self.limits.capacity)
+        if self.allowance == 0.0:
+            self.allowance = float(self.limits.burst)
 
     def _refill(self, now: float) -> None:
         """Пополняет ведро по прошедшему времени.
@@ -89,6 +108,10 @@ class TokenBucket:
         self.tokens = min(
             self.limits.capacity * self.factor,
             self.tokens + elapsed * self.limits.refill_per_second,
+        )
+        self.allowance = min(
+            float(self.limits.burst),
+            self.allowance + elapsed * self.limits.burst / (BURST_WINDOW_MS / 1000),
         )
         self.updated_at = now
 
@@ -110,22 +133,47 @@ class TokenBucket:
         if self.tokens > ceiling:
             self.tokens = ceiling
 
-    def wait_for(self, now: float, cost: float = 1.0) -> int:
+    def wait_for(self, now: float, cost: float = 1.0, floor: float = 0.0) -> int:
         """Сообщает, сколько ждать до появления нужного запаса.
+
+        Порог ``floor`` - это доля ёмкости, которую запрос обязан оставить
+        после себя. Он и есть правило допуска по классу: чем менее защищён
+        класс, тем больше он обязан оставить, и тем раньше он уступает.
+
+        Пауза округляется вверх и строго больше точной величины: к целой части
+        прибавляется WAIT_GUARD_MS. Вровень привело бы повторную попытку ровно
+        на границу, где запаса ещё нет из-за последнего бита деления, - и вызов
+        отказал бы, прождав всё положенное. Величина объявлена спецификацией, а
+        не выбрана здесь: трасса меток отправки сравнивается между реализациями,
+        и округление обязано совпадать.
 
         Args:
             now (float): Текущий момент, монотонные секунды.
             cost (float): Сколько нужно занять.
+            floor (float): Доля ёмкости, которая обязана остаться после займа.
 
         Returns:
             int: Миллисекунды ожидания. Ноль, если занять можно прямо сейчас.
         """
         self._refill(now)
-        if self.tokens >= cost:
-            return 0
-        if self.limits.refill_per_second <= 0:
-            return MAX_WAIT_MS
-        return int(((cost - self.tokens) / self.limits.refill_per_second) * 1000) + 1
+        needed = cost + self.limits.capacity * self.factor * floor
+
+        # Ждать приходится дольшего из двух пределов: запрос проходит, только
+        # когда хватает и запаса, и права на залп.
+        by_tokens = 0
+        if self.tokens < needed:
+            if self.limits.refill_per_second <= 0:
+                return MAX_WAIT_MS
+            by_tokens = (
+                int(((needed - self.tokens) / self.limits.refill_per_second) * 1000) + WAIT_GUARD_MS
+            )
+
+        by_burst = 0
+        if self.allowance < cost:
+            per_second = self.limits.burst / (BURST_WINDOW_MS / 1000)
+            by_burst = int(((cost - self.allowance) / per_second) * 1000) + WAIT_GUARD_MS
+
+        return max(by_tokens, by_burst)
 
     def take(self, now: float, cost: float = 1.0) -> None:
         """Занимает запас без проверки.
@@ -142,6 +190,7 @@ class TokenBucket:
         """
         self._refill(now)
         self.tokens -= cost
+        self.allowance -= cost
 
 
 class Budget:
@@ -152,27 +201,139 @@ class Budget:
             нормативен: сначала общее, потом ведро аккаунта.
     """
 
-    __slots__ = ("_buckets",)
+    __slots__ = ("_buckets", "_demanded_at", "_suspended_until")
 
     def __init__(self, names: tuple[str, ...] = ("host", "account")) -> None:
         self._buckets = tuple(TokenBucket(BUCKETS[name]) for name in names)
+        #: Когда каждый класс последний раз просил бюджет.
+        #:
+        #: Порог складывается только из долей претендующих. Без этого доля
+        #: превратилась бы из пола в потолок: цикл обновлений на пустой
+        #: площадке уступал бы тем, кто не пришёл.
+        self._demanded_at: dict[RequestClass, float] = {}
 
-    def reserve(self, now: float, cost: float = 1.0) -> Reservation:
+        #: До какого момента класс снят с очереди.
+        #:
+        #: Вторая ступень реакции на ограничение частоты. Снятие держится до
+        #: конца остывания идентичности.
+        self._suspended_until: dict[RequestClass, float] = {}
+
+    def suspend(self, classes: tuple[RequestClass, ...], *, until: float) -> None:
+        """Снимает классы запросов с очереди до названного момента.
+
+        Вторая ступень реакции на ограничение частоты. Площадка сказала
+        «слишком быстро» второй раз в окне, и урезания ёмкости оказалось мало:
+        снимаются те классы, без которых клиент остаётся клиентом - наблюдение
+        за рынком и автоматика.
+
+        Снятие держится до конца остывания идентичности и снимается вместе с
+        ним. Само по себе оно не истекает раньше: истекающее раньше означало бы,
+        что клиент вернулся к прежнему темпу, ничего не дождавшись.
+
+        Args:
+            classes (tuple[RequestClass, ...]): Какие классы снять.
+            until (float): До какого момента, монотонные секунды.
+
+        Returns:
+            None
+        """
+        for request_class in classes:
+            self._suspended_until[request_class] = max(
+                self._suspended_until.get(request_class, 0.0), until
+            )
+
+    def is_suspended(self, request_class: RequestClass, now: float) -> bool:
+        """Сообщает, снят ли класс с очереди сейчас.
+
+        Args:
+            request_class (RequestClass): Класс запроса.
+            now (float): Текущий момент, монотонные секунды.
+
+        Returns:
+            bool: True, если класс снят и запрос по нему сейчас не пройдёт.
+        """
+        return now < self._suspended_until.get(request_class, 0.0)
+
+    def _floor_for(self, request_class: RequestClass, now: float) -> float:
+        """Считает порог допуска для класса по нынешнему спросу.
+
+        Порог - сумма долей тех классов, которые защищены сильнее И вправду
+        претендуют на ёмкость. Претендующим считается класс, обращавшийся за
+        бюджетом в последние DEMAND_WINDOW_MS.
+
+        Условие про спрос принципиально. Доля - это пол, а не потолок: она
+        обещает, что менее защищённый не съест последнюю долю более
+        защищённого. Обещание имеет смысл, только когда более защищённому есть
+        что съесть. Вытеснять некого, когда никто не претендует, и запрещать
+        циклу обновлений брать больше четверти ведра на пустой площадке значило
+        бы наказывать его за чужое бездействие.
+
+        Args:
+            request_class (RequestClass): Класс, для которого считается порог.
+            now (float): Текущий момент, монотонные секунды.
+
+        Returns:
+            float: Доля ёмкости, которая обязана остаться после займа.
+        """
+        deadline = now - DEMAND_WINDOW_MS / 1000
+        floor = 0.0
+        for other in RequestClass:
+            if other is request_class:
+                break
+            if self._demanded_at.get(other, float("-inf")) >= deadline:
+                floor += FLOOR_SHARE[other]
+        return floor
+
+    def reserve(
+        self,
+        now: float,
+        cost: float = 1.0,
+        request_class: RequestClass = RequestClass.INTERACTIVE,
+    ) -> Reservation:
         """Пытается занять бюджет во всех вёдрах сразу.
 
         Занимает либо во всех, либо ни в одном. Частичный расход означал бы, что
         отказавший запрос всё равно потратил чужой запас, и при частых отказах
         бюджет утекал бы в никуда.
 
+        Класс запроса задаёт порог: сколько ёмкости обязано остаться после
+        займа. Доля - это ПОЛ, а не потолок; она не ограничивает класс сверху, а
+        обещает, что менее защищённый не съест последнюю долю более защищённого.
+        Прежде класс объявлялся у каждой операции и до бюджета не доходил вовсе:
+        собственный мониторинг продавца вытеснял ответы покупателям на общих
+        основаниях - ровно то, ради чего доли и придуманы.
+
+        Умолчание - interactive. Не потому, что оно безобидно, а потому, что
+        оно самое защищённое: вызов, забывший объявить класс, не должен из-за
+        забывчивости уступить мониторингу.
+
         Args:
             now (float): Текущий момент, монотонные секунды.
             cost (float): Стоимость запроса.
+            request_class (RequestClass): Класс запроса.
 
         Returns:
             Reservation: Выдан ли бюджет, и сколько ждать, если нет.
         """
+        self._demanded_at[request_class] = now
+
+        # Снятый класс не проходит вовсе, сколько бы ни было в ведре. Ждать он
+        # обязан до конца остывания, а не до появления токена.
+        #
+        # Округление то же, что и у ожидания запаса: пауза строго больше точной
+        # величины. Здесь константа прежде стояла литералом - то есть правило
+        # выполнялось по совпадению, и правка объявленного числа обошла бы это
+        # место стороной.
+        if self.is_suspended(request_class, now):
+            return Reservation(
+                granted=False,
+                wait_ms=int((self._suspended_until[request_class] - now) * 1000) + WAIT_GUARD_MS,
+                bucket="suspended",
+            )
+
+        floor = self._floor_for(request_class, now)
         for bucket in self._buckets:
-            wait = bucket.wait_for(now, cost)
+            wait = bucket.wait_for(now, cost, floor)
             if wait:
                 return Reservation(granted=False, wait_ms=wait, bucket=bucket.limits.name)
 
@@ -211,7 +372,12 @@ class Budget:
         for bucket in self._buckets:
             bucket.scale(factor)
 
-    def require(self, now: float, cost: float = 1.0) -> Reservation:
+    def require(
+        self,
+        now: float,
+        cost: float = 1.0,
+        request_class: RequestClass = RequestClass.INTERACTIVE,
+    ) -> Reservation:
         """Занимает бюджет или отказывает, если ждать пришлось бы слишком долго.
 
         Args:
@@ -226,8 +392,22 @@ class Budget:
                 этом не отправляется вовсе - в этом весь смысл: ошибка означает
                 решение SDK не ходить, а не ответ площадки.
         """
-        reservation = self.reserve(now, cost)
-        if reservation.granted or reservation.wait_ms <= MAX_WAIT_MS:
+        reservation = self.reserve(now, cost, request_class)
+        if reservation.granted:
+            return reservation
+
+        # Отменяемому классу отказывают сразу, не дожидаясь предела ожидания.
+        # Ждать наблюдению бессмысленно: к моменту пополнения оно устареет, а
+        # место в очереди займёт прямо сейчас. Прочим отказать нельзя - их
+        # никто не повторит за пользователя.
+        if ON_REFUSAL[request_class] == "refuse":
+            raise BudgetExhaustedError(
+                f"бюджет исчерпан для класса {request_class}: ведро "
+                f"{reservation.bucket} освободится через {reservation.wait_ms} мс. "
+                "Класс объявлен отменяемым и уступает всем прочим. Запрос не отправлен"
+            )
+
+        if reservation.wait_ms <= MAX_WAIT_MS:
             return reservation
         raise BudgetExhaustedError(
             f"бюджет исчерпан: ведро {reservation.bucket} освободится через "

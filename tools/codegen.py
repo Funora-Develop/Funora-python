@@ -21,7 +21,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import re
 import sys
 import textwrap
 from collections.abc import Callable
@@ -61,9 +63,11 @@ from typing import ClassVar, Final
 #: прочитанным. Ровно такая незаметность и была причиной завести реестр.
 SOURCES: Final[frozenset[str]] = frozenset(
     {
+        "spec/conformance/skeleton-format.yaml",
         "spec/capabilities.yaml",
         "spec/errors/errors.yaml",
         "spec/events/delivery.yaml",
+        "spec/extraction/chats.yaml",
         "spec/extraction/orders.yaml",
         "spec/extraction/session.yaml",
         "spec/protocol/response-classes.yaml",
@@ -75,9 +79,33 @@ SOURCES: Final[frozenset[str]] = frozenset(
         "spec/services/lots.yaml",
         "spec/services/market.yaml",
         "spec/services/orders.yaml",
+        "spec/types.yaml",
         "spec/version.yaml",
     }
 )
+
+
+def _literal(value: str) -> str:
+    """Записывает строку так, как её записал бы форматтер проекта.
+
+    Порождается КОД, а не отладочный вывод. repr даёт одинарные кавычки, а
+    ruff format требует двойных, и порождённый файл сразу оказывался
+    неотформатированным. Починить это правкой файла нельзя: он тут же перестал
+    бы совпадать с генератором, и падала бы уже проверка свежести. Значит
+    печатать надо сразу так, как ожидает форматтер.
+
+    Args:
+        value (str): Строка, которую надо записать литералом.
+
+    Returns:
+        str: Литерал в тех кавычках, которые выбрал бы форматтер.
+    """
+    # Форматтер предпочитает двойные кавычки и выбирает одинарные там, где
+    # двойные пришлось бы экранировать. Селектор вида script[src*="captcha"] -
+    # ровно этот случай.
+    if "\"" in value and "'" not in value:
+        return "'" + value + "'"
+    return json.dumps(value, ensure_ascii=False)
 
 
 def _load(spec: Path, relative: str) -> dict[str, Any]:
@@ -475,7 +503,7 @@ def render_response_classes(spec: Path) -> str:
             extra=extra,
         ).replace(
             "from typing import ClassVar, Final",
-            "from typing import Final\n\nfrom .errors import (\n"
+            "from enum import StrEnum\nfrom typing import Final\n\nfrom .errors import (\n"
             + "".join(
                 f"    {name},\n"
                 for name in sorted(
@@ -486,7 +514,18 @@ def render_response_classes(spec: Path) -> str:
         )
     ]
 
-    out.append('__all__ = ["VERDICT_ERRORS", "RESPONSE_CLASSES", "STATUS_CLASS"]\n')
+    out.append("__all__ = [\n")
+    for name in (
+        "VERDICT_ERRORS",
+        "RESPONSE_CLASSES",
+        "STATUS_CLASS",
+        "Health",
+        "INITIAL_HEALTH",
+        "HEALTH_BY_VERDICT",
+        "WRITES_PAUSED_IN",
+    ):
+        out.append(f'    "{name}",\n')
+    out.append("]\n")
 
     out.append("\n#: Классы ответа, объявленные спецификацией.\n")
     out.append("#:\n")
@@ -529,6 +568,85 @@ def render_response_classes(spec: Path) -> str:
             out.append(f'    ("{cls}", "{reason}"): {value},\n')
     out.append("}\n")
 
+    health = doc.get("health") or {}
+    states = list(health.get("states") or [])
+    from_verdict = dict(health.get("from_verdict") or {})
+    paused = list(health.get("writes_paused_in") or [])
+
+    if not states:
+        raise SystemExit("spec/protocol/response-classes.yaml: состояния доступа не объявлены")
+    if health.get("initial") not in states:
+        raise SystemExit(
+            "spec/protocol/response-classes.yaml: начальное состояние не входит в перечень"
+        )
+    unknown_states = sorted(set(paused) - set(states))
+    if unknown_states:
+        raise SystemExit(
+            "spec/protocol/response-classes.yaml: writes_paused_in называет "
+            f"несуществующие состояния {unknown_states}"
+        )
+    if health["initial"] in paused:
+        raise SystemExit(
+            "spec/protocol/response-classes.yaml: автоматика записи приостановлена в "
+            "начальном состоянии. Клиент не смог бы написать ни разу, ни разу не сходив"
+        )
+    missing = sorted(set(doc["classes"]) - set(from_verdict))
+    if missing:
+        raise SystemExit(
+            f"spec/protocol/response-classes.yaml: классы ответа {missing} не говорят, "
+            "в какое состояние доступа переводят. Реализация решит сама, и две "
+            "реализации объявят аккаунт ограниченным в разные моменты"
+        )
+    strange = sorted(
+        value for value in from_verdict.values() if value is not None and value not in states
+    )
+    if strange:
+        raise SystemExit(
+            "spec/protocol/response-classes.yaml: переход ведёт в несуществующие "
+            f"состояния {strange}"
+        )
+
+    out.append("\n\nclass Health(StrEnum):\n")
+    out.append('    """Состояние доступа к площадке.\n\n')
+    out.append("    От него зависит, приостановлена ли автоматика записи. Перечень\n")
+    out.append("    объявлен схемой события protocol.health_changed и повторён в\n")
+    out.append("    spec/protocol/response-classes.yaml вместе с правилами перехода.\n")
+    out.append('    """\n\n')
+    for name in states:
+        out.append(f'    {name.upper()} = "{name}"\n')
+
+    out.append("\n\n#: Начальное состояние.\n")
+    out.append("#:\n")
+    out.append("#: До первого ответа состояние не проверяется: клиент не знает о\n")
+    out.append("#: площадке ничего, пока не сходил.\n")
+    out.append(f"INITIAL_HEALTH: Final[Health] = Health.{health['initial'].upper()}\n")
+
+    out.append("\n#: В какое состояние переводит класс ответа.\n")
+    out.append("#:\n")
+    out.append("#: None означает «состояние не меняется». Сетевой отказ и\n")
+    out.append("#: неопознанный ответ говорят о нас и о дороге, а не о том, как\n")
+    out.append("#: площадка к нам относится: менять по ним состояние доступа значило\n")
+    out.append("#: бы объявлять аккаунт ограниченным из-за оборванного соединения.\n")
+    out.append("HEALTH_BY_VERDICT: Final[dict[str, Health | None]] = {\n")
+    for name in doc["classes"]:
+        target = from_verdict[name]
+        value = "None" if target is None else f"Health.{target.upper()}"
+        out.append(f'    "{name}": {value},\n')
+    out.append("}\n")
+
+    out.append("\n#: Состояния, в которых автоматика записи приостановлена.\n")
+    out.append("#:\n")
+    out.append("#: Возобновление - только явным действием пользователя либо\n")
+    out.append("#: возвратом в начальное состояние по успешному ответу. Сама по себе\n")
+    out.append("#: пауза не истекает: истекающая означала бы, что клиент снова пишет\n")
+    out.append("#: на площадку, которая только что отказала, и не спросил никого.\n")
+    out.append("WRITES_PAUSED_IN: Final[frozenset[Health]] = frozenset(\n")
+    out.append("    {\n")
+    for name in paused:
+        out.append(f"        Health.{name.upper()},\n")
+    out.append("    }\n")
+    out.append(")\n")
+
     return "".join(out)
 
 
@@ -542,6 +660,29 @@ def render_retry(spec: Path) -> str:
         str: Содержимое модуля.
     """
     doc = _load(spec, "spec/protocol/retry-policy.yaml")
+
+    rule = doc.get("fail_closed_rule") or {}
+    named = list(rule.get("applies_to") or [])
+    if not named:
+        raise SystemExit(
+            "spec/protocol/retry-policy.yaml: fail_closed_rule не называет ни одной "
+            "политики. Правило без области действия не применяется ни к чему"
+        )
+    lost = sorted(set(named) - set(doc["policies"]))
+    if lost:
+        raise SystemExit(
+            f"spec/protocol/retry-policy.yaml: правило полной остановки названо для "
+            f"{lost}, а таких политик в перечне нет. Проверка ловит и обратное: "
+            "перечень политик, разрезанный вставкой посередине, теряет всё, что "
+            "стояло ниже разреза, - и теряет молча"
+        )
+    declared = sorted(name for name, body in doc["policies"].items() if body.get("fail_closed"))
+    if declared != sorted(named):
+        raise SystemExit(
+            f"spec/protocol/retry-policy.yaml: признак fail_closed стоит у {declared}, "
+            f"а правило называет {sorted(named)}. Два перечня одного и того же "
+            "расходятся молча"
+        )
     policies: dict[str, Any] = doc["policies"]
     limits: dict[str, Any] = doc["limits"]
 
@@ -736,7 +877,7 @@ def render_budget(spec: Path) -> str:
             extra=extra,
         ).replace(
             "from typing import ClassVar, Final",
-            "from dataclasses import dataclass\nfrom typing import Final",
+            "from dataclasses import dataclass\nfrom enum import StrEnum\nfrom typing import Final",
         )
     ]
 
@@ -745,6 +886,13 @@ def render_budget(spec: Path) -> str:
         "BucketLimits",
         "BUCKETS",
         "MAX_WAIT_MS",
+        "WAIT_ATTEMPTS",
+        "WAIT_GUARD_MS",
+        "BURST_WINDOW_MS",
+        "RequestClass",
+        "ON_REFUSAL",
+        "FLOOR_SHARE",
+        "DEMAND_WINDOW_MS",
         "COUNTS_RETRIES",
         "COUNTS_REDIRECTS",
         "MAX_QUEUE_DEPTH_PER_KEY",
@@ -791,9 +939,161 @@ def render_budget(spec: Path) -> str:
     out.append("}\n")
 
     out.append("\n#: Сколько ждать освобождения бюджета, прежде чем отказать.\n")
+    burst = doc.get("burst_rule") or {}
+    window = burst.get("window_ms")
+    if not isinstance(window, int) or window <= 0:
+        raise SystemExit(
+            "spec/runtime/budget.yaml: burst_rule.window_ms не объявлен либо "
+            "неположителен. Без окна залп остаётся числом без правила применения, "
+            "а числа у вёдер стоят"
+        )
+    if burst.get("meaning") is None:
+        raise SystemExit("spec/runtime/budget.yaml: burst_rule не говорит, что ограничивает залп")
+    for name, entry in doc["buckets"].items():
+        if not isinstance(entry.get("burst"), int) or entry["burst"] <= 0:
+            raise SystemExit(
+                f"spec/runtime/budget.yaml: у ведра {name} залп не объявлен либо неположителен"
+            )
+        if entry["burst"] > entry["capacity"]:
+            raise SystemExit(
+                f"spec/runtime/budget.yaml: у ведра {name} залп {entry['burst']} "
+                f"больше ёмкости {entry['capacity']}. Тогда залп не ограничивает "
+                "ничего: запас кончится раньше права на него"
+            )
+
     out.append(f"MAX_WAIT_MS: Final[int] = {doc['exhausted']['max_wait_ms']}\n")
 
+    waiting = doc.get("waiting") or {}
+    attempts = waiting.get("attempts")
+    guard = waiting.get("guard_ms")
+    if not isinstance(attempts, int) or attempts < 2:
+        raise SystemExit(
+            "spec/runtime/budget.yaml: waiting.attempts не объявлен либо меньше "
+            "двух. Единица означала бы, что паузу не выжидают вовсе, и предел "
+            "ожидания отменялся бы с другой стороны"
+        )
+    if not isinstance(guard, int) or guard < 1:
+        raise SystemExit(
+            "spec/runtime/budget.yaml: waiting.guard_ms не объявлен либо меньше "
+            "единицы. Пауза вровень приводит повторную попытку туда, где запаса "
+            "ещё нет из-за последнего бита деления"
+        )
+    if waiting.get("attempts_note") is None or waiting.get("guard_note") is None:
+        raise SystemExit(
+            "spec/runtime/budget.yaml: у правила ожидания нет пояснения. Числа "
+            "без правила применения расходятся у шести реализаций молча"
+        )
+
+    out.append("\n#: Сколько попыток занять бюджет делается всего.\n")
+    out.append("#:\n")
+    out.append("#: Одна пауза и одна повторная попытка. Цикл ожидания превратил бы\n")
+    out.append("#: предел ожидания в пожелание: каждая итерация ждала бы «не дольше\n")
+    out.append("#: предела», а вызов снаружи стал бы неотличим от зависшего процесса.\n")
+    out.append(f"WAIT_ATTEMPTS: Final[int] = {attempts}\n")
+
+    out.append("\n#: Сколько миллисекунд прибавляется к вычисленной паузе.\n")
+    out.append("#:\n")
+    out.append("#: Пауза округляется вверх и строго больше точной величины. Вровень\n")
+    out.append("#: привело бы повторную попытку ровно на границу, где запаса ещё нет\n")
+    out.append("#: из-за последнего бита деления, - и вызов отказал бы, прождав всё\n")
+    out.append("#: положенное.\n")
+    out.append(f"WAIT_GUARD_MS: Final[int] = {guard}\n")
+
+    out.append("\n#: Окно, за которое считается право на залп.\n")
+    out.append("#:\n")
+    out.append("#: Ёмкость и залп ограничивают разное. Ёмкость - запас: она\n")
+    out.append("#: копится в простое. Залп - темп: сколько можно отправить подряд,\n")
+    out.append("#: не переводя дыхания, независимо от накопленного.\n")
+    out.append("#:\n")
+    out.append("#: Без второго предела клиент, простоявший минуту, выпускает\n")
+    out.append("#: шестьдесят запросов в одну секунду - и первым от собственного\n")
+    out.append("#: залпа страдает сам аккаунт.\n")
+    out.append(f"BURST_WINDOW_MS: Final[int] = {window}\n")
+
+    admission = doc.get("class_admission") or {}
+    classes = doc.get("classes") or {}
+    order = list(admission.get("order") or [])
+    reserved = dict(admission.get("reserved_above") or {})
+
+    if sorted(order) != sorted(classes):
+        raise SystemExit(
+            f"spec/runtime/budget.yaml: порядок защищённости {order} не совпадает "
+            f"с перечнем классов {sorted(classes)}. Класс, выпавший из порядка, "
+            "не получит порога допуска и пройдёт мимо правила"
+        )
+    if sorted(reserved) != sorted(classes):
+        raise SystemExit("spec/runtime/budget.yaml: reserved_above объявлен не для всех классов")
+
+    running = 0.0
+    for name in order:
+        expected = round(running, 4)
+        if abs(float(reserved[name]) - expected) > 1e-9:
+            raise SystemExit(
+                f"spec/runtime/budget.yaml: у класса {name} reserved_above "
+                f"{reserved[name]}, а сумма долей стоящих раньше даёт {expected}. "
+                "Порог, разошедшийся с долями, отменяет доли молча"
+            )
+        running += float(classes[name]["floor_share"])
+
+    if abs(running - 1.0) > 1e-9:
+        raise SystemExit(
+            f"spec/runtime/budget.yaml: доли классов в сумме дают {running}, а не "
+            "единицу. Недостача означала бы ничью ёмкость, избыток - обещание, "
+            "которого ведро не выполнит"
+        )
+
+    out.append("\n\nclass RequestClass(StrEnum):\n")
+    out.append('    """Класс запроса.\n\n')
+    out.append("    Определяет, кого вытесняют при нехватке ёмкости. Проставляет его\n")
+    out.append("    служба, а не пользователь: пользователь не знает, чем его вызов\n")
+    out.append("    мешает соседнему.\n")
+    out.append('    """\n\n')
+    for name in order:
+        out.append(f'    {name.upper()} = "{name}"\n')
+
+    out.append("\n\n#: Что делать с запросом, которого ёмкость не пускает.\n")
+    out.append("#:\n")
+    out.append('#: "wait" - ждать пополнения, "refuse" - отказать немедленно.\n')
+    out.append("#: Отказать можно только тому, кого спецификация объявила\n")
+    out.append("#: отменяемым: ответ покупателю, не отправленный из-за собственного\n")
+    out.append("#: мониторинга продавца, - худший исход, какой этот раздел даёт.\n")
+    out.append("ON_REFUSAL: Final[dict[RequestClass, str]] = {\n")
+    for name in order:
+        mode = "refuse" if classes[name].get("preemptible") == "cancellable" else "wait"
+        out.append(f'    RequestClass.{name.upper()}: "{mode}",\n')
+    out.append("}\n")
+
+    out.append("\n#: Гарантированная доля ёмкости для каждого класса.\n")
+    out.append("FLOOR_SHARE: Final[dict[RequestClass, float]] = {\n")
+    for name in order:
+        out.append(f"    RequestClass.{name.upper()}: {float(classes[name]['floor_share'])!r},\n")
+    out.append("}\n")
+
+    window = admission.get("demand_window_ms")
+    if not isinstance(window, int) or window <= 0:
+        raise SystemExit(
+            "spec/runtime/budget.yaml: demand_window_ms не объявлен либо неположителен. "
+            "Без него порог складывался бы из долей классов, которые молчат, и доля "
+            "превратилась бы из пола в потолок"
+        )
+    out.append("\n#: Сколько класс считается претендующим после обращения.\n")
+    out.append("#:\n")
+    out.append("#: Порог складывается только из долей претендующих. Вытеснять\n")
+    out.append("#: некого, когда никто не претендует, и запрещать циклу обновлений\n")
+    out.append("#: брать больше своей доли на пустой площадке значило бы наказывать\n")
+    out.append("#: его за чужое бездействие.\n")
+    out.append(f"DEMAND_WINDOW_MS: Final[int] = {window}\n")
+
     out.append("\n#: Расходуют ли бюджет повторы.\n")
+    meaning = doc["counting"].get("false_means")
+    if meaning != "cost_zero":
+        raise SystemExit(
+            "spec/runtime/budget.yaml: раздел counting обязан назвать, что означает "
+            f"false, и единственное объявленное значение - cost_zero, а стоит "
+            f"{meaning!r}. Без этого две реализации разойдутся ровно в шторме "
+            "повторов при пустом ведре"
+        )
+
     out.append(f"COUNTS_RETRIES: Final[bool] = {bool(doc['counting']['counts_retries'])}\n")
 
     out.append("\n#: Расходуют ли бюджет переходы по редиректам.\n")
@@ -867,7 +1167,9 @@ def render_budget(spec: Path) -> str:
     known_reaction = {
         "first",
         "second_in_window",
+        "second_note",
         "third_in_window",
+        "third_note",
         "recovery",
         "capacity_multiplier",
         "min_capacity_factor",
@@ -1028,6 +1330,8 @@ def render_events(spec: Path) -> str:
         "FINGERPRINT_LENGTH",
         "MIN_ENTRIES_PER_KEY",
         "EVENT_LANE",
+        "REVISION_APPEARED",
+        "REVISION_SEPARATOR",
         "LANE_DROPPABLE",
         "DEDUP_TTL_MS",
     ):
@@ -1148,6 +1452,48 @@ def render_events(spec: Path) -> str:
     for name in derivation:
         out.append(f'    EventType.{_const(name)}: "{by_type[name]}",\n')
     out.append("}\n")
+
+    sources = (doc.get("revision_source") or {}).get("sources") or {}
+    unsourced = sorted(set(derivation) - set(sources))
+    if unsourced:
+        raise SystemExit(
+            f"spec/events/delivery.yaml: виды {unsourced} не объявляют, что служит "
+            "их версией в отпечатке. Реализации выведут это поле сами и разойдутся "
+            "в ключе идемпотентности"
+        )
+    unknown = sorted(set(sources) - set(derivation))
+    if unknown:
+        raise SystemExit(
+            f"spec/events/delivery.yaml: версия объявлена для несуществующих видов {unknown}"
+        )
+
+    out.append("\n\n#: Версия события, случающегося с сущностью однажды.\n")
+    out.append("#:\n")
+    out.append("#: Заказ появляется в списке один раз, и различать разные появления\n")
+    out.append("#: одного заказа не требуется. Любая переменная часть - время,\n")
+    out.append("#: порядковый номер, состав строки - сделала бы отпечаток разным при\n")
+    out.append("#: повторном чтении того же списка, то есть отменила бы гашение\n")
+    out.append("#: повторов для самого частого события.\n")
+    out.append('REVISION_APPEARED: Final[str] = "appeared"\n')
+
+    separator = (doc.get("revision_source") or {}).get("part_separator")
+    if separator != "U+001E":
+        raise SystemExit(
+            "spec/events/delivery.yaml: разделитель частей версии обязан быть "
+            f"объявлен как U+001E, объявлено {separator!r}. Он не должен "
+            "совпадать с разделителем отпечатка U+001F: иначе составная версия "
+            "кладёт разделитель отпечатка внутрь его же части"
+        )
+    out.append("\n\n#: Чем склеиваются части составной версии сущности.\n")
+    out.append("#:\n")
+    out.append("#: Величина контрактная, а не внутренняя. Отпечаток строится из\n")
+    out.append("#: версии, поэтому две реализации, взявшие разные знаки, разойдутся\n")
+    out.append("#: в отпечатке на каждом событии с составной версией.\n")
+    out.append("#:\n")
+    out.append("#: U+001E, а не U+001F: второй склеивает сам отпечаток, и совпади\n")
+    out.append("#: они - составная версия положила бы разделитель отпечатка внутрь\n")
+    out.append("#: его же части. Склейка перестала бы различать четвёрки полей.\n")
+    out.append('REVISION_SEPARATOR: Final[str] = "\\x1e"\n')
 
     out.append("\n#: Можно ли выбрасывать события полосы при переполнении.\n")
     out.append("LANE_DROPPABLE: Final[dict[str, bool]] = {\n")
@@ -1400,12 +1746,22 @@ def render_operations(spec: Path) -> str:
     out.append("        safety (Safety): Безопасность при повторе.\n")
     out.append("        request_class (str): Класс запроса для бюджета.\n")
     out.append("        returns (str): Тип результата, как объявлен спецификацией.\n")
+    out.append("        errors (tuple[str, ...]): Устойчивые идентификаторы ошибок,\n")
+    out.append("            которыми операция вправе завершиться. Ровно то, что\n")
+    out.append("            вызывающий выписывает в except.\n")
+    out.append("\n")
+    out.append("            Перечень объявлен спецификацией на каждую операцию и до\n")
+    out.append("            сих пор до пакета не доходил: генератор принимал ключ\n")
+    out.append("            errors и выбрасывал его. Расхождение между обещанным и\n")
+    out.append("            возбуждаемым не ловило ничто, и вызывающий, выписавший\n")
+    out.append("            except по контракту, ловил не всё.\n")
     out.append('    """\n\n')
     out.append("    name: str\n")
     out.append("    capability: str\n")
     out.append("    safety: Safety\n")
     out.append("    request_class: str\n")
     out.append("    returns: str\n")
+    out.append("    errors: tuple[str, ...]\n")
 
     out.append("\n\n#: Операции служб по идентификатору.\n")
     out.append("OPERATIONS: Final[dict[str, Operation]] = {\n")
@@ -1417,7 +1773,216 @@ def render_operations(spec: Path) -> str:
         out.append(f"        safety=Safety.{body['safety'].upper()},\n")
         out.append(f'        request_class="{body["request_class"]}",\n')
         out.append(f'        returns="{body["returns"]}",\n')
+        # Пустой перечень и отсутствующий - разные вещи. Пустой говорит «эта
+        # операция не отказывает», и это утверждение, за которое отвечают.
+        # Отсутствующий не говорит ничего, и вызывающему нечего выписать в
+        # except: он либо поймает лишнее, либо не поймает нужное.
+        if "errors" not in body:
+            raise SystemExit(
+                f"spec/services: операция {name} не объявляет, какими ошибками она "
+                "вправе завершиться. Если операция не отказывает никогда, напишите "
+                "errors: [] явно - молчание тут неотличимо от забывчивости"
+            )
+        declared_errors = body["errors"] or []
+        if declared_errors:
+            out.append("        errors=(\n")
+            for code in declared_errors:
+                out.append(f'            "{code}",\n')
+            out.append("        ),\n")
+        else:
+            out.append("        errors=(),\n")
         out.append("    ),\n")
+    out.append("}\n")
+
+    return "".join(out)
+
+
+def _selectors(spec: Path) -> tuple[dict[str, str], dict[str, tuple[str, ...]]]:
+    """Собирает селекторы разбора из файлов извлечения.
+
+    Ключ выводится из пути внутри документа, а не объявляется отдельным полем:
+    путь однозначен, не зависит от языка реализации и не даёт завести два имени
+    одному селектору.
+
+    Псевдоселекторы self и self[...] пропускаются. Они означают «сам элемент
+    строки», а не запрос к документу, и подставить их в css_first нельзя.
+
+    Args:
+        spec (Path): Корень рабочей копии Funora-spec.
+
+    Returns:
+        tuple[dict[str, str], dict[str, tuple[str, ...]]]: Одиночные селекторы
+        по ключу и перечни селекторов по ключу группы.
+
+    Raises:
+        SystemExit: Если два разных селектора претендуют на один ключ.
+    """
+    found: dict[str, str] = {}
+    groups: dict[str, list[str]] = {}
+
+    def walk(node: Any, path: str, origin: str) -> None:
+        """Обходит документ, собирая значения ключа selector.
+
+        Args:
+            node (Any): Узел документа.
+            path (str): Путь до узла.
+            origin (str): Имя файла без расширения.
+
+        Returns:
+            None
+        """
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == "selector" and isinstance(value, str):
+                    if value == "self" or value.startswith("self["):
+                        continue
+                    name = f"{origin}.{path}" if path else origin
+                    # Перечень объявляется списком, и порядок в нём значим:
+                    # признаки проверяются по очереди. Ключ с индексом
+                    # переставал бы совпадать при вставке одного элемента в
+                    # середину, поэтому перечень отдаётся кортежем целиком.
+                    if name.endswith("]"):
+                        group = name[: name.rindex("[")]
+                        groups.setdefault(group, []).append(value)
+                        continue
+                    if name in found and found[name] != value:
+                        raise SystemExit(
+                            f"spec/extraction: два селектора на один ключ {name}: "
+                            f"{found[name]!r} и {value!r}"
+                        )
+                    found[name] = value
+                else:
+                    walk(value, f"{path}.{key}" if path else key, origin)
+        elif isinstance(node, list):
+            for index, value in enumerate(node):
+                walk(value, f"{path}[{index}]", origin)
+
+    for relative in sorted(SOURCES):
+        if not relative.startswith("spec/extraction/"):
+            continue
+        walk(_load(spec, relative), "", Path(relative).stem)
+
+    if not found:
+        raise SystemExit("spec/extraction: не объявлено ни одного селектора")
+    both = set(found) & set(groups)
+    if both:
+        raise SystemExit(
+            f"spec/extraction: ключи {sorted(both)} объявлены и одиночным селектором, и перечнем"
+        )
+    return found, {name: tuple(items) for name, items in groups.items()}
+
+
+def render_skeleton(spec: Path) -> str:
+    """Строит модуль с форматом структурного скелета.
+
+    Args:
+        spec (Path): Корень рабочей копии Funora-spec.
+
+    Returns:
+        str: Содержимое skeleton_format.py.
+
+    Raises:
+        SystemExit: Если объявление неполно.
+    """
+    doc = _load(spec, "spec/conformance/skeleton-format.yaml")
+
+    current = doc.get("format")
+    accepted = list(doc.get("accepted_formats") or [])
+    numbered = list(doc.get("numbered_formats") or [])
+    classes = dict((doc.get("text_signature") or {}).get("character_classes") or {})
+
+    if not current:
+        raise SystemExit("spec/conformance/skeleton-format.yaml: версия формата не объявлена")
+    if current not in accepted:
+        raise SystemExit(
+            f"spec/conformance/skeleton-format.yaml: текущий формат {current!r} не "
+            "перечислен среди принимаемых. Снимок, снятый этой же версией, был бы "
+            "отвергнут ею самой"
+        )
+    if not classes:
+        raise SystemExit(
+            "spec/conformance/skeleton-format.yaml: классы знаков не объявлены. "
+            "Подпись текста складывается из них, и две реализации с разными "
+            "наборами дадут разные подписи одному тексту"
+        )
+    unknown = [name for name in numbered if name not in accepted]
+    if unknown:
+        raise SystemExit(
+            f"spec/conformance/skeleton-format.yaml: нумерующими объявлены {unknown}, "
+            "которых нет среди принимаемых. Проверка различимости искала бы снимки "
+            "версии, которую читать нельзя, и не находила ни одного"
+        )
+    if current not in numbered:
+        raise SystemExit(
+            f"spec/conformance/skeleton-format.yaml: текущий формат {current!r} не "
+            "объявлен нумерующим. Нумерация заведена в v4 и с тех пор не отменялась; "
+            "если она вправду отменена, это надо сказать здесь словами"
+        )
+
+    extra = (
+        "Формат снимков страниц. Снимки - общая проверочная база: по ним\n"
+        "сверяется, что объявленный селектор вправду присутствует на\n"
+        "наблюдённой странице.\n"
+        "\n"
+        "Версия формата и набор классов знаков порождаются, а не пишутся здесь.\n"
+        "Прежде версия была литералом в _skeleton.py, а описание формата жило\n"
+        "только в README фикстур эталонной реализации: вторая реализация не\n"
+        "могла ни построить такой же скелет, ни проверить, что построила.\n"
+    )
+
+    out = [
+        HEADER.format(
+            title="Формат структурного скелета страницы.",
+            source="spec/conformance/skeleton-format.yaml",
+            extra=extra,
+        ).replace("from typing import ClassVar, Final", "from typing import Final")
+    ]
+
+    out.append("__all__ = [\n")
+    for name in (
+        "SKELETON_FORMAT",
+        "ACCEPTED_SKELETON_FORMATS",
+        "NUMBERED_SKELETON_FORMATS",
+        "CHARACTER_CLASSES",
+    ):
+        out.append(f'    "{name}",\n')
+    out.append("]\n")
+
+    out.append("\n\n#: Версия формата, которой снимаются новые скелеты.\n")
+    out.append(f'SKELETON_FORMAT: Final[str] = "{current}"\n')
+
+    out.append("\n#: Версии, которые разрешено читать.\n")
+    out.append("#:\n")
+    out.append("#: Старые версии принимаются, а не отвергаются: снимок стоит\n")
+    out.append("#: живого запроса под сессией, и переснять его бывает нечем -\n")
+    out.append("#: истечение сессии воспроизводится не по желанию.\n")
+    out.append("ACCEPTED_SKELETON_FORMATS: Final[frozenset[str]] = frozenset(\n")
+    out.append("    {\n")
+    for name in accepted:
+        out.append(f'        "{name}",\n')
+    out.append("    }\n")
+    out.append(")\n")
+
+    out.append("\n#: Версии, в которых идентификаторы различимы между собой.\n")
+    out.append("#:\n")
+    out.append("#: Пока они схлопывались в одну подпись, всякая проверка курсора,\n")
+    out.append("#: гашения и порождения событий проходила впустую и выглядела при\n")
+    out.append("#: этом пройденной. Требовать различимости от снимка версии v3\n")
+    out.append("#: нечестно - восстановить её он не может, - а от прочих обязательно.\n")
+    out.append("NUMBERED_SKELETON_FORMATS: Final[frozenset[str]] = frozenset(\n")
+    out.append("    {\n")
+    for name in numbered:
+        out.append(f'        "{name}",\n')
+    out.append("    }\n")
+    out.append(")\n")
+
+    out.append("\n#: Классы знаков, из которых складывается подпись текста.\n")
+    out.append("#:\n")
+    out.append("#: Две реализации с разными наборами дадут разные подписи одному\n")
+    out.append("#: тексту, и снимок одной перестанет годиться другой.\n")
+    out.append("CHARACTER_CLASSES: Final[dict[str, str]] = {\n")
+    for key in sorted(classes):
+        out.append(f'    "{key}": {_literal(classes[key])},\n')
     out.append("}\n")
 
     return "".join(out)
@@ -1486,6 +2051,10 @@ def render_extraction(spec: Path) -> str:
         "STATUS_BY_CELL_CLASS",
         "ROW_MARKER_BY_STATUS",
         "PRESENCE_BY_CLASS",
+        "CURRENCY_BY_SYMBOL",
+        "AMBIGUOUS_CURRENCY_SYMBOLS",
+        "SELECTORS",
+        "SELECTOR_GROUPS",
     ):
         out.append('    "' + name + '",\n')
     out.append("]\n")
@@ -1545,6 +2114,119 @@ def render_extraction(spec: Path) -> str:
         out.append('    "' + name + '": ' + str(bool(value)) + ",\n")
     out.append("}\n")
 
+    selectors, groups = _selectors(spec)
+    out.append("\n\n#: Селекторы разбора, объявленные спецификацией.\n")
+    out.append("#:\n")
+    out.append("#: Прежде каждый из них жил в двух местах: объявлением в\n")
+    out.append("#: spec/extraction и литералом в коде. Площадка меняет разметку -\n")
+    out.append("#: правят один файл из двух, и расхождение молчит: проверки гоняют\n")
+    out.append("#: разбор по снимкам, а текст спецификации с кодом не сверял никто.\n")
+    out.append("#:\n")
+    out.append("#: Ключ выведен из пути внутри документа: он однозначен и не\n")
+    out.append("#: зависит от языка реализации.\n")
+    out.append("SELECTORS: Final[dict[str, str]] = {\n")
+    for key in sorted(selectors):
+        # repr, а не подстановка в кавычки: селектор вправе содержать кавычки
+        # сам - input[type="password"] разорвал бы строку.
+        out.append(f'    "{key}": {_literal(selectors[key])},\n')
+    out.append("}\n")
+
+    out.append("\n\n#: Перечни селекторов, объявленные спецификацией.\n")
+    out.append("#:\n")
+    out.append("#: Порядок значим: признаки проверяются по очереди, и две\n")
+    out.append("#: реализации, проверившие их в разном порядке, разойдутся на\n")
+    out.append("#: странице, где признаки противоречат друг другу.\n")
+    out.append("#:\n")
+    out.append("#: Кортежем, а не ключами с индексом: вставка одного элемента в\n")
+    out.append("#: середину перечня переставила бы все последующие ключи.\n")
+    out.append("SELECTOR_GROUPS: Final[dict[str, tuple[str, ...]]] = {\n")
+    for key in sorted(groups):
+        items = groups[key]
+        if len(items) == 1:
+            # Кортеж из одного элемента форматтер свернул бы в строку сам, и
+            # порождённый файл оказался бы неотформатированным.
+            out.append(f'    "{key}": ({_literal(items[0])},),\n')
+            continue
+        out.append(f'    "{key}": (\n')
+        for item in items:
+            out.append(f"        {_literal(item)},\n")
+        out.append("    )," + chr(10))
+    out.append("}\n")
+
+    # --- Знак валюты и её код ------------------------------------------------
+    money = _load(spec, "spec/types.yaml")["types"]["money"]
+    table = money.get("symbol_table") or {}
+    if not table:
+        raise SystemExit(
+            "spec/types.yaml: types.money.symbol_table пуст либо не объявлен. "
+            "Страница показывает знак и не показывает кода; без таблицы сумму "
+            "собрать нельзя, а угадать соответствие - значит приписать чужую "
+            "валюту чужому заказу молча"
+        )
+
+    known: dict[str, str] = {}
+    ambiguous: list[str] = []
+    for symbol, entry in table.items():
+        if entry.get("ambiguous"):
+            if entry.get("currency"):
+                raise SystemExit(
+                    f"spec/types.yaml: знак {symbol!r} объявлен и неоднозначным, и "
+                    "имеющим код. Одно из двух: либо он решает, либо нет"
+                )
+            ambiguous.append(symbol)
+            continue
+        code = entry.get("currency")
+        if not isinstance(code, str) or not re.fullmatch(r"[A-Z]{3}", code):
+            raise SystemExit(
+                f"spec/types.yaml: у знака {symbol!r} код {code!r} не по ISO 4217. "
+                "Три заглавные латинские буквы либо ambiguous: true"
+            )
+        if not entry.get("evidence"):
+            raise SystemExit(
+                f"spec/types.yaml: у знака {symbol!r} нет поля evidence. Таблица "
+                "стоит на наблюдении, и запись без ссылки на него неотличима от "
+                "выдуманной"
+            )
+        known[symbol] = code
+
+    codes = list(known.values())
+    doubled = sorted({code for code in codes if codes.count(code) > 1})
+    if doubled:
+        raise SystemExit(
+            f"spec/types.yaml: код {doubled} стоит у нескольких знаков. "
+            "Соответствие объявлено односторонним, но два знака одной валюты "
+            "означают, что один из них наблюдён неверно"
+        )
+
+    out.append("\n\n#: Код валюты по знаку, которым площадка выводит цену.\n")
+    out.append("#:\n")
+    out.append("#: Таблица наблюдена, а не выведена. У площадки переключатель\n")
+    out.append("#: отображаемой валюты, и сбор в каждом положении показал, каким\n")
+    out.append("#: знаком выводятся цены; сам переключатель отдал код в data-cy.\n")
+    out.append("#:\n")
+    out.append("#: Перечень закрытый. Знак вне таблицы кодом не становится:\n")
+    out.append("#: придуманное соответствие приписало бы чужую валюту чужому\n")
+    out.append("#: заказу молча, и заметил бы это не разработчик, а продавец.\n")
+    out.append("CURRENCY_BY_SYMBOL: Final[dict[str, str]] = {\n")
+    for symbol in sorted(known):
+        out.append(f"    {_literal(symbol)}: {_literal(known[symbol])},\n")
+    out.append("}\n")
+
+    out.append("\n#: Знаки, которые на этой площадке носят несколько валют.\n")
+    out.append("#:\n")
+    out.append("#: Объявляются отдельно от отсутствия. Отсутствие означает «знака\n")
+    out.append("#: не видели», неоднозначность - «видели, и он не решает».\n")
+    if ambiguous:
+        out.append("AMBIGUOUS_CURRENCY_SYMBOLS: Final[frozenset[str]] = frozenset(\n")
+        out.append("    {\n")
+        for symbol in sorted(ambiguous):
+            out.append(f"        {_literal(symbol)},\n")
+        out.append("    }\n")
+        out.append(")\n")
+    else:
+        # Пустое множество форматтер свернул бы в строку сам.
+        out.append("AMBIGUOUS_CURRENCY_SYMBOLS: Final[frozenset[str]] = frozenset({})\n")
+
     return "".join(out)
 
 
@@ -1557,6 +2239,7 @@ TARGETS: Final[dict[str, Callable[[Path], str]]] = {
     "budget.py": render_budget,
     "events.py": render_events,
     "extraction.py": render_extraction,
+    "skeleton_format.py": render_skeleton,
     "operations.py": render_operations,
     "contract.py": render_contract,
 }

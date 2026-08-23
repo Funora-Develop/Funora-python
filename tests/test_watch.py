@@ -10,7 +10,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import re
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -20,17 +22,29 @@ from time import monotonic
 import pytest
 
 import funora._client as client_module
+import funora._engine as engine_module
 from funora._budget import Budget
 from funora._client import Client
 from funora._diff import Event
 from funora._engine import Engine, Pause
 from funora._poll import Schedule
 from funora._transport import Observation, TransportSettings
-from funora._watch import PRODUCIBLE, Router, dispatch, incomplete, loss, primed
+from funora._watch import (
+    PRODUCIBLE,
+    Router,
+    adispatch,
+    dispatch,
+    health_changed,
+    incomplete,
+    loss,
+    primed,
+)
+from funora.budget import RequestClass
 from funora.errors import (
     AccessBlockedError,
     ConfigurationError,
     FunoraError,
+    HandlerCancelledError,
     HandlerError,
     RateLimitedError,
     SessionExpiredError,
@@ -227,6 +241,189 @@ def test_ordinary_handler_bug_is_not_fatal() -> None:
     assert isinstance(result.errors[0], HandlerError)
 
 
+def test_handler_failure_reaches_the_caller(no_sleep: list[float]) -> None:
+    """Проверяет, что причина отказа обработчика доходит до вызывающего.
+
+    Прежде она не доходила никуда. Итог раздачи держит отказы в поле errors, а
+    ядро читает у него delivered, advance, fatal и длину failed - errors не
+    читал никто. В журнале оставалась строка «курсор не сдвинут: обработчик не
+    принял N событий» без единого слова о том, что случилось, а событие
+    приходило снова каждый шаг. Бесконечно.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    orders, chats = _page("orders-trade.logged.ru"), _page("chat.logged.ru")
+    router = Router()
+
+    @router.on()
+    def handle(event: Event) -> None:
+        raise ValueError("опечатка в обработчике")
+
+    caught: list[HandlerError] = []
+    with Client(transport=_Cycle([orders, chats])) as client:  # type: ignore[arg-type]
+        client.watch(router, max_iterations=1, on_handler_error=caught.append)
+
+    assert len(caught) == 1
+    assert isinstance(caught[0], HandlerError)
+    # Причина обязана быть на месте: без неё вызывающий знает, что упало, и не
+    # знает почему, - а это ровно то состояние, из которого правку не сделать.
+    assert isinstance(caught[0].__cause__, ValueError)
+    assert str(caught[0].__cause__) == "опечатка в обработчике"
+
+
+def test_working_handler_reports_nothing(no_sleep: list[float]) -> None:
+    """Проверяет, что исправный обработчик не поднимает ложной тревоги.
+
+    Обратная половина: приёмник, срабатывающий всегда, неотличим от
+    несрабатывающего никогда.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    orders, chats = _page("orders-trade.logged.ru"), _page("chat.logged.ru")
+    router = Router()
+    seen: list[EventType] = []
+
+    @router.on()
+    def handle(event: Event) -> None:
+        seen.append(event.type)
+
+    caught: list[HandlerError] = []
+    with Client(transport=_Cycle([orders, chats])) as client:  # type: ignore[arg-type]
+        client.watch(router, max_iterations=1, on_handler_error=caught.append)
+
+    assert seen == [EventType.WATCH_PRIMED]
+    assert caught == []
+
+
+def test_handler_failure_keeps_its_traceback_in_the_log(
+    no_sleep: list[float], caplog: pytest.LogCaptureFixture
+) -> None:
+    """Проверяет, что в журнал уходит трассировка, а не одно имя класса.
+
+    Вызывающий, не передавший on_handler_error, обязан узнать причину хотя бы
+    из журнала. Прежде там стояло имя класса исключения и больше ничего.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+        caplog (pytest.LogCaptureFixture): Перехват журнала.
+
+    Returns:
+        None
+    """
+    orders, chats = _page("orders-trade.logged.ru"), _page("chat.logged.ru")
+    router = Router()
+
+    @router.on()
+    def handle(event: Event) -> None:
+        raise ValueError("опечатка в обработчике")
+
+    with (
+        caplog.at_level(logging.WARNING, logger="funora"),
+        Client(transport=_Cycle([orders, chats])) as client,  # type: ignore[arg-type]
+    ):
+        client.watch(router, max_iterations=1)
+
+    failures = [rec for rec in caplog.records if "обработчик упал" in rec.getMessage()]
+    assert failures, "отказ обработчика не попал в журнал вовсе"
+    assert failures[0].exc_info is not None, "в журнале нет трассировки"
+    assert "опечатка в обработчике" in caplog.text
+
+
+def test_cancelled_handler_is_a_failure_not_a_crash() -> None:
+    """Проверяет, что отменившийся обработчик не пробивает раздачу насквозь.
+
+    CancelledError - потомок BaseException, а не Exception, поэтому общая ветка
+    её не ловила и она уходила мимо раздачи. Вместе с ней терялась вся партия:
+    и доставленное, и недоставленное, - а курсор не сохранялся.
+
+    Returns:
+        None
+    """
+    router = Router()
+
+    @router.on(EventType.ORDER_CREATED)
+    async def handle(event: Event) -> None:
+        raise asyncio.CancelledError
+
+    result = asyncio.run(adispatch(router, (_event(1),)))
+
+    assert result.fatal is None
+    assert isinstance(result.errors[0], HandlerCancelledError)
+    assert isinstance(result.errors[0].__cause__, asyncio.CancelledError)
+    assert result.failed == (_event(1),)
+
+
+def test_cancelling_the_task_still_cancels_it() -> None:
+    """Проверяет, что отмена задачи извне проходит насквозь.
+
+    Обратная половина, и без неё правка была бы хуже болезни: проглотив чужую
+    отмену, раздача сделала бы задачу неотменяемой - обработчик продолжал бы
+    работу после того, как её попросили прекратить.
+
+    Returns:
+        None
+    """
+    router = Router()
+    started = asyncio.Event()
+
+    @router.on(EventType.ORDER_CREATED)
+    async def handle(event: Event) -> None:
+        started.set()
+        await asyncio.sleep(60)
+
+    async def scenario() -> bool:
+        task = asyncio.ensure_future(adispatch(router, (_event(1),)))
+        await started.wait()
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            return True
+        return False
+
+    assert asyncio.run(scenario()), "отмена задачи была проглочена раздачей"
+
+
+def test_the_engine_passes_the_declared_class(no_sleep: list[float]) -> None:
+    """Проверяет, что класс доходит от операции до бюджета.
+
+    Слабое место всей связки. Класс объявлен у каждой операции, порог считается
+    по классу - но если движок не передаст его, всё пройдёт как interactive, и
+    доли снова не будут значить ничего. Ровно так и было.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+
+    Returns:
+        None
+    """
+    orders, chats = _page("orders-trade.logged.ru"), _page("chat.logged.ru")
+    router = Router()
+
+    @router.on()
+    def handle(event: Event) -> None:
+        return None
+
+    with Client(transport=_Cycle([orders, chats])) as client:  # type: ignore[arg-type]
+        client.watch(router, max_iterations=1)
+        demanded = set(client.engine._budget._demanded_at)
+
+    assert RequestClass.POLL in demanded, (
+        "цикл обновлений потратил бюджет не как poll. Класс объявлен у операции "
+        f"chats.list и обязан дойти до ведра; дошли: "
+        f"{sorted(x.value for x in demanded)}"
+    )
+    assert RequestClass.INTERACTIVE in demanded, "чтение списка продаж не дошло как interactive"
+
+
 def _page(name: str) -> str:
     """Читает снимок страницы.
 
@@ -306,7 +503,36 @@ def no_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
         list[float]: Длительности, которые цикл собирался проспать.
     """
     slept: list[float] = []
-    monkeypatch.setattr(client_module, "sleep", slept.append)
+
+    # Часы двигаются вместе со сном, и это не украшение проверки. Бюджет
+    # пополняется по времени: подмена, глотающая сон и оставляющая часы на
+    # месте, показывает ведро, которое не пополняется НИКОГДА. Проверка тогда
+    # проходит или падает по причине, которой в жизни не бывает.
+    started = monotonic()
+    offset = [0.0]
+
+    def fake_sleep(seconds: float) -> None:
+        """Считает паузу и продвигает часы на неё же.
+
+        Args:
+            seconds (float): Сколько цикл собирался проспать.
+
+        Returns:
+            None
+        """
+        slept.append(seconds)
+        offset[0] += seconds
+
+    def fake_monotonic() -> float:
+        """Возвращает время с учётом проспанного.
+
+        Returns:
+            float: Монотонные секунды.
+        """
+        return started + offset[0]
+
+    monkeypatch.setattr(client_module, "sleep", fake_sleep)
+    monkeypatch.setattr(engine_module, "monotonic", fake_monotonic)
     return slept
 
 
@@ -1520,6 +1746,14 @@ def test_every_declared_kind_is_actually_produced() -> None:
             rows_accepted=8,
         ).type,
         loss(account, when, lost=1, reason="queue_overflow").type,
+        health_changed(
+            account,
+            when,
+            before="authenticated",
+            after="rate_limited",
+            reason="http_429",
+            writes_paused=True,
+        ).type,
     }
 
     assert produced >= PRODUCIBLE, (
@@ -2085,4 +2319,51 @@ def test_overflow_drops_the_tail_not_the_head(
     first_on_page = re.search(r'data-id="(\d+)"', dialogs).group(1)
     assert read[0] == f"/chat/?node={first_on_page}", (
         f"первой прочитана {read[0]}, а не голова очереди - выбывает не хвост"
+    )
+
+
+def test_overflow_drops_the_newest_and_keeps_the_oldest(
+    no_sleep: list[float], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Проверяет, что за пределом очереди выбывает хвост, а не голова.
+
+    В голове самые давние диалоги: они ждут дольше всех, и повода вернуться к
+    ним больше нет - событие об изменении доставлено, курсор сдвинут. Выброси
+    их, и именно они не дочитаются НИКОГДА, сколько бы шагов ни прошло.
+
+    Хвост же выбывает временно: диалог, изменившийся снова, вернётся в очередь
+    следующим шагом.
+
+    Args:
+        no_sleep (list[float]): Счётчик пауз вместо сна.
+        monkeypatch (pytest.MonkeyPatch): Механизм подмены.
+
+    Returns:
+        None
+    """
+    import funora._engine as engine_module
+
+    limit = 3
+    monkeypatch.setattr(engine_module, "MAX_QUEUE_DEPTH_PER_KEY", limit)
+
+    dialogs = _numeric_dialogs(_page("chat.logged.ru"))
+    moved = re.sub(r'data-node-msg="[^"]*"', 'data-node-msg="T10:d#сдвинуто"', dialogs)
+    assert moved != dialogs, "порча не применилась - проверка бессмысленна"
+
+    transport, _ = _follow_run([dialogs, moved], 2)
+
+    order = re.findall(r'data-id="([^"]*)"', moved)
+    read = [
+        match.group(1)
+        for path in transport.paths
+        if (match := re.search(r"node=([^&]+)", path)) is not None
+    ]
+    assert read, "ни одна переписка не дочитана - проверять нечего"
+
+    positions = [order.index(node) for node in read if node in order]
+    assert positions, "дочитанные узлы не с этой страницы"
+    assert max(positions) < limit, (
+        f"дочитаны узлы на позициях {sorted(positions)} при пределе очереди "
+        f"{limit}. Значит уцелел хвост, а не голова, и самые давние диалоги "
+        "не дочитаются никогда"
     )

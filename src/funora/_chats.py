@@ -36,20 +36,21 @@ from ._extract import attribute as attribute_of
 from ._observed import Confidence, Observed
 from ._result import Completeness, Defect, Severity, collect_rows
 from .errors import IncompleteResultError, ProtocolChangedError
+from .extraction import SELECTORS
 
 __all__ = ["ChatListEntry", "ChatsPage", "parse_chats_page"]
 
 #: Внешний блок переписки. Присутствует и при выбранном диалоге, и без него.
-_WIDGET: Final[str] = ".chat-contacts"
+_WIDGET: Final[str] = SELECTORS["chats.widget"]
 
 #: Непосредственный контейнер строк. Второй, независимый от класса строки признак.
-_ROWS_CONTAINER: Final[str] = ".contact-list"
+_ROWS_CONTAINER: Final[str] = SELECTORS["chats.list"]
 
 #: Селектор строки диалога.
-_ROW: Final[str] = "a.contact-item"
+_ROW: Final[str] = SELECTORS["chats.contact_list.item"]
 
 #: Счётчик непрочитанного в шапке.
-_UNREAD_BADGE: Final[str] = "span.badge-chat"
+_UNREAD_BADGE: Final[str] = SELECTORS["chats.unread_badge"]
 
 #: Идентификатор диалога в адресе строки.
 _NODE_IN_HREF: Final[re.Pattern[str]] = re.compile(r"[?&]node=([^&#]+)")
@@ -231,9 +232,16 @@ def _parse_row(row: Node, index: int) -> tuple[ChatListEntry | None, list[Defect
         last_message_position=last,
         own_position=own,
         unread=unread,
-        counterparty_name=_text(row.css_first(".media-user-name"), "counterparty_name"),
-        preview_text=_text(row.css_first(".contact-item-message"), "preview_text"),
-        time_text=_text(row.css_first(".contact-item-time"), "time_text"),
+        counterparty_name=_text(
+            row.css_first(SELECTORS["chats.contact_list.fields.counterparty_name"]),
+            "counterparty_name",
+        ),
+        preview_text=_text(
+            row.css_first(SELECTORS["chats.contact_list.fields.preview_text"]), "preview_text"
+        ),
+        time_text=_text(
+            row.css_first(SELECTORS["chats.contact_list.fields.time_text"]), "time_text"
+        ),
     )
 
     for name in (

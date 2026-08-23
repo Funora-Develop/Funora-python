@@ -91,7 +91,16 @@ def _ids() -> list[str]:
 
 @pytest.mark.parametrize("entry", ENTRIES, ids=_ids())
 def test_declared_selector_exists_in_fixture(entry: dict[str, object]) -> None:
-    """Проверяет, что объявленный селектор находится хотя бы в одном снимке.
+    """Проверяет, что объявленный селектор находится во ВСЕХ названных снимках.
+
+    Прежде хватало одного из перечисленных. Список снимков - это утверждение
+    «селектор наблюдался здесь, здесь и здесь», и выполнение его на треть
+    оставляло две трети непроверенными: автор второй реализации прочёл бы
+    список как гарантию и построил бы на ней разбор страницы, где селектора
+    нет.
+
+    Если селектор вправду есть только на одной странице, в списке должна стоять
+    одна.
 
     Args:
         entry (dict[str, object]): Запись перечня: селектор, список снимков и
@@ -116,9 +125,13 @@ def test_declared_selector_exists_in_fixture(entry: dict[str, object]) -> None:
             found_in.append(name)
 
     assert not missing, f"{where}: снимков нет в репозитории: {', '.join(missing)}"
-    assert found_in, (
-        f"{where}: селектор {selector!r} помечен наблюдённым, но не найден "
-        f"ни в одном из снимков: {', '.join(evidence)}"
+
+    absent = [name for name in evidence if name not in found_in]
+    assert not absent, (
+        f"{where}: селектор {selector!r} помечен наблюдённым, но найден не во "
+        f"всех названных снимках. Нет в: {', '.join(absent)}. Список снимков - "
+        f"утверждение «наблюдался здесь», и выполненное наполовину оно вводит "
+        f"в заблуждение сильнее, чем отсутствующее"
     )
 
 
@@ -186,4 +199,54 @@ def test_declared_count_matches_the_fixture(entry: dict[str, object]) -> None:
     assert declared in seen.values(), (
         f"{where}: объявлено {declared} вхождений {selector!r}, "
         f"а в снимках {seen}. Число в спецификации устарело"
+    )
+
+
+def _absent_claims() -> list[dict[str, object]]:
+    """Собирает утверждения об отсутствии селектора в снимке.
+
+    Returns:
+        list[dict[str, object]]: Записи перечня, у которых есть absent_in.
+    """
+    return [entry for entry in ENTRIES if entry.get("absent_in")]
+
+
+@pytest.mark.parametrize(
+    "entry",
+    _absent_claims(),
+    ids=lambda e: f"{e['selector']} отсутствует в {','.join(e['absent_in'])}",
+)
+def test_declared_absence_holds(entry: dict[str, object]) -> None:
+    """Проверяет, что селектор вправду отсутствует в названных снимках.
+
+    Отсутствие - вторая половина наблюдения, и до сих пор её не проверял никто.
+    Признак вошедшего, который вдруг нашёлся бы и на гостевой странице,
+    перестал бы различать сессии - а спецификация продолжала бы утверждать, что
+    различает. Клиент решал бы, что сессия жива, на странице входа.
+
+    Args:
+        entry (dict[str, object]): Запись перечня: селектор, снимки, место.
+
+    Returns:
+        None
+    """
+    selector = str(entry["selector"])
+    absent_in = [str(x) for x in entry["absent_in"]]  # type: ignore[union-attr]
+    where = str(entry["where"])
+
+    missing: list[str] = []
+    found_in: list[str] = []
+    for name in absent_in:
+        path = FIXTURES / f"{name}.skeleton.txt"
+        if not path.is_file():
+            missing.append(name)
+            continue
+        if HTMLParser(_read(name)).css_first(selector) is not None:
+            found_in.append(name)
+
+    assert not missing, f"{where}: снимков нет в репозитории: {', '.join(missing)}"
+    assert not found_in, (
+        f"{where}: селектор {selector!r} объявлен отсутствующим в "
+        f"{', '.join(absent_in)}, а найден в {', '.join(found_in)}. Признак, "
+        "который есть на обеих сторонах, различает не то, что обещает"
     )

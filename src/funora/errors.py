@@ -29,7 +29,6 @@ __all__ = [
     "DomainError",
     "StateError",
     "HandlerError",
-    "PluginError",
     "BudgetError",
     "UsageError",
     "InvalidCredentialsError",
@@ -280,29 +279,6 @@ class HandlerError(FunoraError):
 
     stable_id: ClassVar[str] = "funora.handler"
     abi_code: ClassVar[int] = 1850
-    retryable: ClassVar[bool] = False
-    side_effects_possible: ClassVar[bool] = True
-    user_actionable: ClassVar[bool] = True
-    since_spec: ClassVar[str] = "0.1.0"
-
-
-class PluginError(FunoraError):
-    """Ошибка внутри стороннего плагина.
-
-    Повтор не поможет, действие могло произойти несмотря на ошибку, исправляется тем,
-    кто вызвал.
-
-    Attributes:
-        stable_id (str): Устойчивый идентификатор "funora.plugin".
-        abi_code (int): Числовой код 1860, общий для всех SDK.
-        retryable (bool): Допустим ли повтор: False.
-        side_effects_possible (bool): Могло ли действие произойти: True.
-        user_actionable (bool): Исправляется ли вызывающим: True.
-        since_spec (str): Версия спецификации "0.1.0".
-    """
-
-    stable_id: ClassVar[str] = "funora.plugin"
-    abi_code: ClassVar[int] = 1860
     retryable: ClassVar[bool] = False
     side_effects_possible: ClassVar[bool] = True
     user_actionable: ClassVar[bool] = True
@@ -946,7 +922,6 @@ ERROR_BY_STABLE_ID: Final[dict[str, type[Exception]]] = {
     "funora.domain": DomainError,
     "funora.state": StateError,
     "funora.handler": HandlerError,
-    "funora.plugin": PluginError,
     "funora.budget": BudgetError,
     "funora.usage": UsageError,
     "funora.auth.invalid_credentials": InvalidCredentialsError,
@@ -991,7 +966,6 @@ ERROR_BY_ABI_CODE: Final[dict[int, type[Exception]]] = {
     1700: DomainError,
     1800: StateError,
     1850: HandlerError,
-    1860: PluginError,
     1900: BudgetError,
     1950: UsageError,
     1201: InvalidCredentialsError,

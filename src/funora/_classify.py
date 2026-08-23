@@ -35,6 +35,7 @@ from typing import Final
 from selectolax.parser import HTMLParser
 
 from ._host import host_of, same_host
+from .extraction import SELECTOR_GROUPS
 from .response_classes import STATUS_CLASS
 
 __all__ = [
@@ -130,7 +131,7 @@ class Verdict:
 #: вошедшего в шапке стоит navbar-toggle-logged, у гостя - navbar-toggle-guest.
 #: Признак структурный и не зависит от языка интерфейса, что здесь принципиально:
 #: локаль привязана к аккаунту, а не к адресу, и через URL её не переключить.
-DEFAULT_IDENTITY_CSS: Final[str] = ".navbar-toggle-logged"
+DEFAULT_IDENTITY_CSS: Final[str] = SELECTOR_GROUPS["session.markers.logged_in"][0]
 
 #: Сигнатуры по умолчанию.
 #:
@@ -144,30 +145,27 @@ DEFAULT_SIGNATURES: Final[tuple[Signature, ...]] = (
     Signature(
         name="guest_navbar",
         verdict=ResponseClass.LOGIN_REQUIRED,
-        css=(".navbar-toggle-guest", ".menu-item-login", ".menu-item-register"),
+        # Первые три признака перечня - шапка гостя. Остальные относятся к
+        # странице входа и стоят подписью ниже; деление проходит по порядку,
+        # объявленному спецификацией.
+        css=SELECTOR_GROUPS["session.markers.guest"][:3],
         provisional=False,
     ),
     Signature(
         name="login_page",
         verdict=ResponseClass.LOGIN_REQUIRED,
-        css=(".content-account-login", ".modal-auth"),
+        css=SELECTOR_GROUPS["session.markers.guest"][3:],
         provisional=False,
     ),
     Signature(
         name="login_form",
         verdict=ResponseClass.LOGIN_REQUIRED,
-        css=('input[type="password"]', 'form[action*="login"]', 'form[action*="auth"]'),
+        css=SELECTOR_GROUPS["session.markers.login_form"],
     ),
     Signature(
         name="challenge_widget",
         verdict=ResponseClass.CHALLENGE,
-        css=(
-            "#challenge-form",
-            ".g-recaptcha",
-            ".h-captcha",
-            "[data-sitekey]",
-            'script[src*="captcha"]',
-        ),
+        css=SELECTOR_GROUPS["session.markers.challenge"],
     ),
     Signature(
         name="challenge_text",
@@ -221,13 +219,7 @@ _TEXT_LIMIT: Final[int] = 200_000
 #: Перечень признаков площадки закрыт по построению: настоящая страница проверки
 #: или блокировки заменяет содержимое целиком, и ни таблицы заказов, ни виджета
 #: переписки на ней нет.
-DEFAULT_CONTENT_MARKERS: Final[tuple[str, ...]] = (
-    ".orders-table",
-    ".chat-contacts",
-    ".chat-message-list",
-    ".contact-list",
-    ".content-account",
-)
+DEFAULT_CONTENT_MARKERS: Final[tuple[str, ...]] = SELECTOR_GROUPS["session.content_markers"]
 
 
 def _page_text(html: str) -> str:
