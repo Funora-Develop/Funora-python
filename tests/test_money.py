@@ -12,12 +12,17 @@
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 
 import pytest
 
 from funora import Money
 from funora._canonical import canonical_dumps
 from funora.errors import CurrencyMismatchError, ValidationError
+
+#: Рабочая копия спецификации. Без неё сверка отображения пропускается.
+_SPEC_DIR = os.environ.get("FUNORA_SPEC_DIR")
 
 
 def test_addition_stays_exact() -> None:
@@ -121,3 +126,63 @@ def test_negative_amounts_are_allowed() -> None:
         None
     """
     assert str(Money(-5000, "RUB", 2)) == "-50.00 RUB"
+
+
+@pytest.mark.skipif(
+    not _SPEC_DIR or not (Path(_SPEC_DIR) / "spec" / "types.yaml").is_file(),
+    reason="переменная FUNORA_SPEC_DIR не задана или не указывает на рабочую копию Funora-spec",
+)
+def test_the_language_mapping_matches_the_implementation() -> None:
+    """Сверяет объявленное отображение денег с тем, что реализовано.
+
+    Контракт объявляет, каким типом каждый из шести языков хранит сумму и в
+    каком типе над ней считает. Сверять было нечем, и строка Python успела
+    разойтись: объявляла «int + Decimal в helper», а Decimal не встречается в
+    реализации ни разу - обещан был помощник, которого нет.
+
+    Вред такого расхождения не в самой сумме. Читающий строку своего языка
+    считает её проверенной хоть кем-то и повторяет её в публичном типе денег
+    своего SDK. Тип денег в публичном интерфейсе не переделаешь потом молча.
+
+    Строки пяти остальных языков здесь не сверяются: реализаций этих языков не
+    существует, и сверять их не с чем. Они записаны в
+    spec/conformance/not-implemented.yaml как money_mapping_for_absent_languages.
+
+    Returns:
+        None
+    """
+    import typing
+
+    import yaml
+
+    types = yaml.safe_load(
+        (Path(_SPEC_DIR or ".") / "spec" / "types.yaml").read_text(encoding="utf-8")
+    )
+    declared = types["types"]["money"]["language_mapping"]["python"]
+    assert isinstance(declared, dict), (
+        "строка Python объявлена прозой. Сверить прозу с реализацией нельзя, а "
+        "именно прозой она и разошлась"
+    )
+
+    stored = typing.get_type_hints(Money)["amount_minor"].__name__
+    assert declared["storage"] == stored, (
+        f"объявлено хранение в {declared['storage']!r}, а поле amount_minor "
+        f"объявлено как {stored!r}. Читающий повторит объявленное в публичном "
+        "типе денег своего SDK, и переделать его потом молча уже нельзя"
+    )
+
+    total = Money(1000, "RUB", 2) + Money(2345, "RUB", 2)
+    used = type(total.amount_minor).__name__
+    assert declared["arithmetic"] == used, (
+        f"объявлена арифметика в {declared['arithmetic']!r}, а сложение даёт "
+        f"{used!r}. Два SDK, считающих деньги разными типами, разойдутся на "
+        "округлении - и разойдутся молча, потому что на малых суммах совпадут"
+    )
+
+    if "Decimal" in str(declared.values()):
+        source = Path(__file__).resolve().parent.parent / "src" / "funora"
+        found = any("Decimal" in one.read_text(encoding="utf-8") for one in source.rglob("*.py"))
+        assert found, (
+            "объявление называет Decimal, а в исходниках реализации он не "
+            "встречается ни разу. Объявлен помощник, которого нет"
+        )
