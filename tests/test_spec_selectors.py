@@ -463,3 +463,178 @@ def test_declared_attributes_do_not_share_a_name() -> None:
             "сравнение вечно истинно, а выведенный из него признак - вечно ложен"
         )
         seen[where] = key
+
+
+def _signature_claims() -> list[tuple[str, str, str, tuple[str, ...], tuple[str, ...]]]:
+    """Собирает объявленные подписи значений вместе с носителем и снимками.
+
+    Ничего не угадывает. Источник значения объявлен: ``reads`` со значением
+    ``text`` либо ``@атрибут``, а внутри блока ``attributes`` его называет поле
+    ``name``. Прежде источник объявлялся пятью разными способами, и сборщик,
+    выводивший его из соседей, ошибался на трёх узлах из одиннадцати.
+
+    Носитель ищется рядом: блок ``attributes`` и одиночные поля объявлены
+    соседями записи ``item``, а не её потомками.
+
+    Шаблоны адресов сюда не попадают: у них нет носителя-значения, они описывают
+    адрес узла целиком.
+
+    Returns:
+        list[tuple[str, str, str, tuple[str, ...], tuple[str, ...]]]: Ключ,
+        подпись, селектор носителя, источники значения, снимки.
+    """
+    root = _spec_dir()
+    if root is None:
+        return []
+
+    import yaml
+
+    out: list[tuple[str, str, str, tuple[str, ...], tuple[str, ...]]] = []
+
+    def snapshots(node: object, inherited: tuple[str, ...]) -> tuple[str, ...]:
+        """Приводит свидетельство к набору снимков, наследуя от предка.
+
+        Args:
+            node (object): Узел.
+            inherited (tuple[str, ...]): Снимки, унаследованные сверху.
+
+        Returns:
+            tuple[str, ...]: Снимки узла либо унаследованные.
+        """
+        if not isinstance(node, dict):
+            return inherited
+        raw = node.get("evidence")
+        if isinstance(raw, str):
+            return (raw,)
+        if isinstance(raw, list):
+            return tuple(str(one) for one in raw)
+        return inherited
+
+    def sources(node: dict[str, object]) -> tuple[str, ...]:
+        """Достаёт объявленные источники значения.
+
+        Args:
+            node (dict[str, object]): Узел с подписью.
+
+        Returns:
+            tuple[str, ...]: Источники: ``text`` либо ``@атрибут``.
+        """
+        reads = node.get("reads")
+        if isinstance(reads, str):
+            return (reads,)
+        if isinstance(reads, list):
+            return tuple(str(one) for one in reads)
+        name = node.get("name")
+        if isinstance(name, str):
+            return (f"@{name}",)
+        return ("text",)
+
+    def carrier(holder: dict[str, object], inherited: str) -> str:
+        """Находит селектор носителя: свой либо у соседней записи item.
+
+        Args:
+            holder (dict[str, object]): Узел, содержащий подписи.
+            inherited (str): Селектор, унаследованный сверху.
+
+        Returns:
+            str: Селектор носителя.
+        """
+        if isinstance(holder.get("selector"), str):
+            return str(holder["selector"])
+        item = holder.get("item")
+        if isinstance(item, dict) and isinstance(item.get("selector"), str):
+            return str(item["selector"])
+        return inherited
+
+    def walk(node: object, path: str, origin: str, evidence: tuple[str, ...], holder: str) -> None:
+        """Обходит документ, собирая подписи значений.
+
+        Args:
+            node (object): Узел документа.
+            path (str): Путь до узла.
+            origin (str): Имя файла без расширения.
+            evidence (tuple[str, ...]): Снимки, унаследованные сверху.
+            holder (str): Селектор носителя, унаследованный сверху.
+        """
+        if isinstance(node, dict):
+            evidence = snapshots(node, evidence)
+            here_holder = carrier(node, holder)
+
+            value = node.get("observed_signature")
+            if isinstance(value, str) and value.startswith("T"):
+                out.append((f"{origin}.{path}", value, here_holder, sources(node), evidence))
+
+            for key, item in node.items():
+                walk(item, f"{path}.{key}" if path else key, origin, evidence, here_holder)
+        elif isinstance(node, list):
+            for index, item in enumerate(node):
+                walk(item, f"{path}[{index}]", origin, evidence, holder)
+
+    for source in sorted((root / "spec" / "extraction").glob("*.yaml")):
+        walk(yaml.safe_load(source.read_text(encoding="utf-8")), "", source.stem, (), "")
+    return out
+
+
+#: Объявленные подписи, прочитанные один раз на весь набор.
+SIGNATURE_CLAIMS = _signature_claims()
+
+
+@pytest.mark.parametrize(
+    "claim",
+    SIGNATURE_CLAIMS,
+    ids=[f"{one[0]} = {one[1]}" for one in SIGNATURE_CLAIMS],
+)
+def test_declared_signature_matches_the_fixture(
+    claim: tuple[str, str, str, tuple[str, ...], tuple[str, ...]],
+) -> None:
+    """Сверяет объявленную подпись значения со снимком.
+
+    Подпись говорит «в снимке значение выглядело так»: столько-то знаков таких-то
+    классов. Прежде это писалось прозой - «10 цифр», «20 знаков с кириллицей,
+    цифрами и пунктуацией», - и не сверялось ничем. Одна из прозаических записей
+    уже была неверна: пробел в перечень классов не попал.
+
+    Номер значения из объявленной подписи отброшен воротами: он говорит лишь о
+    совпадении двух значений в пределах одного снимка. Здесь он отбрасывается и
+    у наблюдённого, иначе сверка зависела бы от порядка узлов.
+
+    Args:
+        claim (tuple[str, str, str, tuple[str, ...], tuple[str, ...]]): Ключ,
+            подпись, селектор носителя, объявленные источники значения, снимки.
+
+    Returns:
+        None
+    """
+    key, declared, holder, reads, evidence = claim
+
+    assert evidence, (
+        f"{key}: подпись объявлена без свидетельства. Утверждение о снимке "
+        "обязано называть снимок, иначе проверять его негде"
+    )
+    assert holder, f"{key}: у подписи не нашлось носителя"
+
+    seen: set[str] = set()
+    for snapshot in evidence:
+        path = FIXTURES / f"{snapshot}.skeleton.txt"
+        assert path.is_file(), f"{key}: снимка {snapshot} нет в репозитории"
+
+        for node in HTMLParser(_read(snapshot)).css(holder):
+            for source in reads:
+                raw = (
+                    (node.text() or "").strip()
+                    if source == "text"
+                    else (node.attributes or {}).get(source[1:])
+                )
+                if raw:
+                    seen.add(str(raw).split("#")[0])
+
+    assert seen, (
+        f"{key}: на узлах {holder!r} снимков {', '.join(evidence)} значения не "
+        "нашлось вовсе. Подпись объявлена о том, чего в снимке нет"
+    )
+    assert seen == {declared}, (
+        f"{key}: объявлена подпись {declared!r}, а в снимке "
+        f"{', '.join(sorted(seen))}. Подпись - утверждение о наблюдении, и "
+        "разошедшееся с наблюдением утверждение хуже отсутствующего: следующий "
+        "читатель построит на нём разбор"
+    )

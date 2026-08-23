@@ -167,6 +167,11 @@ def test_every_generated_selector_is_read() -> None:
         # Поведение закреплено в tests/test_classify.py - гостевая страница
         # обязана давать login_required, а не challenge.
         "session.markers.challenge_widget_on_login",
+        # Канал обновлений: реализации нет, записано в not-implemented.yaml как
+        # updates_channel. Селекторы объявлены и сверяются со снимками, читать
+        # их пока некому.
+        "updates.positions",
+        "updates.tags.locations",
     }
 
     unexpected = [key for key in silent if key not in known_silent]
