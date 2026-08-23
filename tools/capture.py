@@ -37,6 +37,7 @@ import json
 import re
 import sys
 from datetime import UTC, datetime
+from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Final
@@ -208,8 +209,15 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
 
-        source = SNIPPET.read_text(encoding="utf-8").replace(
-            "__FUNORA_ENDPOINT__", f"http://127.0.0.1:{PORT}/"
+        raw = SNIPPET.read_bytes()
+        # Отпечаток редакции: вкладка держит ту сборку, которую загрузила, и по
+        # виду это не отличить. Один сбор уже ушёл со старой редакцией, и понять
+        # это удалось только по данным.
+        build = sha256(raw).hexdigest()[:8]
+        source = (
+            raw.decode("utf-8")
+            .replace("__FUNORA_ENDPOINT__", f"http://127.0.0.1:{PORT}/")
+            .replace("__FUNORA_BUILD__", build)
         )
         body = source.encode("utf-8")
         self.send_response(200)
@@ -314,6 +322,11 @@ def main() -> int:
     print('   funora.page("order.logged.ru")   - отдать структуру страницы')
     print("   funora.currency()                - собрать символы валют")
     print('   funora.watch()  ... funora.stop("send-message")  - записать форму запросов')
+    print()
+    print("ВАЖНО: строку из пункта 3 надо вставлять ЗАНОВО на каждой странице и")
+    print("после каждой правки сборщика. Вкладка держит ту редакцию, которую")
+    print("загрузила, и по виду это не отличить - смотрите отпечаток сборки в")
+    print("приветствии.")
     print()
     print("Останов: Ctrl+C. Всё собранное лежит в observations/ - посмотрите глазами,")
     print("прежде чем что-то оттуда переносить.")

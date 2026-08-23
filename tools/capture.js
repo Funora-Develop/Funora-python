@@ -28,6 +28,9 @@
 
   const ENDPOINT = '__FUNORA_ENDPOINT__'
 
+  //: Отпечаток редакции сборщика. Подставляется приёмником при выдаче.
+  const BUILD = '__FUNORA_BUILD__'
+
   /**
    * Определяет класс одного символа.
    *
@@ -100,6 +103,20 @@
   // значение записывается только если это строчный идентификатор без цифр и
   // дефисов. Идентификатор диалога, имя пользователя и всякий токен такой
   // формы не имеют, и случайно проскочить не могут.
+  //: Коды валют по ISO 4217, которые вправду могут встретиться.
+  //
+  // Перечень, а не «три заглавные подряд»: список продаж принёс так GTA, NBA,
+  // XKO и MIR - сокращения игр, обрывок номера заказа и платёжная система.
+  // Перечень неполон намеренно, и это верная сторона ошибки: пропущенный код
+  // стоит одного повторного сбора, лишний - придуманной таблицы валют.
+  const ISO = new Set([
+    'AED', 'AMD', 'AUD', 'AZN', 'BGN', 'BRL', 'BYN', 'CAD', 'CHF', 'CNY',
+    'CZK', 'DKK', 'EUR', 'GBP', 'GEL', 'HKD', 'HUF', 'IDR', 'ILS', 'INR',
+    'JPY', 'KGS', 'KRW', 'KZT', 'MDL', 'MXN', 'NOK', 'NZD', 'PLN', 'RON',
+    'RSD', 'RUB', 'SEK', 'SGD', 'THB', 'TJS', 'TRY', 'UAH', 'USD', 'UZS',
+    'VND', 'ZAR',
+  ])
+
   const CONSTANTS = new Set(['action', 'type'])
   const CONSTANT_SHAPE = /^[a-z][a-z_]{1,30}$/
 
@@ -394,11 +411,13 @@
      */
     currency() {
       const found = {}
-      // Знак валюты по Unicode либо трёхбуквенный код, и обязательно
-      // рядом с цифрой - с любой стороны. Прежнее выражение брало за левую
-      // границу пробел, и «заказ ABC не оплачен» давало код валюты ABC, а
-      // из скриптов притаскивало фигурные скобки.
-      const money = /\d[\s\u00a0]*(\p{Sc}|[A-Z]{3}\b)|(\p{Sc}|\b[A-Z]{3})[\s\u00a0]*\d/gu
+      const pairs = {}
+      const seen = {}
+      // Знак валюты по Unicode либо код по ISO 4217. Три заглавные подряд
+      // кодом валюты НЕ считаются: список продаж принёс так GTA, NBA и MIR -
+      // сокращения игр и платёжной системы, стоявшие рядом с числом.
+      const money = /\p{Sc}/gu
+      const code = new RegExp('\\b(' + [...ISO].join('|') + ')\\b', 'g')
       const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
         acceptNode(node) {
           const holder = node.parentElement
@@ -418,9 +437,24 @@
       let node = walker.nextNode()
       while (node) {
         const text = node.nodeValue || ''
+
+        // Пара «знак и код в одном узле» - прямой ответ на вопрос, ради
+        // которого сбор и делается. Придуманная таблица припишет чужую валюту
+        // чужому заказу молча, а один и тот же знак носят несколько валют.
+        const codes = text.match(code) || []
+        const signs = text.match(money) || []
+        if (codes.length === 1 && signs.length === 1) {
+          const pair = `${signs[0]} ${codes[0]}`
+          pairs[pair] = (pairs[pair] || 0) + 1
+        }
+        // Код сам по себе тоже записывается: страница, где валюта названа
+        // кодом и не показана знаком, иначе выглядела бы пустой.
+        for (const one of codes) seen[one] = (seen[one] || 0) + 1
+
+        money.lastIndex = 0
         let match = money.exec(text)
         while (match) {
-          const symbol = match[1] || match[2]
+          const symbol = match[0]
           if (!found[symbol]) found[symbol] = { count: 0, near: [] }
           found[symbol].count += 1
           const holder = node.parentElement
@@ -443,6 +477,8 @@
         page: maskUrl(location.href),
         lang: document.documentElement.lang || '',
         symbols: found,
+        codes: seen,
+        pairs,
       })
     },
 
@@ -480,9 +516,13 @@
     },
   }
 
+  // Отпечаток нужен затем, что сборщик правится по ходу дела, а вкладка держит
+  // ту его редакцию, которую загрузила. Один сбор уже ушёл со старой: константы
+  // остались подписями, и понять это удалось только по данным.
+  window.funora.build = BUILD
   console.log(
-    '%cfunora%c собран. Команды: funora.page("имя"), funora.currency(), '
-      + 'funora.watch(), funora.stop("имя")',
+    `%cfunora%c собран, сборка ${BUILD}. Команды: funora.page("имя"), `
+      + 'funora.currency(), funora.watch(), funora.stop("имя")',
     'font-weight:bold',
     '',
   )
