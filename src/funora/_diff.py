@@ -417,7 +417,7 @@ def orders_cursor(page: OrdersPage) -> dict[str, str]:
 #: вовсе - только «знак, который не встречается внутри значений». Вторая
 #: реализация взяла бы двоеточие или вертикальную черту и получила бы другой
 #: отпечаток на каждое событие chat.unread_changed. Теперь знак назван
-#: нормативно: spec/events/delivery.yaml -> chat_revision.separator.
+#: нормативно: spec/events/delivery.yaml -> revision_source.part_separator.
 #:
 #: U+001E - разделитель записей, U+001F - разделитель полей внутри записи.
 #: Порядок обратен привычному по ASCII: внешняя склейка была зафиксирована
