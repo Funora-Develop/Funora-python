@@ -388,3 +388,81 @@ def test_declared_return_schema_exists_and_names_the_same_type() -> None:
             checked += 1
 
     assert checked >= 3, f"сверено схем результата: {checked} - слишком мало"
+
+
+def test_every_declared_operation_is_implemented_or_registered() -> None:
+    """Требует, чтобы объявленная операция была реализована либо перечислена.
+
+    Правило проекта не знает третьего состояния между «реализовано» и
+    «перечислено в реестре неисполненного». Для операций оно не проверялось
+    ничем, и девятнадцать объявленных из двадцати двух не имели метода, при том
+    что реестр называл поимённо одну.
+
+    Вызывающий читает spec/services как перечень того, что можно позвать. Позвав
+    отсутствующее, он получает встроенную ошибку языка, а не FunoraError: общий
+    перехват её не поймает, и остановится не операция, а весь его цикл.
+
+    Реализованным считается метод службы клиента, названный второй частью
+    идентификатора операции. Судить по существованию имени, а не по поведению,
+    здесь достаточно: отсутствующий метод отсутствует однозначно.
+
+    Returns:
+        None
+    """
+    import yaml
+
+    from funora import _client
+    from funora.operations import OPERATIONS
+
+    root = _spec_dir()
+    if root is None:
+        pytest.skip(SKIP_REASON)
+
+    services = {
+        name.removesuffix("Service").lower(): getattr(_client, name)
+        for name in dir(_client)
+        if name.endswith("Service") and isinstance(getattr(_client, name), type)
+    }
+    assert services, (
+        "у клиента не нашлось ни одной службы. Проверка сочла бы нереализованным "
+        "всё подряд и прошла бы на любом реестре"
+    )
+
+    implemented = {
+        f"{service}.{method}"
+        for service, cls in services.items()
+        for method in dir(cls)
+        if not method.startswith("_")
+    }
+
+    registry = yaml.safe_load(
+        (root / "spec" / "conformance" / "not-implemented.yaml").read_text(encoding="utf-8")
+    )
+    # Покрытием считается ТОЛЬКО covers. Указатель declared_in говорит, где
+    # объявлен механизм, а не что операции нет: записи об отдельных свойствах -
+    # об аудите правки цены, о полосе транспорта у витрины - указывают на
+    # операцию, ничего не говоря о её существовании.
+    #
+    # Первая редакция засчитывала и declared_in, и проверка молчала при полном
+    # удалении записи о службе: две её операции «покрывались» записями про их
+    # свойства. Читатель, нашедший запись про полосу транспорта, заключил бы,
+    # что операция есть, а не хватает ей только полосы.
+    covered: set[str] = set()
+    for entry in (registry.get("items") or {}).values():
+        covered.update(str(one) for one in (entry or {}).get("covers") or [])
+
+    orphans = sorted(one for one in OPERATIONS if one not in implemented and one not in covered)
+    assert not orphans, (
+        f"объявлены, не реализованы и не перечислены в реестре: {orphans}. "
+        "Правило проекта не знает третьего состояния: вызывающий позовёт такую "
+        "операцию и получит встроенную ошибку языка вместо FunoraError - "
+        "остановится не операция, а весь его цикл"
+    )
+
+    # Обратное: запись реестра о реализованной операции протухла и вводит в
+    # заблуждение сильнее умолчания - читатель решит, что звать нечего.
+    stale = sorted(one for one in OPERATIONS if one in implemented and one in covered)
+    assert not stale, (
+        f"перечислены в реестре как неисполненные, а метод есть: {stale}. "
+        "Запись, пережившая реализацию, отговаривает звать то, что работает"
+    )
