@@ -250,3 +250,216 @@ def test_declared_absence_holds(entry: dict[str, object]) -> None:
         f"{', '.join(absent_in)}, а найден в {', '.join(found_in)}. Признак, "
         "который есть на обеих сторонах, различает не то, что обещает"
     )
+
+
+def _attribute_claims() -> list[tuple[str, str, str, tuple[str, ...]]]:
+    """Собирает объявленные имена атрибутов вместе с носителем и снимками.
+
+    Носитель ищется рядом, а не сверху. Блок ``attributes`` объявлен СОСЕДОМ
+    записи ``item``, а не её потомком: у списка диалогов селектор строки лежит в
+    item, а имена атрибутов этой строки - в attributes. Наследование сверху дало
+    бы пустого носителя, а сверять имя атрибута не на чем значит не сверять
+    вовсе.
+
+    Снимков у объявления бывает несколько, и проверяются ВСЕ. Перечень снимков -
+    утверждение «наблюдался здесь, здесь и здесь», и выполненное наполовину оно
+    вводит в заблуждение ровно так же, как у селекторов.
+
+    Returns:
+        list[tuple[str, str, str, tuple[str, ...]]]: Ключ, имя атрибута,
+        селектор носителя и снимки. Пустой список, если спецификация недоступна.
+    """
+    root = _spec_dir()
+    if root is None:
+        return []
+
+    import yaml
+
+    out: list[tuple[str, str, str, tuple[str, ...]]] = []
+
+    def snapshots(node: object) -> tuple[str, ...]:
+        """Приводит поле свидетельства к набору имён снимков.
+
+        Args:
+            node (object): Узел, у которого спрашивается свидетельство.
+
+        Returns:
+            tuple[str, ...]: Имена снимков. Пустой набор, если их нет.
+        """
+        if not isinstance(node, dict):
+            return ()
+        raw = node.get("evidence")
+        if isinstance(raw, str):
+            return (raw,)
+        if isinstance(raw, list):
+            return tuple(str(one) for one in raw)
+        return ()
+
+    def carrier(holder: dict[str, object]) -> tuple[str, tuple[str, ...]]:
+        """Находит носителя атрибутов и его снимки.
+
+        Args:
+            holder (dict[str, object]): Узел, содержащий блок attributes.
+
+        Returns:
+            tuple[str, tuple[str, ...]]: Селектор носителя и снимки.
+        """
+        item = holder.get("item")
+        if isinstance(item, dict) and isinstance(item.get("selector"), str):
+            return str(item["selector"]), snapshots(item)
+        if isinstance(holder.get("selector"), str):
+            return str(holder["selector"]), snapshots(holder)
+        return "", ()
+
+    def walk(node: object, path: str, origin: str) -> None:
+        """Обходит документ, собирая имена атрибутов.
+
+        Args:
+            node (object): Узел документа.
+            path (str): Путь до узла.
+            origin (str): Имя файла без расширения.
+
+        Returns:
+            None
+        """
+        if isinstance(node, dict):
+            for key, value in node.items():
+                here = f"{path}.{key}" if path else key
+                if (key == "attribute" or key.endswith("_attribute")) and isinstance(value, str):
+                    holder = str(node.get("selector") or "")
+                    out.append((f"{origin}.{here}", value, holder, snapshots(node)))
+                    continue
+                if key == "attributes" and isinstance(value, dict):
+                    holder, evidence = carrier(node)
+                    for name, body in value.items():
+                        if not isinstance(body, dict) or not isinstance(body.get("name"), str):
+                            continue
+                        own = snapshots(body) or evidence
+                        out.append(
+                            (
+                                f"{origin}.{here}.{name}",
+                                str(body["name"]),
+                                str(body.get("selector") or holder),
+                                own,
+                            )
+                        )
+                    continue
+                walk(value, here, origin)
+        elif isinstance(node, list):
+            for index, value in enumerate(node):
+                walk(value, f"{path}[{index}]", origin)
+
+    for source in sorted((root / "spec" / "extraction").glob("*.yaml")):
+        walk(yaml.safe_load(source.read_text(encoding="utf-8")), "", source.stem)
+    return out
+
+
+#: Объявленные атрибуты, прочитанные один раз на весь набор.
+ATTRIBUTE_CLAIMS = _attribute_claims()
+
+
+@pytest.mark.parametrize(
+    "claim",
+    ATTRIBUTE_CLAIMS,
+    ids=[f"{one[0]} -> {one[1]}" for one in ATTRIBUTE_CLAIMS],
+)
+def test_declared_attribute_exists_in_fixture(claim: tuple[str, str, str, str]) -> None:
+    """Проверяет, что объявленное имя атрибута вправду есть на снимке.
+
+    Имя атрибута - такой же договор с площадкой, как и селектор: разбор списка
+    диалогов стоит на трёх из них целиком. Сверять их со снимками было нечем, и
+    объявление могло назвать любое имя.
+
+    Проверяется на носителе, а не по всему документу: атрибут с тем же именем
+    вправе встретиться и в другом месте страницы, и находка там ничего не
+    доказывает о строке списка.
+
+    Args:
+        claim (tuple[str, str, str, tuple[str, ...]]): Ключ, имя атрибута,
+            селектор носителя и снимки-свидетельства.
+
+    Returns:
+        None
+    """
+    key, name, holder, evidence = claim
+
+    assert evidence, (
+        f"{key}: имя атрибута объявлено без свидетельства. Наблюдение без "
+        "снимка не отличается от догадки, а на этом имени стоит разбор"
+    )
+    assert holder, (
+        f"{key}: у атрибута не нашлось носителя. Искать его пришлось бы по "
+        "всему документу, а находка в другом месте страницы ничего не "
+        "доказывает о нужном узле"
+    )
+
+    absent: list[str] = []
+    for snapshot in evidence:
+        path = FIXTURES / f"{snapshot}.skeleton.txt"
+        assert path.is_file(), f"{key}: снимка {snapshot} нет в репозитории"
+
+        tree = HTMLParser(_read(snapshot))
+        nodes = tree.css(holder) if not holder.startswith("self") else [tree.body]
+        if not any(one is not None and name in (one.attributes or {}) for one in nodes):
+            absent.append(snapshot)
+
+    assert not absent, (
+        f"{key}: атрибут {name!r} объявлен наблюдённым, а на узле {holder!r} его "
+        f"нет в снимках: {', '.join(absent)}. Разбор, построенный на этом имени, "
+        "вернёт пустоту и объявит её наблюдением"
+    )
+
+
+@pytest.mark.skipif(not ATTRIBUTE_CLAIMS, reason=SKIP_REASON)
+def test_every_declared_attribute_is_checked() -> None:
+    """Требует, чтобы сверялись ВСЕ объявленные атрибуты, а не сколько нашлось.
+
+    Проверка выше сама выбирает, что проверять: она обходит объявления и
+    собирает те, у которых есть имя. Запись, потерявшая имя, из перебора просто
+    исчезает - счёт сходится, а проверяется на одно меньше. Мутация это и
+    показала: атрибут, у которого поле name заменили на другое, прошёл молча.
+
+    Здесь набор ключей сверяется с порождённым словарём. Генератор строит его
+    своим обходом и падает на записи без имени, значит два независимых взгляда
+    обязаны совпасть.
+
+    Returns:
+        None
+    """
+    from funora.extraction import ATTRIBUTES
+
+    collected = {one[0] for one in ATTRIBUTE_CLAIMS}
+    generated = set(ATTRIBUTES)
+    assert collected == generated, (
+        f"перебор и порождённый словарь разошлись: только в переборе "
+        f"{sorted(collected - generated)}, только в словаре "
+        f"{sorted(generated - collected)}. Расхождение означает, что часть "
+        "объявленных атрибутов не сверяется со снимками ни одной проверкой"
+    )
+
+
+@pytest.mark.skipif(not ATTRIBUTE_CLAIMS, reason=SKIP_REASON)
+def test_declared_attributes_do_not_share_a_name() -> None:
+    """Запрещает двум ролям читать один и тот же атрибут.
+
+    Проверка присутствия имени на снимке такого не ловит: оба имени на странице
+    есть, и оба находятся. А смысл при этом вывернут.
+
+    Так и вышло на мутации: позиция последнего сообщения и отметка прочтения
+    получили одно имя. Обе читали бы отметку прочтения, они всегда совпадали бы,
+    и признак непрочитанного оказался бы вечно ложным - события о новых
+    сообщениях перестали бы приходить вовсе, и тихо.
+
+    Returns:
+        None
+    """
+    seen: dict[str, str] = {}
+    for key, name, _holder, _evidence in ATTRIBUTE_CLAIMS:
+        block = key.rsplit(".", 1)[0]
+        where = f"{block}:{name}"
+        assert where not in seen, (
+            f"атрибут {name!r} объявлен и у «{seen[where]}», и у «{key}». Две "
+            "роли, читающие один атрибут, всегда дают одно значение: их "
+            "сравнение вечно истинно, а выведенный из него признак - вечно ложен"
+        )
+        seen[where] = key

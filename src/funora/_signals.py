@@ -27,7 +27,7 @@ from typing import Final
 
 from selectolax.parser import HTMLParser, Node
 
-from .extraction import SELECTORS
+from .extraction import ATTRIBUTES, SELECTORS
 
 __all__ = [
     "BLANK",
@@ -54,9 +54,14 @@ ATTR_ALLOWLIST: Final[frozenset[str]] = frozenset(
         "data-orders",
         "data-bookmarks-tag",
         "data-user",
-        "data-id",
-        "data-node-msg",
-        "data-user-msg",
+    }
+    # Имена атрибутов списка диалогов берутся из объявления, а не повторяются
+    # здесь: повторённое имя расходится с объявленным молча, и признак
+    # непрочитанного перестал бы выводиться на первой же смене разметки.
+    | {
+        ATTRIBUTES["chats.contact_list.attributes.node_id"],
+        ATTRIBUTES["chats.contact_list.attributes.last_message_position"],
+        ATTRIBUTES["chats.contact_list.attributes.own_position"],
     }
 )
 
@@ -127,7 +132,7 @@ def _element_key(node: Node, index: int) -> str:
     tag = node.tag or "?"
     classes = (attrs.get("class") or "").split()
     label = tag + ("." + classes[0] if classes else "")
-    own = attrs.get("data-id") or attrs.get("id")
+    own = attrs.get(ATTRIBUTES["chats.contact_list.attributes.node_id"]) or attrs.get("id")
     mark = _fingerprint(own) if own else "i" + str(index)
     return label + "#" + mark
 
@@ -293,8 +298,8 @@ def relations(html: str) -> Relations:
     contacts = tree.css(SELECTORS["chats.contact_list.item"])
     for node in contacts:
         attrs = node.attributes or {}
-        node_msg = attrs.get("data-node-msg")
-        user_msg = attrs.get("data-user-msg")
+        node_msg = attrs.get(ATTRIBUTES["chats.contact_list.attributes.last_message_position"])
+        user_msg = attrs.get(ATTRIBUTES["chats.contact_list.attributes.own_position"])
         if not node_msg or not user_msg:
             incomplete += 1
         elif node_msg == user_msg:

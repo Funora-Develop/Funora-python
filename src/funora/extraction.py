@@ -27,6 +27,7 @@ __all__ = [
     "PRESENCE_BY_CLASS",
     "CURRENCY_BY_SYMBOL",
     "AMBIGUOUS_CURRENCY_SYMBOLS",
+    "ATTRIBUTES",
     "SELECTORS",
     "SELECTOR_GROUPS",
 ]
@@ -113,6 +114,22 @@ SELECTORS: Final[dict[str, str]] = {
     "orders.row": "a.tc-item",
     "orders.rows_container": ".dyn-table-body",
     "session.locale": "html[lang]",
+}
+
+
+#: Имена атрибутов разметки, объявленные спецификацией.
+#:
+#: Имя атрибута - такой же договор с площадкой, как и селектор, и
+#: жило оно ровно так же в двух местах: объявлением в
+#: spec/extraction и литералом в коде. Площадка переименует
+#: атрибут - правят один файл из двух, и расхождение молчит.
+#:
+#: Ключ выведен из пути внутри документа, как и у селекторов.
+ATTRIBUTES: Final[dict[str, str]] = {
+    "chats.contact_list.attributes.last_message_position": "data-node-msg",
+    "chats.contact_list.attributes.node_id": "data-id",
+    "chats.contact_list.attributes.own_position": "data-user-msg",
+    "session.locale.attribute": "lang",
 }
 
 

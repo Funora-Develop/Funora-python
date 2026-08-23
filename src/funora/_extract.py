@@ -20,7 +20,7 @@ import re
 from selectolax.parser import HTMLParser, Node
 
 from ._observed import Observed, Presence
-from .extraction import SELECTORS
+from .extraction import ATTRIBUTES, SELECTORS
 
 __all__ = ["attribute"]
 
@@ -105,7 +105,7 @@ def observe_locale(html: str) -> Observed[str]:
         четыре: узла нет, атрибута нет, значение пусто, значение не метка.
     """
     node = HTMLParser(html).css_first(SELECTORS["session.locale"])
-    observed = attribute(node, "lang", "locale")
+    observed = attribute(node, ATTRIBUTES["session.locale.attribute"], "locale")
     # Пустой атрибут проверке формы не подлежит: это факт о странице - площадка
     # отдала пустую локаль, - а не мусор в значении. Сводить их значило бы
     # отбирать у вызывающего единственный способ их различить.
