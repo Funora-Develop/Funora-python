@@ -453,6 +453,10 @@ def _observation(html: str) -> Observation:
             elapsed_ms=10,
             redirects=0,
             content_length=len(html.encode("utf-8")),
+            # Длину объявляет и настоящий сервер. Без неё целостность тела
+            # подтвердить нечем, и чтение больше не считается полным - подставной
+            # ответ без заголовка изображал бы не площадку, а редкий её сбой.
+            declared_length=len(html.encode("utf-8")),
         )
     )
 

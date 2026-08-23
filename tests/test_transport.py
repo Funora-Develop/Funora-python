@@ -333,35 +333,104 @@ def test_compression_is_asked_off() -> None:
     )
 
 
-def test_integrity_check_does_not_compare_the_incomparable() -> None:
-    """Проверяет, что сжатый ответ не объявляется целым по длине.
+def test_integrity_is_unverified_when_there_is_nothing_to_compare() -> None:
+    """Проверяет, что непроверяемая целостность объявляется непроверенной.
 
-    Сервер вправе не послушаться просьбы. Тогда сравнивать нечего, и честнее
-    сказать об этом, чем сравнить несравнимое и объявить целостность
-    подтверждённой.
+    Прежде здесь проверялась check_integrity - функция, которую не вызывал
+    НИКТО. Сравнение длин живёт в классификаторе, и она была мёртвой копией его
+    правила: проверка держала копию, копия создавала впечатление работающей
+    защиты, а живой путь тем временем шёл мимо.
+
+    Настоящая дыра была не в сравнении, а в том, что происходит, когда сравнить
+    нечем. При chunked-передаче объявленной длины нет вовсе, при сжатии
+    объявлена длина сжатого тела против полученной распакованной. В обоих
+    случаях классификатор предупреждает и пропускает, а разбор объявлял чтение
+    полным - то есть выдавал незнание за знание.
 
     Returns:
         None
     """
-    from funora._engine import check_integrity
+    from funora._engine import integrity_verified
 
-    # Тело короче объявленного, но пришло сжатым: сравнение бессмысленно.
-    packed = Observation(
+    whole = Observation(
         status=200,
         final_url="https://funpay.com/orders/trade",
         html="<html></html>",
         elapsed_ms=1,
         redirects=0,
         content_length=100,
-        declared_length=100000,
-        content_encoding="gzip",
+        declared_length=100,
     )
-    check_integrity(packed)  # не поднимает: сравнивать нечего
+    assert integrity_verified(whole), "целое тело с объявленной длиной подтверждается"
 
-    # То же тело без сжатия - обрыв, и он громкий.
-    plain = replace(packed, content_encoding="")
-    with pytest.raises(NetworkError, match="не целиком"):
-        check_integrity(plain)
+    # Сжатое: объявлена длина сжатого, получена длина распакованного. Сравнение
+    # бессмысленно, и подтверждать нечего.
+    # Числа взяты как в жизни: объявлено 250 байт сжатого, получено 200 000
+    # распакованного. Полученное БОЛЬШЕ объявленного, и сравнение «получено не
+    # меньше объявленного» проходит - на оборванном ответе тоже. Первая редакция
+    # этой проверки брала обратные числа и не различала снятие защиты от сжатия:
+    # мутация «убрать проверку кодировки» проходила молча.
+    packed = replace(whole, content_encoding="gzip", content_length=200_000, declared_length=250)
+    assert not integrity_verified(packed), (
+        "сжатый ответ объявлен целым по длине. Объявлена длина сжатого тела, "
+        "получена длина распакованного: сравнение проходит всегда, включая "
+        "оборванный ответ"
+    )
+
+    # Chunked: длины нет вовсе.
+    chunked = replace(whole, declared_length=None)
+    assert not integrity_verified(chunked), (
+        "ответ без объявленной длины объявлен целым. Сравнивать было нечем, и "
+        "это незнание, а не подтверждение"
+    )
+
+    # Тело короче объявленного: обрыв ловит классификатор, а здесь он тоже не
+    # подтверждается - функция говорит только «подтверждено ли», не «цело ли».
+    short = replace(whole, content_length=10)
+    assert not integrity_verified(short)
+
+
+def test_unverified_read_is_not_called_complete() -> None:
+    """Проверяет, что непроверенное чтение не объявляется полным.
+
+    Замер, ради которого проверка и написана: из двух тысяч обрывов снимка
+    списка продаж в случайной точке 128 давали completeness=complete с числом
+    строк меньше настоящего. Курсор снимается с полного чтения, недостающие
+    заказы уходят из него и при следующем целом чтении приходят заново как
+    order.created - бот, выдающий товар по этому событию, выдаёт его повторно.
+
+    Returns:
+        None
+    """
+    from datetime import UTC, datetime
+    from pathlib import Path
+
+    from funora import Completeness
+    from funora._engine import unverified
+    from funora._orders import parse_orders_page
+
+    html = (
+        Path(__file__).parent / "fixtures" / "pages" / "orders-trade.logged.ru.skeleton.txt"
+    ).read_text(encoding="utf-8")
+    page = parse_orders_page(html, observed_at=datetime(2026, 8, 24, tzinfo=UTC))
+    assert page.completeness is Completeness.COMPLETE, "снимок обязан читаться полностью"
+
+    lowered = unverified(page)
+    assert lowered.completeness is Completeness.PARTIAL, (
+        "чтение с неподтверждённой целостностью осталось полным. С полного "
+        "снимается курсор, и оборванная страница уводит из него настоящие заказы"
+    )
+    assert lowered.reason == "integrity_unverified"
+    assert any(one.code == "integrity_unverified" for one in lowered.defects), (
+        "понижение не оставило следа в повреждениях: вызывающий не узнает, почему"
+    )
+    assert lowered.rows_accepted == page.rows_accepted, (
+        "понижение выбросило строки. Прочитанное остаётся доступным через "
+        "rows(accept_incomplete=True) - меняется только доверие к полноте"
+    )
+
+    # Уже неполное чтение понижать нечего: причина остаётся своей.
+    assert unverified(lowered) is lowered
 
 
 def test_decompressed_body_has_its_own_limit() -> None:
