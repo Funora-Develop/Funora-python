@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 import textwrap
 from collections.abc import Callable
@@ -77,6 +78,7 @@ SOURCES: Final[frozenset[str]] = frozenset(
         "spec/services/lots.yaml",
         "spec/services/market.yaml",
         "spec/services/orders.yaml",
+        "spec/types.yaml",
         "spec/version.yaml",
     }
 )
@@ -2037,6 +2039,8 @@ def render_extraction(spec: Path) -> str:
         "STATUS_BY_CELL_CLASS",
         "ROW_MARKER_BY_STATUS",
         "PRESENCE_BY_CLASS",
+        "CURRENCY_BY_SYMBOL",
+        "AMBIGUOUS_CURRENCY_SYMBOLS",
         "SELECTORS",
         "SELECTOR_GROUPS",
     ):
@@ -2130,6 +2134,77 @@ def render_extraction(spec: Path) -> str:
             out.append(f"        {item!r},\n")
         out.append("    ),\n")
     out.append("}\n")
+
+
+    # --- Знак валюты и её код ------------------------------------------------
+    money = _load(spec, "spec/types.yaml")["types"]["money"]
+    table = money.get("symbol_table") or {}
+    if not table:
+        raise SystemExit(
+            "spec/types.yaml: types.money.symbol_table пуст либо не объявлен. "
+            "Страница показывает знак и не показывает кода; без таблицы сумму "
+            "собрать нельзя, а угадать соответствие - значит приписать чужую "
+            "валюту чужому заказу молча"
+        )
+
+    known: dict[str, str] = {}
+    ambiguous: list[str] = []
+    for symbol, entry in table.items():
+        if entry.get("ambiguous"):
+            if entry.get("currency"):
+                raise SystemExit(
+                    f"spec/types.yaml: знак {symbol!r} объявлен и неоднозначным, и "
+                    "имеющим код. Одно из двух: либо он решает, либо нет"
+                )
+            ambiguous.append(symbol)
+            continue
+        code = entry.get("currency")
+        if not isinstance(code, str) or not re.fullmatch(r"[A-Z]{3}", code):
+            raise SystemExit(
+                f"spec/types.yaml: у знака {symbol!r} код {code!r} не по ISO 4217. "
+                "Три заглавные латинские буквы либо ambiguous: true"
+            )
+        if not entry.get("evidence"):
+            raise SystemExit(
+                f"spec/types.yaml: у знака {symbol!r} нет поля evidence. Таблица "
+                "стоит на наблюдении, и запись без ссылки на него неотличима от "
+                "выдуманной"
+            )
+        known[symbol] = code
+
+    codes = list(known.values())
+    doubled = sorted({code for code in codes if codes.count(code) > 1})
+    if doubled:
+        raise SystemExit(
+            f"spec/types.yaml: код {doubled} стоит у нескольких знаков. "
+            "Соответствие объявлено односторонним, но два знака одной валюты "
+            "означают, что один из них наблюдён неверно"
+        )
+
+    out.append("\n\n#: Код валюты по знаку, которым площадка выводит цену.\n")
+    out.append("#:\n")
+    out.append("#: Таблица наблюдена, а не выведена. У площадки переключатель\n")
+    out.append("#: отображаемой валюты, и сбор в каждом положении показал, каким\n")
+    out.append("#: знаком выводятся цены; сам переключатель отдал код в data-cy.\n")
+    out.append("#:\n")
+    out.append("#: Перечень закрытый. Знак вне таблицы кодом не становится:\n")
+    out.append("#: придуманное соответствие приписало бы чужую валюту чужому\n")
+    out.append("#: заказу молча, и заметил бы это не разработчик, а продавец.\n")
+    out.append("CURRENCY_BY_SYMBOL: Final[dict[str, str]] = {\n")
+    for symbol in sorted(known):
+        out.append(f"    {symbol!r}: {known[symbol]!r},\n")
+    out.append("}\n")
+
+    out.append("\n#: Знаки, которые на этой площадке носят несколько валют.\n")
+    out.append("#:\n")
+    out.append("#: Объявляются отдельно от отсутствия. Отсутствие означает «знака\n")
+    out.append("#: не видели», неоднозначность - «видели, и он не решает».\n")
+    out.append("AMBIGUOUS_CURRENCY_SYMBOLS: Final[frozenset[str]] = frozenset(\n")
+    out.append("    {\n")
+    for symbol in sorted(ambiguous):
+        out.append(f"        {symbol!r},\n")
+    out.append("    }\n")
+    out.append(")\n")
 
     return "".join(out)
 
