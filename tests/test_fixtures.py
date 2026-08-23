@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -29,6 +30,10 @@ from funora._skeleton import (
 
 #: Каталог с фикстурами страниц.
 PAGES = Path(__file__).parent / "fixtures" / "pages"
+
+#: Рабочая копия спецификации. Без неё сверка со снимком пропускается, и
+#: пропуск ловится отдельным шагом сборки: молчаливый здесь недопустим.
+_SPEC_DIR = os.environ.get("FUNORA_SPEC_DIR")
 
 #: Ожидаемый вердикт для каждой фикстуры.
 EXPECTED = {
@@ -362,3 +367,77 @@ def test_cyrillic_text_does_not_reach_the_skeleton() -> None:
     assert not leaked, f"кириллица дошла до скелета: {''.join(leaked)}"
     assert "Алёша" not in skeleton
     assert "T16:cs" in skeleton or "T" in skeleton, "текст не превратился в подпись"
+
+
+@pytest.mark.skipif(
+    not _SPEC_DIR or not (Path(_SPEC_DIR) / "spec" / "extraction" / "chats.yaml").is_file(),
+    reason="переменная FUNORA_SPEC_DIR не задана или не указывает на рабочую копию Funora-spec",
+)
+def test_the_declared_count_of_system_messages_matches_the_fixture() -> None:
+    """Сверяет объявленное число системных сообщений со снимком.
+
+    Число подано как наблюдение и читается как подтверждение того, что два
+    признака системного сообщения согласованы. На нём стоит правило, отличающее
+    уведомление площадки от сообщения покупателя.
+
+    Условия берутся из markers[].condition, а не из литералов: поле condition
+    объявлено машиночитаемым, и до сих пор его не читал никто. Прозаические
+    условия пропускаются вслух - обрабатываются только absent и present.
+
+    Проверка нужна потому, что объявление уже было ложным: рядом стояло
+    total_messages: 10 при одиннадцати узлах и human: 4 при пяти.
+
+    Returns:
+        None
+    """
+    import yaml
+
+    doc = yaml.safe_load(
+        (Path(_SPEC_DIR or ".") / "spec" / "extraction" / "chats.yaml").read_text(encoding="utf-8")
+    )
+    block = doc["system_message"]
+    declared = block["observed_distribution"]["system"]
+    snapshot = block["observed_distribution"]["evidence"]
+
+    # Решающие признаки - те, чья сила объявлена главной либо подтверждающей.
+    # Слабый признак объявлен вспомогательным вслух, смысл его неизвестен, и
+    # условие у него прозаическое законно.
+    #
+    # Требование машиночитаемого условия именно у решающих - не придирка.
+    # Отбирай проверка признаки по одному лишь виду условия, и перевод любого
+    # решающего в прозу молча сократил бы её до оставшихся: счёт сошёлся бы, а
+    # проверяла бы она половину правила. Это показала мутация.
+    decisive = [one for one in block["markers"] if one.get("strength") in ("primary", "confirming")]
+    assert decisive, "ни один признак системного сообщения не объявлен решающим"
+
+    for one in decisive:
+        assert one.get("condition") in ("absent", "present"), (
+            f"решающий признак «{one['name']}» объявил условие прозой "
+            f"({one.get('condition')!r}). Правило, отличающее уведомление "
+            "площадки от сообщения покупателя, перестаёт быть проверяемым, а "
+            "счёт сходится и без него - проверка тихо станет проверять меньше"
+        )
+
+    machine = {one["name"]: one for one in decisive}
+
+    tree = HTMLParser((PAGES / f"{snapshot}.skeleton.txt").read_text(encoding="utf-8"))
+    items = tree.css(doc["message"]["item"]["selector"])
+    assert items, f"в снимке {snapshot} нет ни одного сообщения"
+
+    counted = 0
+    for node in items:
+        agrees = True
+        for one in machine.values():
+            found = node.css_first(one["selector"]) is not None
+            if found != (one["condition"] == "present"):
+                agrees = False
+                break
+        counted += 1 if agrees else 0
+
+    assert counted == declared, (
+        f"спецификация объявляет {declared} системных сообщений на снимке "
+        f"{snapshot}, а по объявленным признакам их {counted}. На этом числе "
+        "стоит правило, отличающее уведомление площадки от сообщения "
+        "покупателя: разойдясь со снимком, оно опирается на счёт, которого "
+        "никто не делал"
+    )
