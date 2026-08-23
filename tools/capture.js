@@ -7,7 +7,7 @@
  *
  * Что умеет:
  *   funora.page('имя')  - отдать структуру страницы;
- *   funora.currency()   - собрать символы валют без сумм;
+ *   funora.currency('метка') - собрать символы валют без сумм;
  *   funora.watch()      - начать запись ФОРМЫ запросов (не значений);
  *   funora.stop()       - остановить запись и отдать собранное;
  *   funora.status()     - показать, что уже собрано.
@@ -409,7 +409,7 @@
      *
      * @returns {Promise<string>} Что ответил сервер.
      */
-    currency() {
+    currency(label) {
       const found = {}
       const pairs = {}
       const seen = {}
@@ -472,7 +472,13 @@
         }
         node = walker.nextNode()
       }
-      const named = maskUrl(location.href).path.replace(/[^a-z]+/gi, '-').replace(/^-|-$/g, '')
+      // Метка отличает сборы, сделанные на ОДНОЙ странице в разных
+      // состояниях - например при разном положении переключателя валюты.
+      // Без неё три сбора подряд ушли под одним именем и затёрли друг друга.
+      const where = maskUrl(location.href).path.replace(/[^a-z]+/gi, '-')
+      const base = where.replace(/^-|-$/g, '') || 'root'
+      const mark = String(label || '').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '')
+      const named = mark ? `${base}.${mark}` : base
       // Переключатель валюты: ссылки и пункты списка, в адресе либо значении
       // которых стоит код ISO 4217 целым словом. Он и даёт пару «знак - код»:
       // сам по себе знак неоднозначен, один и тот же носят несколько валют.
@@ -498,7 +504,7 @@
         })
       }
 
-      return send('currency', named || 'root', {
+      return send('currency', named, {
         page: maskUrl(location.href),
         lang: document.documentElement.lang || '',
         symbols: found,
@@ -559,7 +565,7 @@
   }
   console.log(
     `%cfunora%c собран, сборка ${BUILD}. Команды: funora.page("имя"), `
-      + 'funora.currency(), funora.watch(), funora.stop("имя")',
+      + 'funora.currency("метка"), funora.watch(), funora.stop("имя")',
     'font-weight:bold',
     '',
   )

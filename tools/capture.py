@@ -99,7 +99,7 @@ def _write_page(name: str, html: str, where: dict[str, Any] | None = None) -> st
     # затёрли друг друга, а в консоли каждый раз печаталось «сохранён».
     if already.is_file():
         previous = json.loads(already.read_text(encoding="utf-8")).get("path", "")
-        if previous and previous != said.get("path", ""):
+        if previous and previous != said.get("path", ""):  # noqa: SIM102
             return (
                 f"НЕ СОХРАНЕНО: под именем «{name}» уже лежит снимок пути "
                 f"{previous}, а этот снят с {said.get('path', 'неизвестно откуда')}. "
@@ -142,6 +142,12 @@ def _write_page(name: str, html: str, where: dict[str, Any] | None = None) -> st
 def _write_json(kind: str, name: str, payload: Any) -> str:
     """Сохраняет наблюдение, пришедшее уже обезличенным.
 
+    Повторный сбор того же самого проходит молча - он ничего не теряет. А вот
+    сбор ДРУГОГО содержимого под тем же именем отвергается: так уже пропали три
+    сбора валюты подряд. Все три ушли под именем, выведенным из пути, а пути у
+    них был один - менялось только положение переключателя, и каждый следующий
+    стирал предыдущий, печатая «сохранено».
+
     Args:
         kind (str): Вид наблюдения.
         name (str): Имя наблюдения.
@@ -151,11 +157,16 @@ def _write_json(kind: str, name: str, payload: Any) -> str:
         str: Что сказать в браузер.
     """
     target = OUTPUT / f"{kind}.{name}.json"
-    target.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-        newline="\n",
-    )
+    body = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+
+    if target.is_file() and target.read_text(encoding="utf-8") != body:
+        return (
+            f"НЕ СОХРАНЕНО: под именем «{target.name}» уже лежит ДРУГОЕ "
+            "наблюдение. Передайте своё имя - например "
+            f'funora.{kind}("что-отличает"), - иначе прежнее пропадёт молча'
+        )
+
+    target.write_text(body, encoding="utf-8", newline="\n")
     size = len(payload) if isinstance(payload, list) else 1
     return f"наблюдение сохранено: {target.name}, записей {size}"
 
@@ -333,7 +344,7 @@ def main() -> int:
     print()
     print("4. Дальше по надобности:")
     print('   funora.page("order.logged.ru")   - отдать структуру страницы')
-    print("   funora.currency()                - собрать символы валют")
+    print('   funora.currency("метка")         - собрать символы валют')
     print('   funora.watch()  ... funora.stop("send-message")  - записать форму запросов')
     print()
     print("ВАЖНО: строку из пункта 3 надо вставлять ЗАНОВО на каждой странице и")
