@@ -66,6 +66,7 @@ from urllib.parse import urlparse
 from selectolax.parser import HTMLParser, Node
 
 from ._host import same_host
+from .errors import ValidationError
 from .skeleton_format import ACCEPTED_SKELETON_FORMATS
 from .skeleton_format import NUMBERED_SKELETON_FORMATS as GENERATED_NUMBERED_FORMATS
 from .skeleton_format import SKELETON_FORMAT as GENERATED_SKELETON_FORMAT
@@ -201,8 +202,18 @@ _RE_DIGIT = re.compile(r"[0-9]")
 _RE_OPAQUE = re.compile(r"[0-9A-Z]")
 
 
-class SkeletonError(RuntimeError):
-    """Скелет не удалось построить или он не прошёл самопроверку."""
+class SkeletonError(ValidationError):
+    """Скелет не удалось построить или он не прошёл самопроверку.
+
+    Наследуется от ValidationError, а не от встроенной ошибки языка. Прежде
+    здесь стоял RuntimeError, при том что класс экспортирован публично и
+    возникает у всякого, кто зовёт skeletonize: общий перехват FunoraError его
+    не ловил, и самопроверка, спасающая от утечки настоящего текста в снимок,
+    роняла процесс целиком вместо того, чтобы отдать отказ.
+
+    ValidationError - потому что произведённое значение непригодно: скелет,
+    не прошедший самопроверку, публиковать нельзя.
+    """
 
 
 def _char_class(ch: str) -> str:
