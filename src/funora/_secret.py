@@ -24,6 +24,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Final, Protocol, runtime_checkable
 
+from .errors import ConfigurationError
+
 __all__ = [
     "Secret",
     "SecretProvider",
@@ -37,12 +39,21 @@ __all__ = [
 _MASK: Final[str] = "Secret(<redacted>)"
 
 
-class SecretNotFoundError(RuntimeError):
+class SecretNotFoundError(ConfigurationError):
     """Источник не смог предоставить секрет.
 
     Отдельный тип нужен, чтобы отличать отсутствие ключа в конфигурации от
     отказа площадки принять существующий ключ: пользователю в этих случаях надо
     делать разное.
+
+    Наследуется от ConfigurationError, а не от встроенной ошибки языка. Прежде
+    здесь стоял RuntimeError, и отсутствие ключа НЕ ловилось общим перехватом
+    FunoraError: бот, обернувший сборку клиента в except FunoraError, падал мимо
+    собственного обработчика. Пропавшая переменная окружения - обычное дело при
+    переносе на другую машину, и падать на ней всем процессом слишком дорого.
+
+    Класс отказа тот же, что у прочих ошибок сборки: повтор не поможет,
+    исправляется вызывающим.
     """
 
 
