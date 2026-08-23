@@ -1,4 +1,4 @@
-"""Проверяет маскировку путей в скелете.
+"""Проверяет маскировку в скелете: пути и метки языка.
 
 Правило поднималось трижды, и каждый раз потому, что настоящая страница
 приносила то, чего прежнее правило не ждало. Версия v3 закрыла чужие хосты
@@ -119,3 +119,63 @@ def test_an_identifier_in_a_page_is_masked_too() -> None:
     assert "SBVZKXAF" not in skeleton, skeleton
     assert "AB12" not in skeleton, skeleton
     assert "/orders/" in skeleton, "форма пути потеряна вместе с идентификатором"
+
+
+#: Что обязано сохраниться дословно как метка языка.
+LANGUAGE_KEPT = ("ru", "en", "ru-RU", "zh-Hans-CN")
+
+#: Что в тех же атрибутах обязано быть замаскировано.
+LANGUAGE_MASKED = ("Иван Петров", "ivanpetrov", "0", "очень длинное значение")
+
+
+@pytest.mark.parametrize("tag", LANGUAGE_KEPT)
+def test_a_language_tag_survives(tag: str) -> None:
+    """Требует сохранять метку языка дословно.
+
+    Метка говорит о странице, а не о человеке. Пока она маскировалась, всякий
+    снимок нёс в lang подпись, и разбор объявлял по нему локаль неподдержанной,
+    сообщая в журнал об интерфейсе на локали «T2:a#1»: собственные фикстуры
+    заставляли реализацию говорить неправду.
+
+    Args:
+        tag (str): Метка языка.
+
+    Returns:
+        None
+    """
+    skeleton = skeletonize(f'<html lang="{tag}"><body><b>x</b></body></html>')
+    assert f'lang="{tag}"' in skeleton, skeleton
+
+
+@pytest.mark.parametrize("value", LANGUAGE_MASKED)
+def test_a_language_attribute_that_is_not_a_tag_is_masked(value: str) -> None:
+    """Запрещает сохранять в тех же атрибутах что попало.
+
+    Атрибут lang обычный, и положить в него можно что угодно. Без проверки
+    формы исключение из правила маскировки превратилось бы в дыру: достаточно
+    было бы написать имя покупателя в lang.
+
+    Args:
+        value (str): Значение, меткой языка не являющееся.
+
+    Returns:
+        None
+    """
+    skeleton = skeletonize(f'<b lang="{value}">x</b>')
+    assert value not in skeleton, f"значение уцелело в скелете: {skeleton}"
+
+
+def test_the_neighbour_attribute_is_still_masked() -> None:
+    """Проверяет, что исключение распространяется только на метки языка.
+
+    Без этой проверки предыдущие ничего не значили бы: формат, сохраняющий все
+    атрибуты дословно, тоже сохраняет lang.
+
+    Returns:
+        None
+    """
+    skeleton = skeletonize('<b lang="ru" title="Иван Петров" data-id="SBVZKXAF">x</b>')
+
+    assert 'lang="ru"' in skeleton
+    assert "Иван Петров" not in skeleton, skeleton
+    assert "SBVZKXAF" not in skeleton, skeleton

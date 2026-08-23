@@ -125,6 +125,20 @@ _URL_ATTRS: Final[frozenset[str]] = frozenset(
 #: Атрибуты, значение которых сохраняется как есть.
 _VERBATIM_ATTRS: Final[frozenset[str]] = frozenset({"class"})
 
+#: Атрибуты, несущие метку языка.
+#:
+#: Сохраняются дословно, но только если значение вправду похоже на метку.
+#: Метка языка говорит о странице, а не о человеке: «ru» не сообщает о продавце
+#: ничего, чего не сообщал бы адрес площадки.
+#:
+#: Пока они маскировались, всякий снимок нёс в lang подпись, и разбор объявлял
+#: по нему локаль неподдержанной - собственные фикстуры заставляли реализацию
+#: говорить неправду.
+_LANGUAGE_ATTRS: Final[frozenset[str]] = frozenset({"lang", "hreflang"})
+
+#: Как выглядит метка языка по BCP 47.
+_LANGUAGE_TAG: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$")
+
 #: Теги, содержимое которых не сохраняется.
 #:
 #: Выбрасывается только содержимое, атрибуты сохраняются по общим правилам. Путь
@@ -382,6 +396,11 @@ def _mask_attr(name: str, value: str, ordinals: dict[str, int]) -> str:
     """
     if name in _VERBATIM_ATTRS:
         return value
+    if name in _LANGUAGE_ATTRS and _LANGUAGE_TAG.match(value.strip()):
+        # Условие про форму существенно: атрибут обычный, и положить в него
+        # можно что угодно. Дословно сохраняется лишь то, что вправду похоже на
+        # метку языка, остальное маскируется по общему правилу.
+        return value.strip()
     if name in _URL_ATTRS:
         return mask_path(value, DEFAULT_OWN_HOST, ordinals)
     if not value:

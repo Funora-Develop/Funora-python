@@ -27,7 +27,7 @@ __all__ = [
 
 
 #: Версия формата, которой снимаются новые скелеты.
-SKELETON_FORMAT: Final[str] = "structural-skeleton-v6"
+SKELETON_FORMAT: Final[str] = "structural-skeleton-v7"
 
 #: Версии, которые разрешено читать.
 #:
@@ -40,6 +40,7 @@ ACCEPTED_SKELETON_FORMATS: Final[frozenset[str]] = frozenset(
         "structural-skeleton-v4",
         "structural-skeleton-v5",
         "structural-skeleton-v6",
+        "structural-skeleton-v7",
     }
 )
 
@@ -54,6 +55,7 @@ NUMBERED_SKELETON_FORMATS: Final[frozenset[str]] = frozenset(
         "structural-skeleton-v4",
         "structural-skeleton-v5",
         "structural-skeleton-v6",
+        "structural-skeleton-v7",
     }
 )
 
