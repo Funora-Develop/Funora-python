@@ -31,6 +31,7 @@ from funora.errors import (
     AccessBlockedError,
     BudgetExhaustedError,
     ConfigurationError,
+    FunoraError,
     InvalidCredentialsError,
     NetworkError,
     RateLimitedError,
@@ -846,3 +847,51 @@ def test_thread_without_declared_length_is_not_complete() -> None:
         "переписка объявила бы прочитанным всё, что в неё поместилось"
     )
     assert thread.reason == "integrity_unverified"
+
+
+def test_absent_service_refuses_by_contract_not_by_language() -> None:
+    """Проверяет четыре свойства отказа по ненаписанной службе разом.
+
+    Служб в контракте шесть, написаны две. Обращение к остальным давало голый
+    AttributeError: бот, обернувший работу в except FunoraError, падал не
+    операцией, а всем процессом, и узнавал причину из трассировки.
+
+    Заглушек не заведено нарочно, и это вторая половина решения. Заглушка
+    существует как атрибут, hasattr на ней вернул бы True - проверка «умеет ли
+    эта версия SDK работать с лотами» начала бы врать, а IDE подсказывала бы
+    метод, который всегда падает.
+
+    Четыре свойства держатся одновременно только благодаря двойному наследованию
+    класса отказа, и проверяются они здесь вместе: порознь каждое проходило бы
+    и при худшем решении.
+
+    Returns:
+        None
+    """
+    from funora.errors import NotImplementedOperationError
+
+    with _client([]) as client:
+        assert hasattr(client, "orders"), "написанная служба обязана быть видна"
+
+        assert not hasattr(client, "lots"), (
+            "hasattr увидел ненаписанную службу. Проверка возможностей начнёт "
+            "врать, а заглушка - подсказываться в IDE"
+        )
+
+        with pytest.raises(FunoraError) as by_contract:
+            client.lots  # noqa: B018
+        with pytest.raises(AttributeError):
+            client.market  # noqa: B018
+
+        text = str(by_contract.value)
+        assert "lots_service_operations" in text, (
+            "отказ не назвал записи реестра: вызывающему негде прочесть, чего именно не хватает"
+        )
+
+        # Опечатка - не пробел реализации. Выдавать её за объявленную операцию
+        # значило бы отправить человека искать в реестре то, чего он не писал.
+        with pytest.raises(AttributeError) as typo:
+            client.ordrs  # noqa: B018
+        assert not isinstance(typo.value, NotImplementedOperationError), (
+            "опечатка выдана за объявленную контрактом службу"
+        )

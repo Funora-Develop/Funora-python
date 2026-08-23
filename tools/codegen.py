@@ -108,7 +108,7 @@ def _literal(value: str) -> str:
     # Форматтер предпочитает двойные кавычки и выбирает одинарные там, где
     # двойные пришлось бы экранировать. Селектор вида script[src*="captcha"] -
     # ровно этот случай.
-    if "\"" in value and "'" not in value:
+    if '"' in value and "'" not in value:
         return "'" + value + "'"
     return json.dumps(value, ensure_ascii=False)
 
@@ -171,6 +171,21 @@ def _order(errors: dict[str, Any]) -> list[str]:
     return sorted(errors, key=lambda n: (depth(n), errors[n]["abi_code"]))
 
 
+#: Как объявленное поведение отказа выражается в Python.
+#:
+#: Контракт называет НАМЕРЕНИЕ - absent_member, - а не имя класса конкретного
+#: языка: он языконезависим, и вписать туда AttributeError значило бы отдать его
+#: одному языку. Перевод намерения в идиом - работа этого генератора, он и есть
+#: питоновская сторона.
+#:
+#: absent_member означает: отказ обязан вести себя ещё и как обращение к
+#: несуществующему члену. В Python это ровно AttributeError - hasattr отвечает
+#: «нет» тогда и только тогда, когда поднят он.
+_BEHAVIOUR_BASES: Final[dict[str, str]] = {
+    "absent_member": "AttributeError",
+}
+
+
 def _flags(spec_entry: dict[str, Any]) -> str:
     """Составляет строку с пояснением поведенческих признаков ошибки.
 
@@ -230,6 +245,18 @@ def render_errors(spec: Path) -> str:
     for name in names:
         entry = errors[name]
         parent = entry.get("parent") or "Exception"
+        behaviour = entry.get("behaves_as")
+        if behaviour is not None:
+            extra = _BEHAVIOUR_BASES.get(str(behaviour))
+            if extra is None:
+                raise SystemExit(
+                    f"spec/errors/errors.yaml: {name} объявляет поведение "
+                    f"«{behaviour}», а перевести его в идиом Python нечем. "
+                    "Добавьте перевод в _BEHAVIOUR_BASES либо поправьте "
+                    "объявление: молча породить класс без обещанного поведения "
+                    "значит выдать обещание за исполненное"
+                )
+            parent = f"{parent}, {extra}"
         summary = " ".join(str(entry["summary"]).split())
         body = textwrap.fill(summary, width=84, subsequent_indent="    ")
         flags = textwrap.fill(_flags(entry), width=84, subsequent_indent="    ")
@@ -1854,9 +1881,7 @@ def _attributes(spec: Path) -> dict[str, str]:
         if isinstance(node, dict):
             for key, value in node.items():
                 here = f"{path}.{key}" if path else key
-                if (key == "attribute" or key.endswith("_attribute")) and isinstance(
-                    value, str
-                ):
+                if (key == "attribute" or key.endswith("_attribute")) and isinstance(value, str):
                     found[f"{origin}.{here}"] = value
                     continue
                 if key == "attributes" and isinstance(value, dict):
@@ -1872,9 +1897,7 @@ def _attributes(spec: Path) -> dict[str, str]:
                             )
                         key_name = f"{origin}.{here}.{name}"
                         if key_name in found and found[key_name] != declared:
-                            raise SystemExit(
-                                f"spec/extraction: два имени на один ключ {key_name}"
-                            )
+                            raise SystemExit(f"spec/extraction: два имени на один ключ {key_name}")
                         found[key_name] = declared
                     continue
                 walk(value, here, origin)
