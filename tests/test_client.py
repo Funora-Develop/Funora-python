@@ -660,7 +660,13 @@ def test_the_header_reaches_the_identity(no_sleep: list[float]) -> None:
     Returns:
         None
     """
-    started = monotonic()
+    # Часы берутся ТЕ ЖЕ, что у движка. Фикстура no_sleep подменяет его часы
+    # своими, отсчитывая от момента своей установки, а настоящий monotonic идёт
+    # дальше: разница между установкой фикстуры и первой строкой проверки
+    # оказывалась вычтенной из отступления. На быстрой машине она нулевая, на
+    # медленной - десятые доли миллисекунды, и проверка падала «на 300 с вместо
+    # 300 с».
+    started = engine_module.monotonic()
     limited = _observation("", status=429, retry_after_ms=300_000)
     good = _observation(_page("orders-trade.logged.ru"))
 
