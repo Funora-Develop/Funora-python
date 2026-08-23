@@ -15,9 +15,11 @@
 
 from __future__ import annotations
 
+import re
+
 from selectolax.parser import HTMLParser, Node
 
-from ._observed import Observed
+from ._observed import Observed, Presence
 from .extraction import SELECTORS
 
 __all__ = ["attribute"]
@@ -64,6 +66,14 @@ def attribute(node: Node | None, name: str, field_name: str) -> Observed[str]:
     return Observed.present(value) if value else Observed.empty("")
 
 
+#: Как выглядит языковая метка по BCP 47.
+#:
+#: Проверка формы, а не перечня: перечень объявлен контрактом и означает другое -
+#: для каких локалей у адаптера есть текстовые шаблоны. Здесь вопрос проще:
+#: похоже ли прочитанное на метку языка вообще.
+_LANGUAGE_TAG = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$")
+
+
 def observe_locale(html: str) -> Observed[str]:
     """Читает локаль интерфейса со страницы.
 
@@ -76,12 +86,31 @@ def observe_locale(html: str) -> Observed[str]:
     приходят текстом - описание заказа, подпись времени, имя собеседника, -
     возвращаются на том языке, на котором их отдала площадка.
 
+    Прочитанное проверяется на форму. Атрибут, который есть и языковой меткой
+    не выглядит, даёт ненаблюдённое значение, а не локаль: сообщить «интерфейс
+    отдан на локали T2:a#1» хуже, чем сказать «локали не видно».
+
+    Случай не выдуманный. Структурный скелет заменяет значения атрибутов
+    подписями, и всякий снимок проекта несёт в lang подпись вместо метки. Разбор
+    такого снимка объявлял возможность protocol.locale неподдержанной и писал в
+    журнал предупреждение о локали, которой не бывает, - то есть собственные
+    фикстуры проекта заставляли его говорить неправду. Проверка формы закрывает
+    это для снимков любой версии, включая уже снятые.
+
     Args:
         html (str): Разметка страницы.
 
     Returns:
-        Observed[str]: Локаль либо причина, по которой её не видно. Три исхода
-        различаются, как и у всякого чтения атрибута.
+        Observed[str]: Локаль либо причина, по которой её не видно. Исходов
+        четыре: узла нет, атрибута нет, значение пусто, значение не метка.
     """
     node = HTMLParser(html).css_first(SELECTORS["session.locale"])
-    return attribute(node, "lang", "locale")
+    observed = attribute(node, "lang", "locale")
+    # Пустой атрибут проверке формы не подлежит: это факт о странице - площадка
+    # отдала пустую локаль, - а не мусор в значении. Сводить их значило бы
+    # отбирать у вызывающего единственный способ их различить.
+    if observed.presence is not Presence.PRESENT:
+        return observed
+    if _LANGUAGE_TAG.match(observed.value) is None:
+        return Observed.missing("locale_not_a_language_tag")
+    return observed

@@ -32,20 +32,52 @@ def _page(name: str) -> str:
     return (PAGES / f"{name}.skeleton.txt").read_text(encoding="utf-8")
 
 
-def test_locale_is_observed_on_every_snapshot() -> None:
-    """Проверяет, что локаль читается со всех сохранённых страниц.
+def test_a_masked_locale_is_not_passed_off_as_a_locale() -> None:
+    """Требует, чтобы подпись вместо метки давала ненаблюдённое значение.
 
-    Значение в снимке замаскировано - скелет хранит подпись, а не текст, - но
-    само наличие атрибута наблюдено, и этого довольно, чтобы сверить, что
-    реализация читает верный узел.
+    Прежде эта проверка утверждала обратное: «значение в снимке замаскировано,
+    но само наличие атрибута наблюдено, и этого довольно». Довольно не было.
+    Разбор объявлял локаль прочитанной, значением подписи, и дальше вело так:
+    подпись не совпадала ни с одной объявленной локалью, возможность
+    protocol.locale переводилась в неподдержанную, а в журнал уходило
+    предупреждение об интерфейсе на локали «T2:a#1».
+
+    То есть собственные снимки проекта заставляли его говорить неправду, и
+    закрепляла это проверка, написанная под уже сломанное поведение.
 
     Returns:
         None
     """
+    checked = 0
     for path in sorted(PAGES.glob("*.skeleton.txt")):
         name = path.name.split(".skeleton")[0]
         observed = observe_locale(_page(name))
-        assert observed.is_observed, f"{name}: локаль не прочиталась"
+
+        assert not observed.is_observed, (
+            f"{name}: подпись выдана за локаль {observed.or_none()!r}. Возможность "
+            "protocol.locale станет неподдержанной из-за собственной фикстуры"
+        )
+        assert observed.reason == "locale_not_a_language_tag", (
+            f"{name}: причина названа как {observed.reason!r}, а узел с атрибутом в "
+            "снимке есть - значит дело не в том, что его не нашли"
+        )
+        checked += 1
+
+    assert checked, "снимков не нашлось - проверять нечего"
+
+
+def test_a_real_language_tag_is_read() -> None:
+    """Проверяет, что настоящая метка читается.
+
+    Без этой проверки предыдущая ничего не значила бы: чтение, отвергающее
+    всякое значение, тоже отвергает подпись.
+
+    Returns:
+        None
+    """
+    for tag in ("ru", "en", "ru-RU", "zh-Hans-CN"):
+        observed = observe_locale(f'<html lang="{tag}"></html>')
+        assert observed.or_none() == tag, f"метка {tag!r} не прочиталась: {observed}"
 
 
 def test_a_page_without_the_attribute_says_so() -> None:

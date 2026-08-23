@@ -760,11 +760,16 @@ def test_reading_a_page_observes_its_locale(no_sleep: list[float]) -> None:
     Returns:
         None
     """
-    page = _page("orders-trade.logged.ru")
+    # Метка подставляется в снимок здесь, а не правится в фикстуре. Скелет
+    # маскирует значения атрибутов, и в сохранённом снимке в lang лежит подпись:
+    # на нём чтение локали не исполняется по устройству формата, а не по ошибке.
+    page = _page("orders-trade.logged.ru").replace('lang="T2:a#1"', 'lang="ru"', 1)
+    assert 'lang="ru"' in page, "подпись локали в снимке выглядит иначе - поправьте подстановку"
+
     with Client(transport=_FakeFetcher([_observation(page)])) as client:  # type: ignore[arg-type]
         assert not client.locale.is_observed, "локаль известна до первого чтения"
         client.orders.list()
 
-        assert client.locale.is_observed, (
-            "страница прочитана, а локаль так и не наблюдалась"
+        assert client.locale.or_none() == "ru", (
+            f"страница прочитана, а локаль наблюдалась как {client.locale}"
         )
