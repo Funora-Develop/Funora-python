@@ -92,6 +92,19 @@ def _write_page(name: str, html: str, where: dict[str, Any] | None = None) -> st
     said = where or {}
 
     target = OUTPUT / f"{name}.skeleton.txt"
+    already = OUTPUT / f"{name}.provenance.json"
+
+    # Снимок под тем же именем, но с ДРУГОГО пути, - почти наверняка недосмотр.
+    # Так уже потерялось восемь снимков подряд: все ушли под именем первого и
+    # затёрли друг друга, а в консоли каждый раз печаталось «сохранён».
+    if already.is_file():
+        previous = json.loads(already.read_text(encoding="utf-8")).get("path", "")
+        if previous and previous != said.get("path", ""):
+            return (
+                f"НЕ СОХРАНЕНО: под именем «{name}» уже лежит снимок пути "
+                f"{previous}, а этот снят с {said.get('path', 'неизвестно откуда')}. "
+                "Дайте новое имя - иначе прежний снимок пропадёт молча"
+            )
     target.write_text(skeleton + "\n", encoding="utf-8", newline="\n")
 
     provenance = {

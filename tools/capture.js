@@ -473,12 +473,38 @@
         node = walker.nextNode()
       }
       const named = maskUrl(location.href).path.replace(/[^a-z]+/gi, '-').replace(/^-|-$/g, '')
+      // Переключатель валюты: ссылки и пункты списка, в адресе либо значении
+      // которых стоит код ISO 4217 целым словом. Он и даёт пару «знак - код»:
+      // сам по себе знак неоднозначен, один и тот же носят несколько валют.
+      //
+      // Код в адресе сохраняется ДОСЛОВНО по тому же правилу, что имя действия:
+      // это протокольная константа из закрытого перечня, а не значение.
+      const switcher = []
+      for (const one of document.querySelectorAll('a[href], option[value], [data-currency]')) {
+        const where = (one.getAttribute('href') || '')
+          + ' ' + (one.getAttribute('value') || '')
+          + ' ' + (one.getAttribute('data-currency') || '')
+        code.lastIndex = 0
+        const hit = where.match(code)
+        if (!hit || hit.length !== 1) continue
+        switcher.push({
+          code: hit[0],
+          tag: one.tagName.toLowerCase(),
+          class: one.className || '',
+          text: signature(one.textContent || ''),
+          active: /active|selected|current/i.test(one.className)
+            || one.hasAttribute('selected')
+            || one.getAttribute('aria-current') !== null,
+        })
+      }
+
       return send('currency', named || 'root', {
         page: maskUrl(location.href),
         lang: document.documentElement.lang || '',
         symbols: found,
         codes: seen,
         pairs,
+        switcher,
       })
     },
 
@@ -520,6 +546,17 @@
   // ту его редакцию, которую загрузила. Один сбор уже ушёл со старой: константы
   // остались подписями, и понять это удалось только по данным.
   window.funora.build = BUILD
+  if (BUILD.indexOf('FUNORA') >= 0) {
+    // Приёмник не подставил отпечаток - значит он запущен из редакции, которая
+    // о нём не знает. Сборщик при этом свежий, а приёмник старый, и расходятся
+    // они молча: снимок сохранится, а половина полей в нём будет пустой. Один
+    // сбор так и ушёл.
+    console.error(
+      'funora: ПРИЁМНИК УСТАРЕЛ. Остановите его (Ctrl+C), запустите заново и '
+        + 'вставьте строку загрузки ещё раз. Пока этого не сделано, снимок '
+        + 'сохранится неполным.',
+    )
+  }
   console.log(
     `%cfunora%c собран, сборка ${BUILD}. Команды: funora.page("имя"), `
       + 'funora.currency(), funora.watch(), funora.stop("имя")',
