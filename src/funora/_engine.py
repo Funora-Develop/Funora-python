@@ -35,7 +35,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic
-from typing import Final
+from typing import Final, TypeVar
 
 from ._budget import Budget
 from ._chats import ChatsPage, parse_chats_page
@@ -58,6 +58,7 @@ from ._identity import REGISTRY, Identity, identity_of
 from ._observed import Observed
 from ._orders import Completeness, OrdersPage, parse_orders_page
 from ._poll import Deduplicator, Schedule
+from ._result import Defect, Severity
 from ._retry import plan_attempt
 from ._state import StateFile
 from ._thread import Thread, parse_thread
@@ -178,47 +179,85 @@ class _State:
     locale: Observed[str] = field(default_factory=lambda: Observed.missing("not_read_yet"))
 
 
-def check_integrity(observation: Observation) -> None:
-    """Проверяет, что тело ответа получено целиком.
+def integrity_verified(observation: Observation) -> bool:
+    """Сообщает, удалось ли подтвердить, что тело ответа получено целиком.
 
-    Шаг стоит до классификации намеренно. Страница, оборванная посреди таблицы,
-    проходит классификацию как пригодная и разбор как полный: вызывающий
-    получает половину заказов и ноль повреждений. Это правдоподобный неверный
-    ответ, о неверности которого узнать неоткуда.
+    Прежде здесь стояла check_integrity, которая ничего не возвращала и не
+    вызывалась НИОТКУДА: сравнение длин живёт в классификаторе, и функция была
+    мёртвой копией его же правила. Копия проверялась своим тестом и создавала
+    впечатление работающей защиты.
 
-    Проверка работает только на несжатом теле, и клиент поэтому просит сервер
-    не сжимать. Библиотека распаковывает прозрачно, а Content-Length объявляет
-    длину сжатого тела: сравнение распакованной длины с объявленной сжатой
-    проходило всегда - двести тысяч байт против двухсот пятидесяти, - в том
-    числе на оборванном ответе.
+    Настоящая дыра была рядом. Классификатор ловит обрыв, только когда есть что
+    сравнивать: при chunked-передаче объявленной длины нет вовсе, а при сжатии
+    сравнивать нечего - объявлена длина сжатого тела, получена длина
+    распакованного. В обоих случаях он предупреждает и пропускает, а разбор
+    объявляет чтение ПОЛНЫМ.
+
+    Замер на снимке списка продаж: из двух тысяч обрывов в случайной точке 128
+    (6.4%) давали completeness=complete с числом строк меньше настоящего.
+
+    Это худший исход из возможных - правдоподобный неверный ответ. Курсор
+    снимается с полного чтения, недостающие заказы уходят из него, и при
+    следующем целом чтении приходят заново как order.created. Бот, выдающий
+    товар по этому событию, выдаёт его повторно.
 
     Args:
         observation (Observation): Результат обращения.
 
     Returns:
-        None
-
-    Raises:
-        NetworkError: Если полученная длина меньше объявленной.
+        bool: True, если целостность подтверждена сравнением длин. False, если
+        сравнивать было нечем - это не обрыв, а незнание, и обходиться с ним
+        надо как с незнанием.
     """
-    declared = observation.declared_length
     if observation.content_encoding not in ("", "identity"):
-        # Сравнивать нечего: объявленная длина относится к сжатому телу, а
-        # полученная - к распакованному. Клиент просит не сжимать; если сервер
-        # просьбу не выполнил, честнее сказать об этом, чем сравнить несравнимое
-        # и объявить целостность подтверждённой.
-        _log.warning(
-            "тело пришло сжатым (%s) вопреки просьбе: целостность не проверена, "
-            "обрыв на такой странице выглядел бы как изменение разметки",
-            observation.content_encoding,
-        )
-        return
-    if declared is None or observation.content_length >= declared:
-        return
-    raise NetworkError(
-        f"тело ответа получено не целиком: объявлено {declared} байт, "
-        f"получено {observation.content_length}. Это обрыв соединения, "
-        "а не изменение разметки"
+        return False
+    if observation.declared_length is None:
+        return False
+    return observation.content_length >= observation.declared_length
+
+
+#: Прочитанное, у чего есть полнота: страница списка либо переписка.
+PageT = TypeVar("PageT", bound="OrdersPage | ChatsPage | Thread")
+
+
+def unverified(page: PageT) -> PageT:
+    """Понижает полноту чтения, целостность которого не подтверждена.
+
+    Полным объявляется чтение, о котором ИЗВЕСТНО, что оно целое. Когда
+    сравнивать длины было нечем, это неизвестно, и объявлять полноту значит
+    выдавать незнание за знание.
+
+    Понижение - не отказ. Строки, которые прочитались, остаются на месте и
+    доступны через rows(accept_incomplete=True); меняется одно - снимет ли цикл
+    наблюдения с этого чтения курсор. Не снимет, и заказ, выпавший из
+    оборванной страницы, не будет сочтён исчезнувшим.
+
+    Args:
+        page (PageT): Разобранная страница либо переписка.
+
+    Returns:
+        PageT: Она же, если полнота и без того не полная. Иначе - с полнотой
+        partial, причиной integrity_unverified и повреждением уровня страницы.
+    """
+    if page.completeness is not Completeness.COMPLETE:
+        return page
+    return replace(
+        page,
+        completeness=Completeness.PARTIAL,
+        reason="integrity_unverified",
+        defects=(
+            *page.defects,
+            Defect(
+                severity=Severity.PAGE,
+                code="integrity_unverified",
+                detail=(
+                    "целостность тела не подтверждена: сравнивать длины было "
+                    "нечем. Чтение могло оборваться посреди списка, и объявить "
+                    "его полным значило бы выдать незнание за знание"
+                ),
+                field_name=None,
+            ),
+        ),
     )
 
 
@@ -404,6 +443,8 @@ class Engine:
         """
         observation = yield from self.fetch_ok(Capability.ORDERS_LIST, ORDERS_PATH)
         page = parse_orders_page(observation.html, observed_at=datetime.now(UTC))
+        if not integrity_verified(observation):
+            page = unverified(page)
         self._note_success(Capability.ORDERS_LIST, page.completeness, page)
         return page
 
@@ -421,6 +462,8 @@ class Engine:
         """
         observation = yield from self.fetch_ok(Capability.CHATS_LIST, CHATS_PATH)
         page = parse_chats_page(observation.html, observed_at=datetime.now(UTC))
+        if not integrity_verified(observation):
+            page = unverified(page)
         self._note_success(Capability.CHATS_LIST, page.completeness, page)
         return page
 
@@ -455,6 +498,8 @@ class Engine:
             observed_at=datetime.now(UTC),
             host=host_of(self._settings.base_url),
         )
+        if not integrity_verified(observation):
+            thread = unverified(thread)
         self._note_success(capability, thread.completeness, thread)
         return thread
 

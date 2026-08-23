@@ -72,6 +72,8 @@ def _observation(html: str, **overrides: object) -> Observation:
         elapsed_ms=10,
         redirects=0,
         content_length=len(html.encode("utf-8")),
+        # Длину объявляет и настоящий сервер: см. пояснение в tests/test_watch.py.
+        declared_length=len(html.encode("utf-8")),
     )
     return replace(base, **overrides)  # type: ignore[arg-type]
 
@@ -784,3 +786,63 @@ def test_reading_a_page_observes_its_locale(no_sleep: list[float]) -> None:
         assert client.locale.or_none() == "ru", (
             f"страница прочитана, а локаль наблюдалась как {client.locale}"
         )
+
+
+def test_read_without_declared_length_is_not_complete() -> None:
+    """Проверяет, что чтение без подтверждённой целостности не считается полным.
+
+    Сквозная проверка того, ради чего понижение и заведено. Прежде разбор
+    объявлял чтение полным независимо от того, удалось ли подтвердить, что тело
+    получено целиком. При chunked-передаче объявленной длины нет вовсе, и обрыв
+    посреди таблицы проходил и классификацию, и разбор: замер на снимке списка
+    продаж дал 128 таких случаев из двух тысяч обрывов.
+
+    Цена ошибки не в неполном списке. Курсор снимается только с ПОЛНОГО чтения:
+    объявив оборванную страницу полной, цикл уводит из курсора заказы, которых в
+    ней не было, и при следующем целом чтении отдаёт их как order.created. Бот,
+    выдающий товар по этому событию, выдаёт его повторно.
+
+    Returns:
+        None
+    """
+    html = _page("orders-trade.logged.ru")
+
+    with _client([_observation(html)]) as client:
+        whole = client.orders.list()
+    assert whole.completeness is Completeness.COMPLETE, (
+        "ответ с объявленной длиной обязан читаться полностью - иначе проверка "
+        "ниже показывала бы не понижение, а общую поломку разбора"
+    )
+
+    with _client([_observation(html, declared_length=None)]) as client:
+        page = client.orders.list()
+
+    assert page.completeness is Completeness.PARTIAL, (
+        "чтение без объявленной длины осталось полным. Подтвердить целостность "
+        "было нечем, и объявлять полноту значит выдавать незнание за знание"
+    )
+    assert page.reason == "integrity_unverified"
+    assert page.rows_accepted == whole.rows_accepted, (
+        "понижение выбросило строки: прочитанное обязано оставаться доступным"
+    )
+
+
+def test_thread_without_declared_length_is_not_complete() -> None:
+    """То же для чтения переписки: понижается и она.
+
+    Проверка отдельная, потому что путь другой: переписку читает своя ветвь
+    движка, и понижение в ней можно убрать, не тронув чтение списка.
+
+    Returns:
+        None
+    """
+    html = _page("chat-thread.logged.ru")
+
+    with _client([_observation(html, declared_length=None)]) as client:
+        thread = client.chats.thread("1")
+
+    assert thread.completeness is Completeness.PARTIAL, (
+        "переписка без подтверждённой целостности осталась полной. Оборванная "
+        "переписка объявила бы прочитанным всё, что в неё поместилось"
+    )
+    assert thread.reason == "integrity_unverified"
