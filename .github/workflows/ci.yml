@@ -102,7 +102,7 @@ jobs:
       # проверки отсутствие сверки выглядело бы как зелёная сборка.
       - name: Сверка со спецификацией выполнена, а не пропущена
         run: |
-          out=$(pytest tests/test_spec_selectors.py tests/test_generated.py tests/test_revision_source.py -q -rs)
+          out=$(pytest tests/test_spec_selectors.py tests/test_generated.py tests/test_revision_source.py tests/test_fixtures.py -q -rs)
           echo "$out"
           # Ловится недоступность спецификации, а не всякий пропуск. Пропуски
           # бывают законные: счётчик, объявленный в области строки, по документу
