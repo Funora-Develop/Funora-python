@@ -219,9 +219,7 @@ _TEXT_LIMIT: Final[int] = 200_000
 #: Перечень признаков площадки закрыт по построению: настоящая страница проверки
 #: или блокировки заменяет содержимое целиком, и ни таблицы заказов, ни виджета
 #: переписки на ней нет.
-DEFAULT_CONTENT_MARKERS: Final[tuple[str, ...]] = SELECTOR_GROUPS[
-    "session.content_markers"
-]
+DEFAULT_CONTENT_MARKERS: Final[tuple[str, ...]] = SELECTOR_GROUPS["session.content_markers"]
 
 
 def _page_text(html: str) -> str:

@@ -382,9 +382,7 @@ def _run_trace(scenario: dict[str, Any]) -> list[int | None]:
         moment: int | None = None
         for attempt in range(attempts):
             try:
-                reservation = budget.require(
-                    now_ms / 1000, cost=cost, request_class=request_class
-                )
+                reservation = budget.require(now_ms / 1000, cost=cost, request_class=request_class)
             except BudgetExhaustedError:
                 # Отказ по классу отменяемому либо ожидание дольше предела.
                 # И то и другое означает, что запрос не отправлен вовсе.

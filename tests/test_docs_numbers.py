@@ -99,8 +99,7 @@ def test_produced_event_count_matches_reality() -> None:
     """
     claimed = _number_after(_read("architecture.md"), "реализация порождает", ".")
     assert claimed == len(PRODUCIBLE), (
-        f"architecture.md обещает {claimed} порождаемых видов, порождается "
-        f"{len(PRODUCIBLE)}"
+        f"architecture.md обещает {claimed} порождаемых видов, порождается {len(PRODUCIBLE)}"
     )
 
 
@@ -127,12 +126,9 @@ def test_the_heading_counts_produced_kinds_too() -> None:
     Returns:
         None
     """
-    claimed = _number_after(
-        _read("limits.md"), "видов событий порождаются", "Перечисление"
-    )
+    claimed = _number_after(_read("limits.md"), "видов событий порождаются", "Перечисление")
     assert claimed == len(PRODUCIBLE), (
-        f"заголовок limits.md обещает {claimed} порождаемых видов, порождается "
-        f"{len(PRODUCIBLE)}"
+        f"заголовок limits.md обещает {claimed} порождаемых видов, порождается {len(PRODUCIBLE)}"
     )
 
 
@@ -182,8 +178,7 @@ def test_non_producible_count_matches_reality() -> None:
     """
     claimed = _number_after(_read("limits.md"), "подписывался на один из", ",")
     assert claimed == len(EventType) - len(PRODUCIBLE), (
-        f"limits.md обещает {claimed} непорождаемых видов, их "
-        f"{len(EventType) - len(PRODUCIBLE)}"
+        f"limits.md обещает {claimed} непорождаемых видов, их {len(EventType) - len(PRODUCIBLE)}"
     )
 
 
@@ -231,8 +226,7 @@ def test_docs_name_only_existing_fixtures() -> None:
                 missing.append(f"{path.name}: {name}")
 
     assert not missing, (
-        f"документы называют снимки, которых нет: {missing}. Доступны: "
-        f"{sorted(available)}"
+        f"документы называют снимки, которых нет: {missing}. Доступны: {sorted(available)}"
     )
 
 

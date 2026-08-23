@@ -165,8 +165,7 @@ class TokenBucket:
             if self.limits.refill_per_second <= 0:
                 return MAX_WAIT_MS
             by_tokens = (
-                int(((needed - self.tokens) / self.limits.refill_per_second) * 1000)
-                + WAIT_GUARD_MS
+                int(((needed - self.tokens) / self.limits.refill_per_second) * 1000) + WAIT_GUARD_MS
             )
 
         by_burst = 0
@@ -328,8 +327,7 @@ class Budget:
         if self.is_suspended(request_class, now):
             return Reservation(
                 granted=False,
-                wait_ms=int((self._suspended_until[request_class] - now) * 1000)
-                + WAIT_GUARD_MS,
+                wait_ms=int((self._suspended_until[request_class] - now) * 1000) + WAIT_GUARD_MS,
                 bucket="suspended",
             )
 

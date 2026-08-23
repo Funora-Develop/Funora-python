@@ -30,16 +30,12 @@ from funora.errors import ValidationError
 SPEC_DIR = os.environ.get("FUNORA_SPEC_DIR")
 
 #: Файл векторов набора.
-VECTORS = (
-    Path(SPEC_DIR) / "spec" / "conformance" / "resume.vectors.json" if SPEC_DIR else None
-)
+VECTORS = Path(SPEC_DIR) / "spec" / "conformance" / "resume.vectors.json" if SPEC_DIR else None
 
 #: Причина пропуска, если спецификации рядом нет.
 NO_SPEC = "переменная FUNORA_SPEC_DIR не задана или не указывает на рабочую копию Funora-spec"
 
-pytestmark = pytest.mark.skipif(
-    VECTORS is None or not VECTORS.is_file(), reason=NO_SPEC
-)
+pytestmark = pytest.mark.skipif(VECTORS is None or not VECTORS.is_file(), reason=NO_SPEC)
 
 
 def _document() -> dict[str, Any]:
@@ -266,8 +262,7 @@ def test_the_answer_does_not_depend_on_the_declared_uptime() -> None:
     """
     for scenario in _scenarios():
         answers = [
-            _run_scenario({**scenario, "uptime_s": uptime})
-            for uptime in (1, 3600, 604800, 8640000)
+            _run_scenario({**scenario, "uptime_s": uptime}) for uptime in (1, 3600, 604800, 8640000)
         ]
         assert all(one == answers[0] for one in answers), (
             f"сценарий «{scenario['name']}» отвечает по-разному при разном аптайме: {answers}"

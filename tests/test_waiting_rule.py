@@ -55,8 +55,7 @@ def test_every_pause_rounds_by_the_declared_guard() -> None:
                 offenders.append(f"{path.name}:{number}: {line.strip()}")
 
     assert not offenders, (
-        "пауза округляется литералом вместо объявленной величины:\n  "
-        + "\n  ".join(offenders)
+        "пауза округляется литералом вместо объявленной величины:\n  " + "\n  ".join(offenders)
     )
 
 

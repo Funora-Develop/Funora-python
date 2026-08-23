@@ -169,6 +169,7 @@ def test_foreign_adapter_family_is_loud(tmp_path: Path) -> None:
 #: бы и часы тоже.
 WALL: int = 1_700_000_000_000
 
+
 def test_dedup_survives_a_restart(tmp_path: Path) -> None:
     """Проверяет главное свойство: повтор гасится после перезапуска.
 

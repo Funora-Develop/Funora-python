@@ -98,9 +98,7 @@ def _serialize_reject() -> list[tuple[str, Any]]:
     """
     if not _have_spec():
         return []
-    return [
-        (v["name"], _materialise(v["input"])) for v in _vectors()["serialize"]["reject"]
-    ]
+    return [(v["name"], _materialise(v["input"])) for v in _vectors()["serialize"]["reject"]]
 
 
 def _fingerprint_accept() -> list[tuple[str, dict[str, str], str | None, str | None]]:
@@ -194,9 +192,7 @@ def test_fingerprint_matches_the_vector(
         assert got == expected, f"вектор «{name}»"
 
     if same_as is not None:
-        other = next(
-            v for v in _vectors()["fingerprint"]["accept"] if v["name"] == same_as
-        )
+        other = next(v for v in _vectors()["fingerprint"]["accept"] if v["name"] == same_as)
         assert got == _digest(other["input"]), (
             f"вектор «{name}» обязан совпасть с «{same_as}», а не совпал. "
             "Значит нормализация Unicode не применяется, и две реализации, "
@@ -229,9 +225,7 @@ def test_normalization_is_not_a_no_op() -> None:
     Returns:
         None
     """
-    vector = next(
-        v for v in _vectors()["fingerprint"]["accept"] if v.get("same_as") is not None
-    )
+    vector = next(v for v in _vectors()["fingerprint"]["accept"] if v.get("same_as") is not None)
     raw = vector["input"]["account_id"]
     assert raw != unicodedata.normalize("NFC", raw), (
         "вектор нормализации записан уже нормализованным - он не проверяет ничего"
@@ -368,9 +362,7 @@ def test_the_same_moment_gives_the_same_bytes_in_any_timezone() -> None:
         if hasattr(time, "tzset"):
             time.tzset()
 
-    assert len(set(outputs)) == 1, (
-        f"часовой пояс машины изменил вывод: {sorted(set(outputs))}"
-    )
+    assert len(set(outputs)) == 1, f"часовой пояс машины изменил вывод: {sorted(set(outputs))}"
     assert outputs[0] == '{"observed_at":"2026-08-18T04:12:33.123Z"}'
 
 

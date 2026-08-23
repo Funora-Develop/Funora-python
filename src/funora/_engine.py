@@ -1047,9 +1047,7 @@ class Engine:
         # зависшего процесса.
         waited = 0
         for attempt in range(WAIT_ATTEMPTS):
-            reservation = self._budget.require(
-                monotonic(), cost=cost, request_class=request_class
-            )
+            reservation = self._budget.require(monotonic(), cost=cost, request_class=request_class)
             if reservation.granted:
                 return
             if attempt + 1 == WAIT_ATTEMPTS:
@@ -1098,9 +1096,7 @@ class Engine:
             None
         """
         for _ in range(max(0, count)):
-            reservation = self._budget.reserve(
-                monotonic(), cost, request_class=request_class
-            )
+            reservation = self._budget.reserve(monotonic(), cost, request_class=request_class)
             if reservation.granted:
                 continue
 
@@ -1110,9 +1106,7 @@ class Engine:
             # клиентом и тот успел раньше. Настаивать дальше нельзя: долг не
             # растёт, а зациклиться на нём хуже, чем недосчитать один токен и
             # сказать об этом вслух.
-            if not self._budget.reserve(
-                monotonic(), cost, request_class=request_class
-            ).granted:
+            if not self._budget.reserve(monotonic(), cost, request_class=request_class).granted:
                 _log.warning(
                     "бюджет не доплачен за уже отправленный запрос: ведро %s занято",
                     reservation.bucket,

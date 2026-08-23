@@ -73,9 +73,7 @@ def test_writes_are_allowed_only_in_the_initial_state() -> None:
         None
     """
     allowed = set(Health) - WRITES_PAUSED_IN
-    assert allowed == {INITIAL_HEALTH}, (
-        f"запись разрешена в {sorted(x.value for x in allowed)}"
-    )
+    assert allowed == {INITIAL_HEALTH}, f"запись разрешена в {sorted(x.value for x in allowed)}"
 
 
 def _limited(times: int) -> Identity:
@@ -196,9 +194,7 @@ def test_own_cooldown_wins_when_the_site_asks_for_less() -> None:
     identity = Identity(name="проба@funpay.com", budget=Budget())
     identity.note_limit(NOW, retry_after_ms=1_000)
 
-    assert identity.cooldown_until - NOW >= 60.0, (
-        "своё остывание укоротилось до просьбы площадки"
-    )
+    assert identity.cooldown_until - NOW >= 60.0, "своё остывание укоротилось до просьбы площадки"
 
 
 def test_a_policy_without_the_flag_does_not_hold_the_identity() -> None:

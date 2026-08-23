@@ -312,8 +312,7 @@ class Deduplicator:
         moment = _now_ms() if wall_ms is None else wall_ms
         return {
             key: {
-                event_id: moment - round((now - stamp) * 1000)
-                for event_id, stamp in bucket.items()
+                event_id: moment - round((now - stamp) * 1000) for event_id, stamp in bucket.items()
             }
             for key, bucket in self._seen.items()
             if bucket

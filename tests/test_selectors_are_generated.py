@@ -58,6 +58,7 @@ def _looks_like_selector(literal: str) -> bool:
         return False
     return any(_HYPHENATED.search(part) or _ATTRIBUTE.search(part) for part in parts)
 
+
 #: Строки, похожие на селектор и селекторами не являющиеся.
 #:
 #: Перечисление, а не признак: признак пришлось бы ставить в коде, а он там
@@ -146,9 +147,7 @@ def test_every_generated_selector_is_read() -> None:
     tight = re.sub(r"\s+", "", blob)
 
     silent = [key for key in sorted(SELECTORS) if f'SELECTORS["{key}"]' not in tight]
-    silent += [
-        key for key in sorted(SELECTOR_GROUPS) if f'SELECTOR_GROUPS["{key}"]' not in tight
-    ]
+    silent += [key for key in sorted(SELECTOR_GROUPS) if f'SELECTOR_GROUPS["{key}"]' not in tight]
 
     # Перечень нечитаемых объявлен рядом с проверкой, а не выведен по факту:
     # выведенный по факту всегда сходится сам с собой.

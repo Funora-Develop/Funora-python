@@ -32,9 +32,7 @@ from funora.errors import BudgetExhaustedError
 SPEC_DIR = os.environ.get("FUNORA_SPEC_DIR")
 
 #: Файл векторов набора.
-VECTORS = (
-    Path(SPEC_DIR) / "spec" / "conformance" / "rate-budget.vectors.json" if SPEC_DIR else None
-)
+VECTORS = Path(SPEC_DIR) / "spec" / "conformance" / "rate-budget.vectors.json" if SPEC_DIR else None
 
 #: Причина пропуска, если спецификации рядом нет.
 NO_SPEC = "переменная FUNORA_SPEC_DIR не задана или не указывает на рабочую копию Funora-spec"

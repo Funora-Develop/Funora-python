@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -82,6 +83,29 @@ SOURCES: Final[frozenset[str]] = frozenset(
         "spec/version.yaml",
     }
 )
+
+
+def _literal(value: str) -> str:
+    """Записывает строку так, как её записал бы форматтер проекта.
+
+    Порождается КОД, а не отладочный вывод. repr даёт одинарные кавычки, а
+    ruff format требует двойных, и порождённый файл сразу оказывался
+    неотформатированным. Починить это правкой файла нельзя: он тут же перестал
+    бы совпадать с генератором, и падала бы уже проверка свежести. Значит
+    печатать надо сразу так, как ожидает форматтер.
+
+    Args:
+        value (str): Строка, которую надо записать литералом.
+
+    Returns:
+        str: Литерал в тех кавычках, которые выбрал бы форматтер.
+    """
+    # Форматтер предпочитает двойные кавычки и выбирает одинарные там, где
+    # двойные пришлось бы экранировать. Селектор вида script[src*="captcha"] -
+    # ровно этот случай.
+    if "\"" in value and "'" not in value:
+        return "'" + value + "'"
+    return json.dumps(value, ensure_ascii=False)
 
 
 def _load(spec: Path, relative: str) -> dict[str, Any]:
@@ -550,9 +574,7 @@ def render_response_classes(spec: Path) -> str:
     paused = list(health.get("writes_paused_in") or [])
 
     if not states:
-        raise SystemExit(
-            "spec/protocol/response-classes.yaml: состояния доступа не объявлены"
-        )
+        raise SystemExit("spec/protocol/response-classes.yaml: состояния доступа не объявлены")
     if health.get("initial") not in states:
         raise SystemExit(
             "spec/protocol/response-classes.yaml: начальное состояние не входит в перечень"
@@ -855,9 +877,7 @@ def render_budget(spec: Path) -> str:
             extra=extra,
         ).replace(
             "from typing import ClassVar, Final",
-            "from dataclasses import dataclass\n"
-            "from enum import StrEnum\n"
-            "from typing import Final",
+            "from dataclasses import dataclass\nfrom enum import StrEnum\nfrom typing import Final",
         )
     ]
 
@@ -928,14 +948,11 @@ def render_budget(spec: Path) -> str:
             "а числа у вёдер стоят"
         )
     if burst.get("meaning") is None:
-        raise SystemExit(
-            "spec/runtime/budget.yaml: burst_rule не говорит, что ограничивает залп"
-        )
+        raise SystemExit("spec/runtime/budget.yaml: burst_rule не говорит, что ограничивает залп")
     for name, entry in doc["buckets"].items():
         if not isinstance(entry.get("burst"), int) or entry["burst"] <= 0:
             raise SystemExit(
-                f"spec/runtime/budget.yaml: у ведра {name} залп не объявлен либо "
-                "неположителен"
+                f"spec/runtime/budget.yaml: у ведра {name} залп не объявлен либо неположителен"
             )
         if entry["burst"] > entry["capacity"]:
             raise SystemExit(
@@ -1005,9 +1022,7 @@ def render_budget(spec: Path) -> str:
             "не получит порога допуска и пройдёт мимо правила"
         )
     if sorted(reserved) != sorted(classes):
-        raise SystemExit(
-            "spec/runtime/budget.yaml: reserved_above объявлен не для всех классов"
-        )
+        raise SystemExit("spec/runtime/budget.yaml: reserved_above объявлен не для всех классов")
 
     running = 0.0
     for name in order:
@@ -1036,7 +1051,7 @@ def render_budget(spec: Path) -> str:
     for name in order:
         out.append(f'    {name.upper()} = "{name}"\n')
 
-    out.append("\n#: Что делать с запросом, которого ёмкость не пускает.\n")
+    out.append("\n\n#: Что делать с запросом, которого ёмкость не пускает.\n")
     out.append("#:\n")
     out.append('#: "wait" - ждать пополнения, "refuse" - отказать немедленно.\n')
     out.append("#: Отказать можно только тому, кого спецификация объявила\n")
@@ -1449,8 +1464,7 @@ def render_events(spec: Path) -> str:
     unknown = sorted(set(sources) - set(derivation))
     if unknown:
         raise SystemExit(
-            "spec/events/delivery.yaml: версия объявлена для несуществующих видов "
-            f"{unknown}"
+            f"spec/events/delivery.yaml: версия объявлена для несуществующих видов {unknown}"
         )
 
     out.append("\n\n#: Версия события, случающегося с сущностью однажды.\n")
@@ -1480,7 +1494,6 @@ def render_events(spec: Path) -> str:
     out.append("#: они - составная версия положила бы разделитель отпечатка внутрь\n")
     out.append("#: его же части. Склейка перестала бы различать четвёрки полей.\n")
     out.append('REVISION_SEPARATOR: Final[str] = "\\x1e"\n')
-
 
     out.append("\n#: Можно ли выбрасывать события полосы при переполнении.\n")
     out.append("LANE_DROPPABLE: Final[dict[str, bool]] = {\n")
@@ -1854,8 +1867,7 @@ def _selectors(spec: Path) -> tuple[dict[str, str], dict[str, tuple[str, ...]]]:
     both = set(found) & set(groups)
     if both:
         raise SystemExit(
-            f"spec/extraction: ключи {sorted(both)} объявлены и одиночным "
-            "селектором, и перечнем"
+            f"spec/extraction: ключи {sorted(both)} объявлены и одиночным селектором, и перечнем"
         )
     return found, {name: tuple(items) for name, items in groups.items()}
 
@@ -1970,7 +1982,7 @@ def render_skeleton(spec: Path) -> str:
     out.append("#: тексту, и снимок одной перестанет годиться другой.\n")
     out.append("CHARACTER_CLASSES: Final[dict[str, str]] = {\n")
     for key in sorted(classes):
-        out.append(f'    "{key}": {classes[key]!r},\n')
+        out.append(f'    "{key}": {_literal(classes[key])},\n')
     out.append("}\n")
 
     return "".join(out)
@@ -2116,7 +2128,7 @@ def render_extraction(spec: Path) -> str:
     for key in sorted(selectors):
         # repr, а не подстановка в кавычки: селектор вправе содержать кавычки
         # сам - input[type="password"] разорвал бы строку.
-        out.append(f'    "{key}": {selectors[key]!r},\n')
+        out.append(f'    "{key}": {_literal(selectors[key])},\n')
     out.append("}\n")
 
     out.append("\n\n#: Перечни селекторов, объявленные спецификацией.\n")
@@ -2129,12 +2141,17 @@ def render_extraction(spec: Path) -> str:
     out.append("#: середину перечня переставила бы все последующие ключи.\n")
     out.append("SELECTOR_GROUPS: Final[dict[str, tuple[str, ...]]] = {\n")
     for key in sorted(groups):
+        items = groups[key]
+        if len(items) == 1:
+            # Кортеж из одного элемента форматтер свернул бы в строку сам, и
+            # порождённый файл оказался бы неотформатированным.
+            out.append(f'    "{key}": ({_literal(items[0])},),\n')
+            continue
         out.append(f'    "{key}": (\n')
-        for item in groups[key]:
-            out.append(f"        {item!r},\n")
-        out.append("    ),\n")
+        for item in items:
+            out.append(f"        {_literal(item)},\n")
+        out.append("    )," + chr(10))
     out.append("}\n")
-
 
     # --- Знак валюты и её код ------------------------------------------------
     money = _load(spec, "spec/types.yaml")["types"]["money"]
@@ -2192,19 +2209,23 @@ def render_extraction(spec: Path) -> str:
     out.append("#: заказу молча, и заметил бы это не разработчик, а продавец.\n")
     out.append("CURRENCY_BY_SYMBOL: Final[dict[str, str]] = {\n")
     for symbol in sorted(known):
-        out.append(f"    {symbol!r}: {known[symbol]!r},\n")
+        out.append(f"    {_literal(symbol)}: {_literal(known[symbol])},\n")
     out.append("}\n")
 
     out.append("\n#: Знаки, которые на этой площадке носят несколько валют.\n")
     out.append("#:\n")
     out.append("#: Объявляются отдельно от отсутствия. Отсутствие означает «знака\n")
     out.append("#: не видели», неоднозначность - «видели, и он не решает».\n")
-    out.append("AMBIGUOUS_CURRENCY_SYMBOLS: Final[frozenset[str]] = frozenset(\n")
-    out.append("    {\n")
-    for symbol in sorted(ambiguous):
-        out.append(f"        {symbol!r},\n")
-    out.append("    }\n")
-    out.append(")\n")
+    if ambiguous:
+        out.append("AMBIGUOUS_CURRENCY_SYMBOLS: Final[frozenset[str]] = frozenset(\n")
+        out.append("    {\n")
+        for symbol in sorted(ambiguous):
+            out.append(f"        {_literal(symbol)},\n")
+        out.append("    }\n")
+        out.append(")\n")
+    else:
+        # Пустое множество форматтер свернул бы в строку сам.
+        out.append("AMBIGUOUS_CURRENCY_SYMBOLS: Final[frozenset[str]] = frozenset({})\n")
 
     return "".join(out)
 

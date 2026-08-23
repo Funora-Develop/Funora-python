@@ -257,8 +257,7 @@ def test_the_table_matches_the_contract() -> None:
 
     for symbol, entry in table.items():
         assert entry.get("evidence"), (
-            f"у знака {symbol!r} нет ссылки на наблюдение: запись без неё "
-            "неотличима от выдуманной"
+            f"у знака {symbol!r} нет ссылки на наблюдение: запись без неё неотличима от выдуманной"
         )
 
 

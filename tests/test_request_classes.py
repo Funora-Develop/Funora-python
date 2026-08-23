@@ -130,8 +130,7 @@ def test_demand_expires() -> None:
 
     later = NOW + DEMAND_WINDOW_MS / 1000 + 1
     assert budget._floor_for(RequestClass.MONITORING, later) == 0.0, (
-        "спрос не состарился: класс, замолчавший на всё окно, продолжает "
-        "занимать долю"
+        "спрос не состарился: класс, замолчавший на всё окно, продолжает занимать долю"
     )
 
 

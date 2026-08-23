@@ -43,9 +43,7 @@ def test_every_operation_declares_its_errors() -> None:
         None
     """
     for name, operation in OPERATIONS.items():
-        assert isinstance(operation.errors, tuple), (
-            f"операция {name} не объявляет перечень ошибок"
-        )
+        assert isinstance(operation.errors, tuple), f"операция {name} не объявляет перечень ошибок"
 
 
 def test_declared_errors_exist() -> None:

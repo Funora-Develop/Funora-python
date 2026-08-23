@@ -76,8 +76,7 @@ def test_character_classes_match_the_contract(expected: str, sample: str) -> Non
     """
     assert expected in CHARACTER_CLASSES, f"класс «{expected}» пропал из контракта"
     assert _char_class(sample) == expected, (
-        f"знак {sample!r} отнесён к классу {_char_class(sample)!r}, а контракт "
-        f"ждёт {expected!r}"
+        f"знак {sample!r} отнесён к классу {_char_class(sample)!r}, а контракт ждёт {expected!r}"
     )
 
 
@@ -92,8 +91,7 @@ def test_every_declared_class_is_reachable() -> None:
         None
     """
     assert set(CHARACTER_CLASSES) == set(SAMPLES), (
-        f"контракт объявляет {sorted(CHARACTER_CLASSES)}, а проверка знает "
-        f"{sorted(SAMPLES)}"
+        f"контракт объявляет {sorted(CHARACTER_CLASSES)}, а проверка знает {sorted(SAMPLES)}"
     )
 
 

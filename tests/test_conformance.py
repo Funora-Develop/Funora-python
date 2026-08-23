@@ -57,9 +57,7 @@ def test_the_whole_suite_passes() -> None:
         check=False,
     )
 
-    assert run.returncode == 0, (
-        f"набор не пройден:\n{run.stdout}\n{run.stderr}"
-    )
+    assert run.returncode == 0, f"набор не пройден:\n{run.stdout}\n{run.stderr}"
     assert "отказов: 0" in run.stdout, run.stdout
 
 

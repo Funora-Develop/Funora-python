@@ -221,10 +221,10 @@ def test_the_record_never_carries_cyrillic() -> None:
         "''",
         "'привет мир'",
         "'a=1&b=Иван'",
-        "'{\"nick\":\"Иван\",\"count\":3,\"ratio\":1.5}'",
-        "'{\"deep\":{\"a\":{\"b\":{\"c\":{\"d\":{\"e\":{\"f\":{\"g\":1}}}}}}}}'",
-        "'{\"list\":[\"Иван\",\"Пётр\",\"Сидор\"]}'",
-        "'{\"empty\":[],\"nothing\":null,\"flag\":true}'",
+        '\'{"nick":"Иван","count":3,"ratio":1.5}\'',
+        '\'{"deep":{"a":{"b":{"c":{"d":{"e":{"f":{"g":1}}}}}}}}\'',
+        '\'{"list":["Иван","Пётр","Сидор"]}\'',
+        '\'{"empty":[],"nothing":null,"flag":true}\'',
         "new URLSearchParams({node:'Иван', text:'привет'})",
         "42",
         "null",
@@ -245,7 +245,7 @@ def test_the_record_never_carries_a_value() -> None:
     Returns:
         None
     """
-    body = "'{\"nick\":\"ИванПетров\",\"order\":\"8471223\",\"token\":\"abc123secret\"}'"
+    body = '\'{"nick":"ИванПетров","order":"8471223","token":"abc123secret"}\''
     text = json.dumps(_in_node(f"shapeOf({body})"), ensure_ascii=False)
 
     for secret in ("ИванПетров", "8471223", "abc123secret"):

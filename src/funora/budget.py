@@ -132,6 +132,7 @@ class RequestClass(StrEnum):
     POLL = "poll"
     MONITORING = "monitoring"
 
+
 #: Что делать с запросом, которого ёмкость не пускает.
 #:
 #: "wait" - ждать пополнения, "refuse" - отказать немедленно.

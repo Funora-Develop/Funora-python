@@ -129,9 +129,7 @@ def test_nothing_is_spent_on_refusal() -> None:
 
     assert not first.granted
     assert not later.granted
-    assert later.wait_ms <= first.wait_ms, (
-        "двадцать отказов удлинили ожидание: отказ тратит бюджет"
-    )
+    assert later.wait_ms <= first.wait_ms, "двадцать отказов удлинили ожидание: отказ тратит бюджет"
 
 
 def test_bucket_refills_over_time() -> None:

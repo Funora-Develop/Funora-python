@@ -2367,5 +2367,3 @@ def test_overflow_drops_the_newest_and_keeps_the_oldest(
         f"{limit}. Значит уцелел хвост, а не голова, и самые давние диалоги "
         "не дочитаются никогда"
     )
-
-
