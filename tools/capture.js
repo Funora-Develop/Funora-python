@@ -486,10 +486,13 @@
       // Код в адресе сохраняется ДОСЛОВНО по тому же правилу, что имя действия:
       // это протокольная константа из закрытого перечня, а не значение.
       const switcher = []
-      for (const one of document.querySelectorAll('a[href], option[value], [data-currency]')) {
-        const where = (one.getAttribute('href') || '')
-          + ' ' + (one.getAttribute('value') || '')
-          + ' ' + (one.getAttribute('data-currency') || '')
+      for (const one of document.querySelectorAll('a, option, [class*=curr], [class*=cy]')) {
+        // Смотрятся ВСЕ значения атрибутов, а не три угаданных имени. Первый
+        // сбор искал href, value и data-currency и вернул пусто; код лежал в
+        // data-cy - имени, которого не угадать. Перечислять имена нельзя,
+        // перечислять можно только форму значения.
+        let where = one.getAttribute('href') || ''
+        for (const attribute of one.attributes) where += ' ' + attribute.value
         code.lastIndex = 0
         const hit = where.match(code)
         if (!hit || hit.length !== 1) continue
@@ -497,6 +500,10 @@
           code: hit[0],
           tag: one.tagName.toLowerCase(),
           class: one.className || '',
+          // Имя атрибута, в котором нашёлся код, - половина ответа: по нему
+          // пишется правило извлечения. Значения прочих атрибутов не берутся.
+          attribute: [...one.attributes].filter((a) => code.test(a.value))
+            .map((a) => a.name).sort().join(','),
           text: signature(one.textContent || ''),
           active: /active|selected|current/i.test(one.className)
             || one.hasAttribute('selected')

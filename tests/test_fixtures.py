@@ -32,6 +32,7 @@ PAGES = Path(__file__).parent / "fixtures" / "pages"
 
 #: Ожидаемый вердикт для каждой фикстуры.
 EXPECTED = {
+    "order.logged.ru": ResponseClass.OK,
     "orders-trade.logged.ru": ResponseClass.OK,
     "chat.logged.ru": ResponseClass.OK,
     "chat-thread.logged.ru": ResponseClass.OK,

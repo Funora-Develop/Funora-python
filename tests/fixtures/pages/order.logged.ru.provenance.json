@@ -1,0 +1,14 @@
+{
+  "captured_at": "2026-08-23T00:45:38+00:00",
+  "captured_by": "tools/capture.py",
+  "captured_format": "structural-skeleton-v6",
+  "converted": false,
+  "final_url": "https://funpay.com/orders/{n}/",
+  "format": "structural-skeleton-v6",
+  "http_status": 200,
+  "locale": "ru",
+  "note": "Структурный скелет, снятый из открытой вкладки браузера. Текст заменён подписями, сегменты путей с идентификаторами обезличены. Сырой HTML не сохраняется и на диск не попадает.",
+  "path": "/orders/{n}/",
+  "redirects": 0,
+  "title_signature": "T24:acdps"
+}
