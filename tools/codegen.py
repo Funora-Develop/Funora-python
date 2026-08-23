@@ -1808,6 +1808,89 @@ def render_operations(spec: Path) -> str:
     return "".join(out)
 
 
+def _attributes(spec: Path) -> dict[str, str]:
+    """Собирает имена атрибутов разметки из файлов извлечения.
+
+    Имя атрибута - такой же договор с площадкой, как и селектор, и жило оно
+    ровно так же в двух местах: объявлением в spec/extraction и литералом в
+    коде. Площадка переименует атрибут - правят один файл из двух, и расхождение
+    молчит.
+
+    Признаются два написания. Ключ ``attribute`` со строковым значением - когда
+    атрибут у объявления один. Блок ``attributes`` с полем ``name`` у каждой
+    записи - когда их несколько и у каждого своя роль.
+
+    Блок ``*_attribute`` без строкового значения пропускается нарочно: он
+    описывает форму значения, а не называет атрибут.
+
+    Args:
+        spec (Path): Корень рабочей копии Funora-spec.
+
+    Returns:
+        dict[str, str]: Имена атрибутов по ключу, выведенному из пути.
+
+    Raises:
+        SystemExit: Если два разных имени претендуют на один ключ либо запись
+            блока attributes не назвала имени.
+    """
+    found: dict[str, str] = {}
+
+    def walk(node: Any, path: str, origin: str) -> None:
+        """Обходит документ, собирая имена атрибутов.
+
+        Args:
+            node (Any): Узел документа.
+            path (str): Путь до узла.
+            origin (str): Имя файла без расширения.
+
+        Returns:
+            None
+        """
+        if isinstance(node, dict):
+            for key, value in node.items():
+                here = f"{path}.{key}" if path else key
+                if (key == "attribute" or key.endswith("_attribute")) and isinstance(
+                    value, str
+                ):
+                    found[f"{origin}.{here}"] = value
+                    continue
+                if key == "attributes" and isinstance(value, dict):
+                    for name, body in value.items():
+                        if not isinstance(body, dict):
+                            continue
+                        declared = body.get("name")
+                        if not isinstance(declared, str) or not declared.strip():
+                            raise SystemExit(
+                                f"spec/extraction: атрибут {origin}.{here}.{name} "
+                                "не назвал имени. Читать его будет неоткуда, и "
+                                "каждая реализация возьмёт своё"
+                            )
+                        key_name = f"{origin}.{here}.{name}"
+                        if key_name in found and found[key_name] != declared:
+                            raise SystemExit(
+                                f"spec/extraction: два имени на один ключ {key_name}"
+                            )
+                        found[key_name] = declared
+                    continue
+                walk(value, here, origin)
+        elif isinstance(node, list):
+            for index, value in enumerate(node):
+                walk(value, f"{path}[{index}]", origin)
+
+    for relative in sorted(SOURCES):
+        if not relative.startswith("spec/extraction/"):
+            continue
+        walk(_load(spec, relative), "", Path(relative).stem)
+
+    if not found:
+        raise SystemExit(
+            "spec/extraction: не объявлено ни одного имени атрибута. Прежде их "
+            "было четыре, и потерять их молча нельзя: разбор списка диалогов "
+            "стоит на них целиком"
+        )
+    return found
+
+
 def _selectors(spec: Path) -> tuple[dict[str, str], dict[str, tuple[str, ...]]]:
     """Собирает селекторы разбора из файлов извлечения.
 
@@ -2064,6 +2147,7 @@ def render_extraction(spec: Path) -> str:
         "PRESENCE_BY_CLASS",
         "CURRENCY_BY_SYMBOL",
         "AMBIGUOUS_CURRENCY_SYMBOLS",
+        "ATTRIBUTES",
         "SELECTORS",
         "SELECTOR_GROUPS",
     ):
@@ -2140,6 +2224,20 @@ def render_extraction(spec: Path) -> str:
         # repr, а не подстановка в кавычки: селектор вправе содержать кавычки
         # сам - input[type="password"] разорвал бы строку.
         out.append(f'    "{key}": {_literal(selectors[key])},\n')
+    out.append("}\n")
+
+    attributes = _attributes(spec)
+    out.append("\n\n#: Имена атрибутов разметки, объявленные спецификацией.\n")
+    out.append("#:\n")
+    out.append("#: Имя атрибута - такой же договор с площадкой, как и селектор, и\n")
+    out.append("#: жило оно ровно так же в двух местах: объявлением в\n")
+    out.append("#: spec/extraction и литералом в коде. Площадка переименует\n")
+    out.append("#: атрибут - правят один файл из двух, и расхождение молчит.\n")
+    out.append("#:\n")
+    out.append("#: Ключ выведен из пути внутри документа, как и у селекторов.\n")
+    out.append("ATTRIBUTES: Final[dict[str, str]] = {\n")
+    for key in sorted(attributes):
+        out.append(f'    "{key}": {_literal(attributes[key])},\n')
     out.append("}\n")
 
     out.append("\n\n#: Перечни селекторов, объявленные спецификацией.\n")

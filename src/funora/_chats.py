@@ -36,7 +36,7 @@ from ._extract import attribute as attribute_of
 from ._observed import Confidence, Observed
 from ._result import Completeness, Defect, Severity, collect_rows
 from .errors import IncompleteResultError, ProtocolChangedError
-from .extraction import SELECTORS
+from .extraction import ATTRIBUTES, SELECTORS
 
 __all__ = ["ChatListEntry", "ChatsPage", "parse_chats_page"]
 
@@ -193,7 +193,9 @@ def _parse_row(row: Node, index: int) -> tuple[ChatListEntry | None, list[Defect
     """
     defects: list[Defect] = []
 
-    node_id = ((row.attributes or {}).get("data-id") or "").strip()
+    node_id = (
+        (row.attributes or {}).get(ATTRIBUTES["chats.contact_list.attributes.node_id"]) or ""
+    ).strip()
     # Адрес наблюдаемый, а не голая строка. Идентификатор берётся из атрибута,
     # если он есть, и строка со ссылкой принимается наравне со строкой без неё -
     # то есть отсутствие адреса не отбрасывает запись. Голая строка отдала бы
@@ -214,8 +216,8 @@ def _parse_row(row: Node, index: int) -> tuple[ChatListEntry | None, list[Defect
         )
         return None, defects
 
-    last = _position(row, "data-node-msg")
-    own = _position(row, "data-user-msg")
+    last = _position(row, ATTRIBUTES["chats.contact_list.attributes.last_message_position"])
+    own = _position(row, ATTRIBUTES["chats.contact_list.attributes.own_position"])
 
     if last.is_observed and own.is_observed:
         # Правило выведено, а не наблюдено: расхождения пары при непрочитанном
