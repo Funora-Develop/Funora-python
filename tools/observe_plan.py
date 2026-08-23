@@ -29,6 +29,42 @@ OBSERVATIONS = Path(__file__).resolve().parent.parent / "observations"
 FIXTURES = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "pages"
 
 
+def _load_yaml() -> Any:
+    """Возвращает разборщик YAML либо объясняет, чего не хватает.
+
+    Голый ModuleNotFoundError здесь бесполезен вдвойне. Во-первых, PyYAML -
+    необязательная зависимость: он нужен инструментам, а не самому пакету, и не
+    ставится обычной установкой. Во-вторых, самая частая причина - запуск
+    системным python вместо того, что в .venv, и трассировка об этом молчит.
+
+    Returns:
+        Any: Модуль yaml.
+
+    Raises:
+        SystemExit: Если разборщика нет - с указанием, что именно сделать.
+    """
+    try:
+        import yaml
+    except ModuleNotFoundError:
+        venv = Path(__file__).resolve().parent.parent / ".venv" / "Scripts" / "python.exe"
+        running = Path(sys.executable).resolve()
+        if venv.is_file() and running != venv.resolve():
+            hint = (
+                "Похоже, запущен системный python, а не тот, что в .venv. "
+                "Тот же вызов через него:\n\n"
+                f"    {venv} tools/observe_plan.py --next\n"
+            )
+        else:
+            hint = "Поставьте разборщик:\n\n    python -m pip install PyYAML\n"
+        raise SystemExit(
+            "нужен PyYAML: план наблюдений лежит в YAML, а разборщика нет."
+            f"\n\n{hint}\n"
+            "PyYAML - необязательная зависимость: он нужен инструментам "
+            "разработки, а не самому пакету, и обычной установкой не ставится."
+        ) from None
+    return yaml
+
+
 def _spec_root() -> Path:
     """Находит рабочую копию спецификации.
 
@@ -104,10 +140,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    import yaml
-
+    _load_yaml()
     root = _spec_root()
-    doc: dict[str, Any] = yaml.safe_load(
+    doc: dict[str, Any] = _load_yaml().safe_load(
         (root / "spec" / "conformance" / "observations-needed.yaml").read_text(encoding="utf-8")
     )
     seen = _already_seen()
