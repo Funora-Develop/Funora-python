@@ -38,7 +38,6 @@ __all__ = [
     "CurrencyMismatchError",
     "UnsupportedCapabilityError",
     "ExperimentalCapabilityError",
-    "UnsupportedLocaleError",
     "TimeoutError",
     "NetworkError",
     "RateLimitedError",
@@ -490,30 +489,6 @@ class ExperimentalCapabilityError(CapabilityError):
     since_spec: ClassVar[str] = "0.1.0"
 
 
-class UnsupportedLocaleError(CapabilityError):
-    """Интерфейс аккаунта отдан на локали, для которой у адаптера нет текстовых шаблонов.
-    Возвращать пустой результат в этом случае запрещено: смена языка интерфейса тихо
-    выключила бы распознавание событий заказа.
-
-    Повтор не поможет, исправляется тем, кто вызвал.
-
-    Attributes:
-        stable_id (str): Устойчивый идентификатор "funora.capability.unsupported_locale".
-        abi_code (int): Числовой код 1403, общий для всех SDK.
-        retryable (bool): Допустим ли повтор: False.
-        side_effects_possible (bool): Могло ли действие произойти: False.
-        user_actionable (bool): Исправляется ли вызывающим: True.
-        since_spec (str): Версия спецификации "0.1.0".
-    """
-
-    stable_id: ClassVar[str] = "funora.capability.unsupported_locale"
-    abi_code: ClassVar[int] = 1403
-    retryable: ClassVar[bool] = False
-    side_effects_possible: ClassVar[bool] = False
-    user_actionable: ClassVar[bool] = True
-    since_spec: ClassVar[str] = "0.1.0"
-
-
 class TimeoutError(TransportError):
     """Ответ не получен вовремя. Исход операции неизвестен - это ambiguous timeout, и
     повтор небезопасной операции без сверки состояния запрещён.
@@ -931,7 +906,6 @@ ERROR_BY_STABLE_ID: Final[dict[str, type[Exception]]] = {
     "funora.validation.currency_mismatch": CurrencyMismatchError,
     "funora.capability.unsupported": UnsupportedCapabilityError,
     "funora.capability.experimental": ExperimentalCapabilityError,
-    "funora.capability.unsupported_locale": UnsupportedLocaleError,
     "funora.transport.timeout": TimeoutError,
     "funora.transport.network": NetworkError,
     "funora.transport.rate_limited": RateLimitedError,
@@ -975,7 +949,6 @@ ERROR_BY_ABI_CODE: Final[dict[int, type[Exception]]] = {
     1301: CurrencyMismatchError,
     1401: UnsupportedCapabilityError,
     1402: ExperimentalCapabilityError,
-    1403: UnsupportedLocaleError,
     1501: TimeoutError,
     1502: NetworkError,
     1503: RateLimitedError,
