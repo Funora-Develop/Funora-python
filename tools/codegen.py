@@ -70,6 +70,11 @@ SOURCES: Final[frozenset[str]] = frozenset(
         "spec/extraction/chats.yaml",
         "spec/extraction/orders.yaml",
         "spec/extraction/session.yaml",
+        # Два файла извлечения были вне поля зрения генератора: их селекторы и
+        # имена атрибутов не попадали ни в порождённый словарь, ни под сверку
+        # со снимками. Молча - расхождение обнаружилось только когда сверка
+        # атрибутов и обход спецификации разошлись в счёте.
+        "spec/extraction/updates.yaml",
         "spec/protocol/response-classes.yaml",
         "spec/protocol/retry-policy.yaml",
         "spec/runtime/budget.yaml",

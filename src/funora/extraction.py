@@ -114,6 +114,7 @@ SELECTORS: Final[dict[str, str]] = {
     "orders.row": "a.tc-item",
     "orders.rows_container": ".dyn-table-body",
     "session.locale": "html[lang]",
+    "updates.positions": "a.contact-item",
 }
 
 
@@ -130,6 +131,8 @@ ATTRIBUTES: Final[dict[str, str]] = {
     "chats.contact_list.attributes.node_id": "data-id",
     "chats.contact_list.attributes.own_position": "data-user-msg",
     "session.locale.attribute": "lang",
+    "updates.positions.attributes.last_message": "data-node-msg",
+    "updates.positions.attributes.own": "data-user-msg",
 }
 
 
@@ -181,6 +184,11 @@ SELECTOR_GROUPS: Final[dict[str, tuple[str, ...]]] = {
         'input[type="password"]',
         'form[action*="login"]',
         'form[action*="auth"]',
+    ),
+    "updates.tags.locations": (
+        "div.hidden[data-orders]",
+        ".chat.chat-float",
+        ".param-item.chat-panel",
     ),
 }
 
