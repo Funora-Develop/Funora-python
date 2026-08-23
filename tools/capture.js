@@ -90,6 +90,32 @@
     }
   }
 
+  //: Поля, значение которых записывается ДОСЛОВНО.
+  //
+  // Это протокольные константы - имена действия и вида объекта. Без них
+  // операцию не завести: подпись говорит, что там двенадцать знаков латиницы с
+  // пунктуацией, а какое это действие - нет.
+  //
+  // Список короткий и закрытый нарочно, и сверх него стоит второе условие:
+  // значение записывается только если это строчный идентификатор без цифр и
+  // дефисов. Идентификатор диалога, имя пользователя и всякий токен такой
+  // формы не имеют, и случайно проскочить не могут.
+  const CONSTANTS = new Set(['action', 'type'])
+  const CONSTANT_SHAPE = /^[a-z][a-z_]{1,30}$/
+
+  /**
+   * Возвращает значение поля дословно, если это протокольная константа.
+   *
+   * @param {string} key Имя поля.
+   * @param {*} value Значение поля.
+   * @returns {string|null} Значение либо null, если записывать его нельзя.
+   */
+  function constantOf(key, value) {
+    if (!CONSTANTS.has(key)) return null
+    if (typeof value !== 'string') return null
+    return CONSTANT_SHAPE.test(value) ? value : null
+  }
+
   /**
    * Сводит тело запроса или ответа к форме: имена полей и подписи значений.
    *
@@ -109,7 +135,9 @@
 
     if (typeof URLSearchParams !== 'undefined' && body instanceof URLSearchParams) {
       const fields = {}
-      for (const [key, value] of body.entries()) fields[key] = shapeOfNested(value, 0)
+      for (const [key, value] of body.entries()) {
+        fields[key] = constantOf(key, value) || shapeOfNested(value, 0)
+      }
       return { kind: 'form', fields }
     }
 
@@ -125,7 +153,7 @@
       if (text.includes('=')) {
         const fields = {}
         for (const [key, value] of new URLSearchParams(text).entries()) {
-          fields[key] = shapeOfNested(value, 0)
+          fields[key] = constantOf(key, value) || shapeOfNested(value, 0)
         }
         return { kind: 'form', fields }
       }
@@ -152,7 +180,10 @@
     }
     if (typeof value === 'object') {
       const out = {}
-      for (const key of Object.keys(value).sort()) out[key] = shapeOfValue(value[key], level + 1)
+      for (const key of Object.keys(value).sort()) {
+        const literal = constantOf(key, value[key])
+        out[key] = literal === null ? shapeOfValue(value[key], level + 1) : literal
+      }
       return out
     }
     if (typeof value === 'string') return shapeOfNested(value, level)
@@ -335,6 +366,10 @@
     page(name) {
       if (!name) throw new Error('нужно имя снимка, например funora.page("order.logged.ru")')
       const where = maskUrl(location.href)
+      // Код ответа берётся у самого браузера: он помнит, чем закончилась
+      // загрузка этой страницы. Без него снимок не отличить от снимка страницы
+      // отказа, а именно это описание происхождения и обязано говорить.
+      const navigation = (performance.getEntriesByType('navigation') || [])[0] || {}
       return send('page', name, {
         html: document.documentElement.outerHTML,
         where: {
@@ -342,6 +377,9 @@
           query: where.query,
           lang: document.documentElement.lang || '',
           title: signature(document.title),
+          http_status: navigation.responseStatus || 0,
+          final_url: where.origin + where.path,
+          redirects: navigation.redirectCount || 0,
         },
       })
     },

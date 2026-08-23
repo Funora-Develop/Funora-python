@@ -36,6 +36,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Final
@@ -93,11 +94,17 @@ def _write_page(name: str, html: str, where: dict[str, Any] | None = None) -> st
     target.write_text(skeleton + "\n", encoding="utf-8", newline="\n")
 
     provenance = {
+        # Момент ставит приёмник, а не браузер: у снимка должен быть один
+        # источник времени, и часы вкладки к нему отношения не имеют.
+        "captured_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "captured_by": "tools/capture.py",
         "captured_format": SKELETON_FORMAT,
         "converted": False,
+        "final_url": said.get("final_url", ""),
         "format": SKELETON_FORMAT,
+        "http_status": said.get("http_status", 0),
         "locale": said.get("lang", ""),
+        "redirects": said.get("redirects", 0),
         "note": (
             "Структурный скелет, снятый из открытой вкладки браузера. Текст "
             "заменён подписями, сегменты путей с идентификаторами обезличены. "

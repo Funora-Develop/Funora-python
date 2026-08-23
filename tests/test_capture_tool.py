@@ -281,8 +281,41 @@ def test_a_json_string_inside_a_field_is_opened() -> None:
     assert "action" in text and "content" in text, (
         f"вложенный JSON не разобран, имена полей потеряны: {text}"
     )
-    for secret in ("Привет", "Иван", "a1b2c3d4", "users-1-2", "12345", "chat_message"):
+    # Имя действия - протокольная константа и записывается дословно нарочно:
+    # без него операцию не завести. Всё прочее по-прежнему только подписью.
+    assert "chat_message" in text, f"имя действия потеряно вместе со значениями: {text}"
+    for secret in ("Привет", "Иван", "a1b2c3d4", "users-1-2", "12345"):
         assert secret not in text, f"«{secret}» уцелел в записи: {text}"
+
+
+def test_only_a_protocol_constant_is_written_down_verbatim() -> None:
+    """Проверяет узкое исключение из правила «значения не записываются».
+
+    Имя действия и вид объекта - протокольные константы, и без них операцию не
+    завести: подпись говорит, что там двенадцать знаков латиницы с пунктуацией,
+    а какое это действие - нет.
+
+    Исключение держится на ДВУХ условиях сразу: имя поля из закрытого списка и
+    форма значения - строчный идентификатор без цифр и дефисов. Идентификатор
+    диалога, имя пользователя и всякий токен такой формы не имеют.
+
+    Returns:
+        None
+    """
+    allowed = _in_node(
+        "['chat_message','chat_node','orders_counters'].map((one) => constantOf('action', one))"
+    )
+    assert allowed == ["chat_message", "chat_node", "orders_counters"], allowed
+
+    refused = _in_node(
+        "['users-1-2','a1b2c3d4','ABC','иван','x','user@mail'].map("
+        "(one) => constantOf('type', one))"
+    )
+    assert refused == [None] * 6, refused
+
+    # Поле не из списка не открывается, какой бы формы значение ни было.
+    assert _in_node("constantOf('node', 'chat_message')") is None
+    assert _in_node("constantOf('content', 'privet')") is None
 
 
 def test_the_dangerous_headers_are_dropped_by_name() -> None:
