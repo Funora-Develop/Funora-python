@@ -485,25 +485,27 @@
       //
       // Код в адресе сохраняется ДОСЛОВНО по тому же правилу, что имя действия:
       // это протокольная константа из закрытого перечня, а не значение.
+      // Переключатель ищется НЕ по перечню ISO и не по угаданному имени
+      // атрибута: две попытки так и вернули пусто. Перечень был заглавными, а
+      // значение оказалось иного регистра; имена перебирались втроём, а код
+      // лежал в data-cy.
+      //
+      // Правило теперь двойное и от догадок не зависит: элемент помечен классом
+      // про валюту, а значение атрибута - ровно три буквы. Трёхбуквенный токен
+      // на элементе переключателя валюты не может быть ни именем, ни токеном.
+      const CURRENCY_ELEMENT = '[class*=curr i], [class*=-cy], [class*=cy-]'
+      const THREE_LETTERS = /^[A-Za-z]{3}$/
       const switcher = []
-      for (const one of document.querySelectorAll('a, option, [class*=curr], [class*=cy]')) {
-        // Смотрятся ВСЕ значения атрибутов, а не три угаданных имени. Первый
-        // сбор искал href, value и data-currency и вернул пусто; код лежал в
-        // data-cy - имени, которого не угадать. Перечислять имена нельзя,
-        // перечислять можно только форму значения.
-        let where = one.getAttribute('href') || ''
-        for (const attribute of one.attributes) where += ' ' + attribute.value
-        code.lastIndex = 0
-        const hit = where.match(code)
-        if (!hit || hit.length !== 1) continue
+      for (const one of document.querySelectorAll(CURRENCY_ELEMENT)) {
+        const named = [...one.attributes]
+          .filter((attribute) => THREE_LETTERS.test(attribute.value.trim()))
+          .map((attribute) => ({ name: attribute.name, value: attribute.value.trim() }))
+        if (named.length !== 1) continue
         switcher.push({
-          code: hit[0],
+          code: named[0].value.toUpperCase(),
+          attribute: named[0].name,
           tag: one.tagName.toLowerCase(),
           class: one.className || '',
-          // Имя атрибута, в котором нашёлся код, - половина ответа: по нему
-          // пишется правило извлечения. Значения прочих атрибутов не берутся.
-          attribute: [...one.attributes].filter((a) => code.test(a.value))
-            .map((a) => a.name).sort().join(','),
           text: signature(one.textContent || ''),
           active: /active|selected|current/i.test(one.className)
             || one.hasAttribute('selected')
