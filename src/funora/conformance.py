@@ -34,11 +34,20 @@ from typing import Any, Final
 
 from ._canonical import canonical_dumps
 from ._diff import Event, _fingerprint
+from ._gate import check_capability
 from ._identity import REGISTRY, identity_of
 from ._poll import Deduplicator
 from .budget import WAIT_ATTEMPTS, RequestClass
+from .capabilities import Capability, CapabilityState
 from .contract import RUNNER_PROTOCOL
-from .errors import BudgetExhaustedError, ConfigurationError, FunoraError, ValidationError
+from .errors import (
+    BudgetExhaustedError,
+    ConfigurationError,
+    ExperimentalCapabilityError,
+    FunoraError,
+    UnsupportedCapabilityError,
+    ValidationError,
+)
 from .events import EventType
 
 __all__ = ["PROTOCOL", "answer", "main"]
@@ -399,6 +408,51 @@ def _run_trace(scenario: dict[str, Any]) -> list[int | None]:
     return sent
 
 
+def _capability(name: str) -> Capability:
+    """Находит возможность по идентификатору из спецификации.
+
+    Args:
+        name (str): Идентификатор вида «orders.list».
+
+    Returns:
+        Capability: Возможность.
+
+    Raises:
+        ValidationError: Если такой возможности в реализации нет. Молча
+            пропустить нельзя: набор объявляет перечень возможностей
+            нормативным, и отсутствующая означает не пробел набора, а пробел
+            реализации.
+    """
+    for one in Capability:
+        if one.value == name:
+            return one
+    raise ValidationError(f"возможность «{name}» объявлена спецификацией, а реализации неизвестна")
+
+
+def _decision(case: dict[str, Any]) -> str:
+    """Решает, разрешён ли вызов, и возвращает решение словом.
+
+    Возвращается ИМЯ КЛАССА отказа, а не «отклонено». Вызывающий пишет except по
+    классу, и две реализации, отклоняющие одно и то же разными классами,
+    заставляют писать разный except - то есть у переносимого кода переносимости
+    не остаётся. Отдельно важно различие двух отказов: экспериментальную
+    возможность включают и зовут, отсутствующую - не зовут вовсе.
+
+    Args:
+        case (dict[str, Any]): Случай с полями capability, state, opted_in.
+
+    Returns:
+        str: «разрешено» либо имя класса отказа.
+    """
+    capability = _capability(case["capability"])
+    state = CapabilityState(case["state"])
+    try:
+        check_capability(capability, state=state, opted_in=bool(case.get("opted_in")))
+    except FunoraError as refusal:
+        return type(refusal).__name__
+    return "разрешено"
+
+
 def answer(case: dict[str, Any]) -> dict[str, Any]:
     """Отвечает на один случай набора.
 
@@ -434,6 +488,28 @@ def answer(case: dict[str, Any]) -> dict[str, Any]:
                     "not_implemented": trace["requires"],
                 }
             return {"id": case_id, "outcome": "pass", "sent": _run_trace(trace)}
+
+        if kind == "capability_decision":
+            return {"id": case_id, "outcome": "pass", "value": _decision(case)}
+
+        if kind == "capability_initial":
+            # Берётся то, что реализация подставляет ПРИ ВЫЗОВЕ без состояния, а
+            # не то, что лежит в порождённой таблице. Совпадение таблицы со
+            # спецификацией проверено отдельно; здесь проверяется, что вызов эту
+            # таблицу читает.
+            #
+            # Состояние выводится ИЗ ПОВЕДЕНИЯ, а не читается из таблицы. Три
+            # состояния вызов пропускает и возвращает сами себя; два отклоняют,
+            # и каждое своим классом - отображение в обе стороны однозначно.
+            try:
+                state = check_capability(
+                    _capability(case["capability"]), state=None, opted_in=False
+                ).value
+            except UnsupportedCapabilityError:
+                state = "unsupported"
+            except ExperimentalCapabilityError:
+                state = "experimental"
+            return {"id": case_id, "outcome": "pass", "value": state}
 
         if kind == "resume":
             # Сверяет раннер: реализация возвращает, что дошло на каждом шаге, а
