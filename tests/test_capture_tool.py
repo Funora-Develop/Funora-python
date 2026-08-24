@@ -724,3 +724,55 @@ def test_the_cyrillic_check_still_refuses_what_it_refused_before() -> None:
 
     # Три кириллические буквы подряд - не слово. Порог тот же, что был.
     assert capture._looks_like_a_secret({"a": "или"}) is None
+
+
+def test_nothing_the_collector_writes_is_ever_in_cyrillic() -> None:
+    """Требует, чтобы в записи не было кириллицы, что бы ни попало на вход.
+
+    Принимающая сторона отвергает запись с кириллицей ЦЕЛИКОМ: кириллица в
+    записи означает утёкший русский текст. Проверка на это уже была, но
+    проверяла она только подписи значений - и мимо неё прошла поясняющая строка,
+    которую сборщик клал в подсказку сам, по-русски.
+
+    Механизм, объясняющий отказ записать значение, сделал наблюдение
+    несохраняемым. Три попытки снять его пропали впустую.
+
+    Здесь сборщик выполняется целиком и через него прогоняются разом все
+    механизмы, которые вправе что-то дописать в запись: подпись значения, мерка
+    непрошедшего протокольного знака, мерка замаскированного сегмента адреса,
+    служебная метка массива.
+
+    Returns:
+        None
+    """
+    payload = _run_collector(
+        "(async () => {"
+        "  funora.watch();"
+        # Адрес с идентификатором - сработает мерка замаскированного сегмента.
+        # Поле type со значением не под образец - сработает мерка знака.
+        # Массив разных форм - сработает служебная метка.
+        "  await fetch('https://funpay.com/users/ZVV12345/', {method: 'POST', "
+        "    body: 'csrf_token=abc&objects=' + encodeURIComponent(JSON.stringify("
+        "      [{type: 'chat-node-2'}, {type: 'orders_counters'}, {other: 1}]))"
+        "  });"
+        "  await funora.stop('proba');"
+        "  return JSON.parse(sent[sent.length - 1].init.body);"
+        "})()"
+    )
+
+    text = json.dumps(payload, ensure_ascii=False)
+    offenders = sorted({ch for ch in text if "А" <= ch <= "я" or ch in "Ёё"})
+    assert not offenders, (
+        f"в записи оказалась кириллица {offenders}: принимающая сторона отвергнет "
+        f"честное наблюдение целиком. Запись: {text}"
+    )
+
+    # Проверка что-то проверяет только если механизмы вправду сработали.
+    assert "masked_segments" in text, f"мерка сегмента не сработала: {text}"
+    assert "hint" in text, f"мерка протокольного знака не сработала: {text}"
+    assert "distinct" in text, f"служебная метка массива не сработала: {text}"
+
+    # И то же самое глазами принимающей стороны.
+    assert _tool()._looks_like_a_secret(payload["payload"]) is None, _tool()._looks_like_a_secret(
+        payload["payload"]
+    )
