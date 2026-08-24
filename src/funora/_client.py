@@ -34,6 +34,7 @@ from ._poll import Schedule
 from ._proxies import DEFAULT_ACCOUNT, Proxy, ProxyPool
 from ._reviews import ReviewsPage
 from ._secret import Secret, SecretProvider
+from ._showcase import ShowcasePage
 from ._thread import Thread
 from ._transport import Fetcher, TransportSettings
 from ._watch import Router, dispatch
@@ -55,13 +56,16 @@ T = TypeVar("T")
 #: Службы, объявленные контрактом, и записи реестра о том, чего в них нет.
 #:
 #: Перечень здесь, а не в порождённом файле: он говорит о РЕАЛИЗАЦИИ - какие
-#: службы она не написала, - а не о контракте. Сверяется он проверкой, которая
+#: службы она не написала, - а не о контракте.
+#:
+#: Записи «lots» здесь больше нет: служба написана с 0.11.0. Написана она,
+#: правда, наполовину - витрина читается, операций записи нет, - но обращение к
+#: client.lots языковой ошибкой уже не отвечает, и место ему не тут. Сверяется он проверкой, которая
 #: читает spec/services и spec/conformance/not-implemented.yaml: разойдись
 #: перечень с ними, обращение к новой службе давало бы голый отказ языка.
 _SERVICES_IN_CONTRACT: Final[dict[str, str]] = {
     "account": "account_service_operations",
     "catalog": "catalog_service_operations",
-    "lots": "lots_service_operations",
     "market": "market_service_operations",
 }
 
@@ -217,6 +221,39 @@ class AccountService:
         return self._client.run(self._client.engine.read_balance())
 
 
+class LotsService:
+    """Операции с лотами.
+
+    Args:
+        client (Client): Клиент, которому принадлежит сервис.
+    """
+
+    __slots__ = ("_client",)
+
+    def __init__(self, client: Client) -> None:
+        self._client = client
+
+    def showcase(self, user_id: str) -> ShowcasePage:
+        """Читает публичную витрину продавца.
+
+        Возвращает то, что видит покупатель: разделы и предложения. Ни признака
+        включённости, ни средств правки на витрине нет - для них нужна страница
+        управления лотами, которая пока не наблюдалась.
+
+        Args:
+            user_id (str): Идентификатор продавца.
+
+        Returns:
+            ShowcasePage: Разделы через `sections()`. Полным чтение не
+            объявляется ни разу, и признание неполноты требуется всегда.
+
+        Raises:
+            ValidationError: Если идентификатор непригоден для подстановки.
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        return self._client.run(self._client.engine.read_showcase(user_id))
+
+
 class Client:
     """Клиент площадки.
 
@@ -240,7 +277,7 @@ class Client:
             здесь не поможет, исправлять надо вызов.
     """
 
-    __slots__ = ("_fetcher", "chats", "engine", "orders", "pool", "reviews", "account")
+    __slots__ = ("_fetcher", "chats", "engine", "orders", "pool", "reviews", "account", "lots")
 
     def __init__(
         self,
@@ -290,6 +327,7 @@ class Client:
         self.chats = ChatsService(self)
         self.reviews = ReviewsService(self)
         self.account = AccountService(self)
+        self.lots = LotsService(self)
 
     def __getattr__(self, name: str) -> object:
         """Отвечает на обращение к службе, которой у этой реализации нет.

@@ -63,6 +63,7 @@ from ._poll import Deduplicator, Schedule
 from ._result import Defect, Severity
 from ._retry import plan_attempt
 from ._reviews import ReviewsPage, parse_reviews_page
+from ._showcase import ShowcasePage, parse_showcase
 from ._state import StateFile
 from ._thread import Thread, parse_thread
 from ._transport import Observation, TransportSettings
@@ -109,6 +110,7 @@ __all__ = [
     "PROFILE_PATH",
     "ORDER_PATH",
     "BALANCE_PATH",
+    "SHOWCASE_PATH",
 ]
 
 _log = logging.getLogger("funora.client")
@@ -130,6 +132,9 @@ ORDER_PATH: Final[str] = "/orders/{order_id}/"
 
 #: Страница баланса. Несёт и балансы по валютам, и операции по счёту.
 BALANCE_PATH: Final[str] = "/account/balance"
+
+#: Профиль продавца. Несёт и отзывы, и витрину.
+SHOWCASE_PATH: Final[str] = PROFILE_PATH
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,7 +245,10 @@ def integrity_verified(observation: Observation) -> bool:
 
 
 #: Прочитанное, у чего есть полнота: страница списка либо переписка.
-PageT = TypeVar("PageT", bound="OrdersPage | ChatsPage | Thread | ReviewsPage | BalancePage")
+PageT = TypeVar(
+    "PageT",
+    bound="OrdersPage | ChatsPage | Thread | ReviewsPage | BalancePage | ShowcasePage",
+)
 
 
 def unverified(page: PageT) -> PageT:
@@ -256,7 +264,7 @@ def unverified(page: PageT) -> PageT:
     оборванной страницы, не будет сочтён исчезнувшим.
 
     Args:
-        page (PageT): Разобранная страница либо переписка.
+        page (страница со счётчиками строк либо None): Разобранная страница либо переписка.
 
     Returns:
         PageT: Она же, если полнота и без того не полная. Иначе - с полнотой
@@ -305,6 +313,7 @@ IMPLEMENTED: Final[frozenset[Capability]] = frozenset(
         Capability.REVIEWS_GET,
         Capability.ORDERS_GET,
         Capability.ACCOUNT_BALANCE,
+        Capability.LOTS_SHOWCASE,
     }
 )
 
@@ -546,6 +555,42 @@ class Engine:
             None,
         )
         return view
+
+    def read_showcase(self, user_id: str) -> Generator[Request, Reply, ShowcasePage]:
+        """Читает витрину продавца со страницы его профиля.
+
+        Витрина лежит на той же странице, что и отзывы. Отдельным чтением она
+        объявлена потому, что это другой вопрос к площадке: отзывы говорят о
+        продавце, витрина - о том, что он продаёт.
+
+        Args:
+            user_id (str): Идентификатор продавца.
+
+        Yields:
+            Request: Просьбы о вводе-выводе.
+
+        Returns:
+            ShowcasePage: Разделы витрины с их предложениями.
+
+        Raises:
+            ValidationError: Если идентификатор непригоден для подстановки.
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        cleaned = user_id.strip()
+        if not cleaned or not cleaned.isalnum():
+            raise ValidationError(
+                "идентификатор продавца обязан состоять из букв и цифр, получено "
+                f"{len(cleaned)} знаков иного вида. Проверка идёт до сети: "
+                "подставленный в адрес мусор отправил бы запрос неизвестно куда"
+            )
+
+        capability = Capability.LOTS_SHOWCASE
+        observation = yield from self.fetch_ok(capability, SHOWCASE_PATH.format(user_id=cleaned))
+        page = parse_showcase(observation.html, observed_at=datetime.now(UTC))
+        if not integrity_verified(observation):
+            page = unverified(page)
+        self._note_success(capability, page.completeness, None)
+        return page
 
     def read_reviews(self, user_id: str) -> Generator[Request, Reply, ReviewsPage]:
         """Читает отзывы с профиля продавца.
@@ -1614,8 +1659,11 @@ class Engine:
 
         self._state.capabilities[capability] = CapabilityState.DEGRADED
         if page is None:
-            # Чтение одной сущности, а не списка: счётчиков строк у него нет по
-            # устройству. Состояние возможности при этом понижается так же -
+            # Чтение, у которого счётчиков строк нет по устройству: одна
+            # сущность либо перечень разделов, считающийся иначе. Витрина сюда
+            # же: у неё разделы и предложения, а не строки.
+            #
+            # Состояние возможности при этом понижается так же -
             # повреждённое чтение остаётся повреждённым, о чём бы оно ни было.
             _log.warning("чтение %s неполно: замечены повреждения страницы", capability.value)
             return

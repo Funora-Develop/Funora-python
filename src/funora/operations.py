@@ -262,6 +262,18 @@ OPERATIONS: Final[dict[str, Operation]] = {
             "funora.transport",
         ),
     ),
+    "lots.showcase": Operation(
+        name="lots.showcase",
+        capability="lots.showcase",
+        safety=Safety.SAFE,
+        request_class="interactive",
+        returns="ShowcasePage",
+        errors=(
+            "funora.auth.session_expired",
+            "funora.protocol.changed",
+            "funora.transport",
+        ),
+    ),
     "lots.update_price": Operation(
         name="lots.update_price",
         capability="lots.update_price",
