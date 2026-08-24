@@ -56,6 +56,7 @@ from ._gate import check_capability
 from ._host import host_of
 from ._identity import REGISTRY, Identity, identity_of
 from ._observed import Observed
+from ._order import OrderView, parse_order_page
 from ._orders import Completeness, OrdersPage, parse_orders_page
 from ._poll import Deduplicator, Schedule
 from ._result import Defect, Severity
@@ -105,6 +106,7 @@ __all__ = [
     "ORDERS_PATH",
     "CHATS_PATH",
     "PROFILE_PATH",
+    "ORDER_PATH",
 ]
 
 _log = logging.getLogger("funora.client")
@@ -120,6 +122,9 @@ THREAD_PATH: Final[str] = "/chat/?node={node_id}"
 
 #: Профиль продавца. Отзывы лежат на нём же: отдельной страницы у них нет.
 PROFILE_PATH: Final[str] = "/users/{user_id}/"
+
+#: Страница одного заказа.
+ORDER_PATH: Final[str] = "/orders/{order_id}/"
 
 
 @dataclass(frozen=True, slots=True)
@@ -293,6 +298,7 @@ IMPLEMENTED: Final[frozenset[Capability]] = frozenset(
         Capability.CHATS_LIST,
         Capability.CHATS_HISTORY,
         Capability.REVIEWS_GET,
+        Capability.ORDERS_GET,
     }
 )
 
@@ -461,6 +467,45 @@ class Engine:
             page = unverified(page)
         self._note_success(Capability.ORDERS_LIST, page.completeness, page)
         return page
+
+    def read_order(self, order_id: str) -> Generator[Request, Reply, OrderView]:
+        """Читает страницу одного заказа.
+
+        Args:
+            order_id (str): Номер заказа. Тот самый, что стоит в адресе.
+
+        Yields:
+            Request: Просьбы о вводе-выводе.
+
+        Returns:
+            OrderView: Заказ в том виде, в каком его отдала страница.
+
+        Raises:
+            ValidationError: Если номер непригоден для подстановки.
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        cleaned = order_id.strip()
+        if not cleaned or not cleaned.isalnum():
+            raise ValidationError(
+                "номер заказа обязан состоять из букв и цифр, получено "
+                f"{len(cleaned)} знаков иного вида. Проверка идёт до сети: "
+                "подставленный в адрес мусор отправил бы запрос неизвестно куда"
+            )
+
+        capability = Capability.ORDERS_GET
+        observation = yield from self.fetch_ok(capability, ORDER_PATH.format(order_id=cleaned))
+        view = parse_order_page(observation.html, observed_at=datetime.now(UTC))
+
+        # Полнота выводится из повреждений, а не объявляется постоянной. Прежде
+        # здесь стояло COMPLETE безусловно - и возможность объявлялась
+        # работающей даже тогда, когда состояние заказа не прочиталось.
+        damaged = any(one.severity is Severity.PAGE for one in view.defects)
+        self._note_success(
+            capability,
+            Completeness.PARTIAL if damaged else Completeness.COMPLETE,
+            None,
+        )
+        return view
 
     def read_reviews(self, user_id: str) -> Generator[Request, Reply, ReviewsPage]:
         """Читает отзывы с профиля продавца.
@@ -1510,7 +1555,7 @@ class Engine:
         self,
         capability: Capability,
         completeness: Completeness,
-        page: OrdersPage | ChatsPage | Thread | ReviewsPage,
+        page: OrdersPage | ChatsPage | Thread | ReviewsPage | None,
     ) -> None:
         """Записывает состояние возможности по успешному чтению.
 
@@ -1528,6 +1573,13 @@ class Engine:
             return
 
         self._state.capabilities[capability] = CapabilityState.DEGRADED
+        if page is None:
+            # Чтение одной сущности, а не списка: счётчиков строк у него нет по
+            # устройству. Состояние возможности при этом понижается так же -
+            # повреждённое чтение остаётся повреждённым, о чём бы оно ни было.
+            _log.warning("чтение %s неполно: замечены повреждения страницы", capability.value)
+            return
+
         # Предупреждение пишется независимо от того, признал ли вызывающий
         # неполноту. Это единственная защита от того, чтобы признание
         # выродилось в ритуал: молча принятая неполнота перестаёт быть

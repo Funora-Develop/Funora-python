@@ -27,6 +27,7 @@ from ._engine import Deliver, Engine, Fetch, Pause, Reply, Request
 from ._host import host_of
 from ._identity import REGISTRY
 from ._observed import Observed
+from ._order import OrderView
 from ._orders import OrdersPage
 from ._poll import Schedule
 from ._proxies import DEFAULT_ACCOUNT, Proxy, ProxyPool
@@ -78,6 +79,25 @@ class OrdersService:
 
     def __init__(self, client: Client) -> None:
         self._client = client
+
+    def get(self, order_id: str) -> OrderView:
+        """Читает страницу одного заказа.
+
+        Возвращает то, что страница вправду показывает, - не полный Order:
+        сторон она не разделяет, кода валюты не даёт.
+
+        Args:
+            order_id (str): Номер заказа. Тот самый, что стоит в адресе.
+
+        Returns:
+            OrderView: Заказ, его контрагент, отзыв и идентификатор диалога.
+            Параметры заказа выдаются через `params()` как есть, без имён.
+
+        Raises:
+            ValidationError: Если номер непригоден для подстановки.
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        return self._client.run(self._client.engine.read_order(order_id))
 
     def list(self) -> OrdersPage:
         """Читает список заказов.

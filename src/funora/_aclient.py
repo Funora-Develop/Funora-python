@@ -30,6 +30,7 @@ from ._engine import Deliver, Engine, Fetch, Pause, Reply, Request
 from ._host import host_of
 from ._identity import REGISTRY
 from ._observed import Observed
+from ._order import OrderView
 from ._orders import OrdersPage
 from ._poll import Schedule
 from ._proxies import DEFAULT_ACCOUNT, Proxy, ProxyPool
@@ -63,6 +64,21 @@ class AsyncOrdersService:
 
     def __init__(self, client: AsyncClient) -> None:
         self._client = client
+
+    async def get(self, order_id: str) -> OrderView:
+        """Читает страницу одного заказа.
+
+        Args:
+            order_id (str): Номер заказа. Тот самый, что стоит в адресе.
+
+        Returns:
+            OrderView: Заказ в том виде, в каком его отдала страница.
+
+        Raises:
+            ValidationError: Если номер непригоден для подстановки.
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        return await self._client.run(self._client.engine.read_order(order_id))
 
     async def list(self) -> OrdersPage:
         """Читает список заказов.
