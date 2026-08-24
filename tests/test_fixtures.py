@@ -45,6 +45,7 @@ EXPECTED = {
     # Список продаж без единой продажи. Снят 24.08.2026 фильтром по
     # состоянию, в котором заказов нет: у аккаунта продажи были.
     "orders-trade.empty.ru": ResponseClass.OK,
+    "user.logged.ru": ResponseClass.OK,
 }
 
 

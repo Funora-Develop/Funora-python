@@ -30,6 +30,7 @@ from ._observed import Observed
 from ._orders import OrdersPage
 from ._poll import Schedule
 from ._proxies import DEFAULT_ACCOUNT, Proxy, ProxyPool
+from ._reviews import ReviewsPage
 from ._secret import Secret, SecretProvider
 from ._thread import Thread
 from ._transport import Fetcher, TransportSettings
@@ -134,6 +135,39 @@ class ChatsService:
         return self._client.run(self._client.engine.read_thread(node_id))
 
 
+class ReviewsService:
+    """Операции над отзывами.
+
+    Args:
+        client (Client): Клиент, которому принадлежит сервис.
+    """
+
+    __slots__ = ("_client",)
+
+    def __init__(self, client: Client) -> None:
+        self._client = client
+
+    def get(self, user_id: str) -> ReviewsPage:
+        """Читает отзывы с профиля продавца.
+
+        Полнота здесь означает «разобраны все строки, которые страница отдала»,
+        а не «прочитаны все отзывы продавца»: сверить их число не с чем. Разница
+        объявлена записью reviews_page_totality в реестре неисполненного.
+
+        Args:
+            user_id (str): Идентификатор продавца. Тот самый, что стоит в адресе
+                профиля.
+
+        Returns:
+            ReviewsPage: Разобранная страница. Отзывы выдаются через `rows()`.
+
+        Raises:
+            ValidationError: Если идентификатор непригоден для подстановки.
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        return self._client.run(self._client.engine.read_reviews(user_id))
+
+
 class Client:
     """Клиент площадки.
 
@@ -157,7 +191,7 @@ class Client:
             здесь не поможет, исправлять надо вызов.
     """
 
-    __slots__ = ("_fetcher", "chats", "engine", "orders", "pool")
+    __slots__ = ("_fetcher", "chats", "engine", "orders", "pool", "reviews")
 
     def __init__(
         self,
@@ -205,6 +239,7 @@ class Client:
         )
         self.orders = OrdersService(self)
         self.chats = ChatsService(self)
+        self.reviews = ReviewsService(self)
 
     def __getattr__(self, name: str) -> object:
         """Отвечает на обращение к службе, которой у этой реализации нет.

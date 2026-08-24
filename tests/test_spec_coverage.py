@@ -307,6 +307,7 @@ OPERATION_METHOD: dict[str, tuple[str, str]] = {
     "chats.list": ("ChatsService", "list"),
     "chats.history": ("ChatsService", "thread"),
     "orders.list": ("OrdersService", "list"),
+    "reviews.get": ("ReviewsService", "get"),
 }
 
 

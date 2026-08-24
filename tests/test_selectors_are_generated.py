@@ -172,6 +172,12 @@ def test_every_generated_selector_is_read() -> None:
         # их пока некому.
         "updates.positions",
         "updates.tags.locations",
+        # Фильтр отзывов: операции фильтрации в контракте нет и не будет, пока
+        # не наблюдён её ответ. Селекторы объявлены затем, что фильтр служит
+        # свидетельством закрытости перечисления оценок - площадка сама
+        # перечисляет в нём все пять уровней.
+        "reviews.filter",
+        "reviews.filter.endpoint",
     }
 
     unexpected = [key for key in silent if key not in known_silent]

@@ -33,6 +33,7 @@ from ._observed import Observed
 from ._orders import OrdersPage
 from ._poll import Schedule
 from ._proxies import DEFAULT_ACCOUNT, Proxy, ProxyPool
+from ._reviews import ReviewsPage
 from ._secret import Secret, SecretProvider
 from ._thread import Thread
 from ._transport import AsyncFetcher, TransportSettings
@@ -75,6 +76,38 @@ class AsyncOrdersService:
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
         return await self._client.run(self._client.engine.read_orders())
+
+
+class AsyncReviewsService:
+    """Операции над отзывами.
+
+    Args:
+        client (AsyncClient): Клиент, которому принадлежит сервис.
+    """
+
+    __slots__ = ("_client",)
+
+    def __init__(self, client: AsyncClient) -> None:
+        self._client = client
+
+    async def get(self, user_id: str) -> ReviewsPage:
+        """Читает отзывы с профиля продавца.
+
+        Полнота здесь означает «разобраны все строки, которые страница отдала»,
+        а не «прочитаны все отзывы продавца»: сверить их число не с чем.
+
+        Args:
+            user_id (str): Идентификатор продавца. Тот самый, что стоит в адресе
+                профиля.
+
+        Returns:
+            ReviewsPage: Разобранная страница. Отзывы выдаются через `rows()`.
+
+        Raises:
+            ValidationError: Если идентификатор непригоден для подстановки.
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        return await self._client.run(self._client.engine.read_reviews(user_id))
 
 
 class AsyncChatsService:
@@ -137,7 +170,7 @@ class AsyncClient:
             здесь не поможет, исправлять надо вызов.
     """
 
-    __slots__ = ("_fetcher", "chats", "engine", "orders", "pool")
+    __slots__ = ("_fetcher", "chats", "engine", "orders", "pool", "reviews")
 
     def __init__(
         self,
@@ -185,6 +218,7 @@ class AsyncClient:
         )
         self.orders = AsyncOrdersService(self)
         self.chats = AsyncChatsService(self)
+        self.reviews = AsyncReviewsService(self)
 
     async def __aenter__(self) -> AsyncClient:
         """Входит в асинхронный контекстный менеджер.

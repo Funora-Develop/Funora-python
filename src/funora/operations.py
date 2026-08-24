@@ -314,6 +314,18 @@ OPERATIONS: Final[dict[str, Operation]] = {
             "funora.transport",
         ),
     ),
+    "reviews.get": Operation(
+        name="reviews.get",
+        capability="reviews.get",
+        safety=Safety.SAFE,
+        request_class="interactive",
+        returns="ReviewsPage",
+        errors=(
+            "funora.auth.session_expired",
+            "funora.protocol.changed",
+            "funora.transport",
+        ),
+    ),
     "session.health": Operation(
         name="session.health",
         capability="account.profile",
