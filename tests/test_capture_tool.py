@@ -364,3 +364,59 @@ def test_the_signature_matches_between_the_two_languages() -> None:
 
     for case, mine, other in zip(cases, ours, theirs, strict=True):
         assert mine == other, f"на {case!r} питон даёт {mine!r}, браузер {other!r}"
+
+
+def test_a_refused_constant_says_why_without_saying_what() -> None:
+    """Проверяет подсказку о значении, не прошедшем образец протокольного знака.
+
+    Три значения, без которых не собрать запрос отправки сообщения, остались
+    подписями: подпись говорит «латиница и пунктуация», а какая пунктуация - не
+    говорит. Расширять образец по такой подписи пришлось бы наугад, и наугад
+    расширенный образец однажды пропустил бы токен - первая попытка это и
+    сделала, а проверка выше её поймала.
+
+    Подсказка даёт мерку: длину, набор различных знаков пунктуации и наличие
+    заглавных с цифрами. Восстановить по ней значение нельзя.
+
+    Returns:
+        None
+    """
+    hint = _in_node("constantHint('action', 'chat.message')")
+    assert hint["length"] == 12
+    assert hint["punctuation"] == "."
+    assert hint["has_upper"] is False
+    assert hint["has_digit"] is False
+
+    # Буквы не сохраняются даже набором: подсказка о пунктуации, а не о слове.
+    text = json.dumps(hint, ensure_ascii=False)
+    for letter in ("chat", "message", "c", "m"):
+        assert letter not in text.replace("punctuation", "").replace("has_", ""), (
+            f"«{letter}» уцелел в подсказке: {text}"
+        )
+
+    # Прошедшее образец подсказки не получает: значение и так записано дословно.
+    assert _in_node("constantHint('action', 'chat_message')") is None
+    # Поле не из закрытого списка не описывается вовсе, какой бы формы ни было.
+    assert _in_node("constantHint('content', 'privet-vsem')") is None
+    assert _in_node("constantHint('node', 'users-1-2')") is None
+
+
+def test_the_hint_never_carries_a_human_string() -> None:
+    """Требует, чтобы подсказка не выдавала человеческий текст.
+
+    Поля action и type несут имя действия протокола. Окажись в них однажды то,
+    что написал человек, - подсказка обязана сказать о нём длину и знаки
+    препинания, и ни слова больше.
+
+    Returns:
+        None
+    """
+    hint = _in_node("constantHint('type', 'Привет, Иван! Купил ключ 12345.')")
+    assert hint is not None, "подсказки нет вовсе: измерить нечем"
+
+    text = json.dumps(hint, ensure_ascii=False)
+    for secret in ("Привет", "Иван", "Купил", "ключ", "12345"):
+        assert secret not in text, f"«{secret}» уцелел в подсказке: {text}"
+
+    assert hint["has_digit"] is True
+    assert set(hint["punctuation"]) <= set(" ,!.")
