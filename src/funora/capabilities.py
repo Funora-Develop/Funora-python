@@ -141,6 +141,8 @@ class Capability(StrEnum):
 
     #: Чтение профиля аккаунта, от имени которого работает клиент.
     ACCOUNT_PROFILE = "account.profile"
+    #: Чтение операций по счёту.
+    ACCOUNT_TRANSACTIONS = "account.transactions"
     #: Чтение баланса аккаунта.
     ACCOUNT_BALANCE = "account.balance"
     #: Чтение дерева разделов каталога.
@@ -192,6 +194,7 @@ class Capability(StrEnum):
 #: derived - выводится из состояния других возможностей.
 CAPABILITY_SOURCE: Final[dict[Capability, str]] = {
     Capability.ACCOUNT_PROFILE: "static",
+    Capability.ACCOUNT_TRANSACTIONS: "probe",
     Capability.ACCOUNT_BALANCE: "probe",
     Capability.CATALOG_CATEGORIES: "static",
     Capability.CATALOG_FIELD_SCHEMA: "probe",
@@ -221,6 +224,7 @@ CAPABILITY_SOURCE: Final[dict[Capability, str]] = {
 #: Разница определяет, будет вызов выполнен или отклонён.
 CAPABILITY_INITIAL: Final[dict[Capability, CapabilityState]] = {
     Capability.ACCOUNT_PROFILE: CapabilityState.SUPPORTED,
+    Capability.ACCOUNT_TRANSACTIONS: CapabilityState.UNKNOWN,
     Capability.ACCOUNT_BALANCE: CapabilityState.UNKNOWN,
     Capability.CATALOG_CATEGORIES: CapabilityState.SUPPORTED,
     Capability.CATALOG_FIELD_SCHEMA: CapabilityState.UNKNOWN,

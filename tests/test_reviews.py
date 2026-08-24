@@ -83,30 +83,63 @@ def test_the_profile_gives_every_review_it_shows() -> None:
     assert len(page.rows(accept_incomplete=True)) == 6
 
 
-def test_a_read_is_never_declared_complete_while_the_page_can_load_more() -> None:
-    """Требует не объявлять полноту, пока смысл спрятанной кнопки не наблюдён.
+def test_a_hidden_continue_button_means_everything_is_shown() -> None:
+    """Требует объявлять полноту по СПРЯТАННОЙ кнопке догрузки.
 
-    Утром 24.08.2026 разбор объявлял полноту всегда, когда строки разобрались.
-    Основанием было утверждение, что управления постраничным выводом на странице
-    нет: перебор классов по образцу more|pagin|load|next|prev ничего не нашёл.
+    Смысл класса hidden наблюдён контрольной парой между двумя страницами
+    одного виджета, и пара нашлась сама:
 
-    Узлы есть - форма dyn-table-form на /users/reviews и кнопка
-    dyn-table-continue, обе сразу за таблицей. Названы они не теми словами.
-    Отсутствие было объявлено ПО НЕУДАЧЕ ПОИСКА.
+        отзывы, показаны все шесть          -> кнопка С классом hidden
+        операции, двадцать пять и есть ещё  -> кнопка БЕЗ класса hidden
+
+    Проверка держит обе стороны сразу - иначе она проверяла бы одну.
 
     Возвращает:
         None
     """
     page = parse_reviews_page(_page(PROFILE), WHEN)
-
-    assert page.completeness is Completeness.PARTIAL, (
-        f"полнота {page.completeness}: у страницы есть догрузка, а смысл класса "
-        "hidden у её кнопки не наблюдён"
+    assert page.completeness is Completeness.COMPLETE, (
+        f"полнота {page.completeness}, причина {page.reason}: кнопка догрузки "
+        "спрятана, значит догружать нечего"
     )
-    assert page.reason == "more_rows_unobserved", page.reason
+    assert page.reason == "all_rows_parsed"
+    assert len(page.rows()) == 6
 
+    # Вторая сторона пары - на своём же снимке, подменой класса.
+    shown = _page(PROFILE).replace("dyn-table-continue hidden", "dyn-table-continue")
+    other = parse_reviews_page(shown, WHEN)
+    assert other.completeness is Completeness.PARTIAL
     with pytest.raises(IncompleteResultError, match="результат неполон"):
-        page.rows()
+        other.rows()
+
+
+def test_the_other_side_of_the_pair_is_a_real_snapshot_not_a_mutation() -> None:
+    """Требует, чтобы показанная кнопка была наблюдена, а не только подменена.
+
+    Проверка выше снимает класс сама, и такая проверка доказывает лишь то, что
+    разбор читает класс. Что показанная кнопка ВСТРЕЧАЕТСЯ на площадке -
+    отдельное утверждение, и стоит оно на отдельном снимке.
+
+    Возвращает:
+        None
+    """
+    from selectolax.parser import HTMLParser as _Parser
+
+    balance = _Parser((FIXTURES / "account-balance.logged.ru.skeleton.txt").read_text("utf-8"))
+    button = balance.css_first(".dyn-table-continue")
+    assert button is not None, "на странице операций нет кнопки догрузки"
+    assert "hidden" not in (button.attributes.get("class") or "").split(), (
+        "кнопка на странице операций спрятана: вторая сторона пары пропала, и "
+        "смысл класса hidden снова становится догадкой"
+    )
+    assert len(balance.css(".tc-item")) == 25, "число строк изменилось - пара уже не та"
+
+    profile = _Parser(_page(PROFILE))
+    other = profile.css_first(".dyn-table-continue")
+    assert "hidden" in (other.attributes.get("class") or "").split(), (
+        "кнопка на профиле больше не спрятана: первая сторона пары пропала"
+    )
+    assert len(profile.css(".review-item")) == 6
 
 
 def test_a_visible_continue_button_means_there_is_certainly_more() -> None:
