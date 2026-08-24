@@ -52,6 +52,16 @@ _ROWS_CONTAINER: Final[str] = SELECTORS["reviews.rows_container"]
 #: Строка отзыва.
 _ROW: Final[str] = SELECTORS["reviews.row"]
 
+#: Кнопка догрузки. Стоит сразу за таблицей отзывов.
+#:
+#: Утром 24.08.2026 контракт утверждал, что её нет: перебор классов по образцу
+#: more|pagin|load|next|prev ничего не нашёл, и это приняли за отсутствие.
+#: Названа она иначе, и образец её не поймал.
+_CONTINUE: Final[str] = SELECTORS["reviews.pagination.continue_button"]
+
+#: Форма догрузки. Второй узел того же механизма.
+_PAGE_FORM: Final[str] = SELECTORS["reviews.pagination.form"]
+
 #: Обёртка ОДНОГО отзыва, а не списка - имя обманывает.
 #:
 #: Служит третьим счётом строк, не зависящим ни от класса строки, ни от прямых
@@ -322,6 +332,50 @@ def _parse_row(row: Node, index: int) -> tuple[Review, list[Defect]]:
     )
 
 
+def _totality(tree: HTMLParser) -> tuple[Completeness, str]:
+    """Решает, все ли отзывы продавца прочитаны, а не только строки страницы.
+
+    ПОЛНЫМ ЧТЕНИЕ ЗДЕСЬ НЕ ОБЪЯВЛЯЕТСЯ НИ РАЗУ, и это временно.
+
+    Утром 24.08.2026 разбор объявлял полноту всегда, когда строки разобрались.
+    Основанием было утверждение, что управления постраничным выводом на странице
+    нет: перебор классов по образцу more|pagin|load|next|prev ничего не нашёл.
+
+    Узлы есть. Сразу за таблицей отзывов стоят форма dyn-table-form на
+    /users/reviews и кнопка dyn-table-continue - названы они не теми словами, и
+    образец их не поймал. Отсутствие было объявлено по неудаче поиска, а не по
+    положительному свидетельству, - ровно то, что правило проекта запрещает.
+
+    Кнопка на наблюдённом снимке несёт класс hidden, и это похоже на признак
+    «догружать больше нечего». Похоже - не значит наблюдено: у продавца шесть
+    отзывов, и отличить «спрятана, потому что всё показано» от «спрятана, пока
+    её не покажет сценарий» по одному снимку нельзя. Профиль с сотнями отзывов
+    ждёт наблюдения - пункт reviews_many.
+
+    До него всякое чтение неполно. Это неудобно нарочно: неполный результат
+    отдаётся через accept_incomplete, а объявленная полнота молча соврала бы о
+    средней оценке продавца.
+
+    Args:
+        tree (HTMLParser): Разобранная страница профиля.
+
+    Returns:
+        tuple[Completeness, str]: Полнота и машиночитаемая причина.
+    """
+    button = tree.css_first(_CONTINUE)
+    if button is None:
+        # Кнопки нет вовсе. Это не «догружать нечего»: страницы без неё никто не
+        # видел, и объявлять по её отсутствию полноту значило бы повторить
+        # утреннюю ошибку с другого конца.
+        return Completeness.PARTIAL, "pagination_control_missing"
+
+    if "hidden" not in (button.attributes.get("class") or "").split():
+        # Кнопка показана. Здесь сомнений нет: догружать есть что.
+        return Completeness.PARTIAL, "more_rows_available"
+
+    return Completeness.PARTIAL, "more_rows_unobserved"
+
+
 def parse_reviews_page(html: str, observed_at: datetime) -> ReviewsPage:
     """Разбирает страницу профиля и собирает отзывы.
 
@@ -352,6 +406,19 @@ def parse_reviews_page(html: str, observed_at: datetime) -> ReviewsPage:
         raise ProtocolChangedError(
             f"на странице профиля нет контейнера строк ({_ROWS_CONTAINER}). "
             "Без него нельзя проверить, что строки найдены все"
+        )
+
+    if tree.css_first(_PAGE_FORM) is None:
+        defects.append(
+            Defect(
+                severity=Severity.PAGE,
+                code="pagination_form_missing",
+                detail=(
+                    f"формы догрузки ({_PAGE_FORM}) на странице нет. Она стоит за "
+                    "таблицей отзывов на всех наблюдённых снимках; её исчезновение "
+                    "означает, что механизм догрузки изменился"
+                ),
+            )
         )
 
     found = collect_rows(tree, _ROWS_CONTAINER, _ROW)
@@ -400,7 +467,7 @@ def parse_reviews_page(html: str, observed_at: datetime) -> ReviewsPage:
     elif defects:
         completeness, reason = Completeness.PARTIAL, "row_defects"
     else:
-        completeness, reason = Completeness.COMPLETE, "all_rows_parsed"
+        completeness, reason = _totality(tree)
 
     return ReviewsPage(
         completeness=completeness,
