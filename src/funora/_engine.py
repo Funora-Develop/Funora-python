@@ -60,6 +60,7 @@ from ._orders import Completeness, OrdersPage, parse_orders_page
 from ._poll import Deduplicator, Schedule
 from ._result import Defect, Severity
 from ._retry import plan_attempt
+from ._reviews import ReviewsPage, parse_reviews_page
 from ._state import StateFile
 from ._thread import Thread, parse_thread
 from ._transport import Observation, TransportSettings
@@ -95,7 +96,16 @@ from .response_classes import (
 )
 from .retry import RETRY_POLICIES
 
-__all__ = ["Fetch", "Pause", "Deliver", "Request", "Engine", "ORDERS_PATH", "CHATS_PATH"]
+__all__ = [
+    "Fetch",
+    "Pause",
+    "Deliver",
+    "Request",
+    "Engine",
+    "ORDERS_PATH",
+    "CHATS_PATH",
+    "PROFILE_PATH",
+]
 
 _log = logging.getLogger("funora.client")
 
@@ -107,6 +117,9 @@ CHATS_PATH: Final[str] = "/chat/"
 
 #: Путь страницы отдельной переписки.
 THREAD_PATH: Final[str] = "/chat/?node={node_id}"
+
+#: Профиль продавца. Отзывы лежат на нём же: отдельной страницы у них нет.
+PROFILE_PATH: Final[str] = "/users/{user_id}/"
 
 
 @dataclass(frozen=True, slots=True)
@@ -279,6 +292,7 @@ IMPLEMENTED: Final[frozenset[Capability]] = frozenset(
         Capability.ORDERS_LIST,
         Capability.CHATS_LIST,
         Capability.CHATS_HISTORY,
+        Capability.REVIEWS_GET,
     }
 )
 
@@ -446,6 +460,42 @@ class Engine:
         if not integrity_verified(observation):
             page = unverified(page)
         self._note_success(Capability.ORDERS_LIST, page.completeness, page)
+        return page
+
+    def read_reviews(self, user_id: str) -> Generator[Request, Reply, ReviewsPage]:
+        """Читает отзывы с профиля продавца.
+
+        Отдельной страницы у отзывов нет: они лежат на профиле, и запрос идёт
+        туда же, куда пошёл бы за именем и оценкой.
+
+        Args:
+            user_id (str): Идентификатор продавца. Тот самый, что стоит в адресе
+                профиля.
+
+        Yields:
+            Request: Просьбы о вводе-выводе.
+
+        Returns:
+            ReviewsPage: Разобранная страница отзывов.
+
+        Raises:
+            ValidationError: Если идентификатор непригоден для подстановки.
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        cleaned = user_id.strip()
+        if not cleaned or not cleaned.isalnum():
+            raise ValidationError(
+                "идентификатор продавца обязан состоять из букв и цифр, получено "
+                f"{len(cleaned)} знаков иного вида. Проверка идёт до сети: "
+                "подставленный в адрес мусор отправил бы запрос неизвестно куда"
+            )
+
+        capability = Capability.REVIEWS_GET
+        observation = yield from self.fetch_ok(capability, PROFILE_PATH.format(user_id=cleaned))
+        page = parse_reviews_page(observation.html, observed_at=datetime.now(UTC))
+        if not integrity_verified(observation):
+            page = unverified(page)
+        self._note_success(capability, page.completeness, page)
         return page
 
     def read_chats(self) -> Generator[Request, Reply, ChatsPage]:

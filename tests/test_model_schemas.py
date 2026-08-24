@@ -293,6 +293,10 @@ def test_unbuildable_models_say_so() -> None:
         "orders-page",
         "chats-page",
         "thread",
+        # Служба отзывов написана в 0.8.0 по снимку профиля, который уже
+        # лежал в проекте. Обе модели собираются разбором целиком.
+        "review",
+        "reviews-page",
     }
     for path in sorted((root / "spec" / "models").glob("*.schema.json")):
         name = path.name.removesuffix(".schema.json")
