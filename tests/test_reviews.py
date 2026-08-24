@@ -78,13 +78,90 @@ def test_the_profile_gives_every_review_it_shows() -> None:
     """
     page = parse_reviews_page(_page(PROFILE), WHEN)
 
-    assert page.completeness is Completeness.COMPLETE, (
-        f"полнота {page.completeness}, причина {page.reason}, повреждений "
-        f"{[one.code for one in page.defects]}"
-    )
-    assert page.reason == "all_rows_parsed"
+    assert not page.defects, [one.code for one in page.defects]
     assert (page.rows_total, page.rows_accepted, page.rows_rejected) == (6, 6, 0)
-    assert len(page.rows()) == 6
+    assert len(page.rows(accept_incomplete=True)) == 6
+
+
+def test_a_read_is_never_declared_complete_while_the_page_can_load_more() -> None:
+    """Требует не объявлять полноту, пока смысл спрятанной кнопки не наблюдён.
+
+    Утром 24.08.2026 разбор объявлял полноту всегда, когда строки разобрались.
+    Основанием было утверждение, что управления постраничным выводом на странице
+    нет: перебор классов по образцу more|pagin|load|next|prev ничего не нашёл.
+
+    Узлы есть - форма dyn-table-form на /users/reviews и кнопка
+    dyn-table-continue, обе сразу за таблицей. Названы они не теми словами.
+    Отсутствие было объявлено ПО НЕУДАЧЕ ПОИСКА.
+
+    Возвращает:
+        None
+    """
+    page = parse_reviews_page(_page(PROFILE), WHEN)
+
+    assert page.completeness is Completeness.PARTIAL, (
+        f"полнота {page.completeness}: у страницы есть догрузка, а смысл класса "
+        "hidden у её кнопки не наблюдён"
+    )
+    assert page.reason == "more_rows_unobserved", page.reason
+
+    with pytest.raises(IncompleteResultError, match="результат неполон"):
+        page.rows()
+
+
+def test_a_visible_continue_button_means_there_is_certainly_more() -> None:
+    """Требует различать спрятанную кнопку догрузки и показанную.
+
+    Спрятанная оставляет вопрос открытым: у наблюдённого продавца шесть отзывов,
+    и «спрятана, потому что всё показано» неотличимо от «спрятана, пока её не
+    покажет сценарий».
+
+    ПОКАЗАННАЯ вопроса не оставляет: догружать есть что. Причина обязана
+    отличаться, иначе будущее наблюдение не сможет уточнить только первый случай.
+
+    Возвращает:
+        None
+    """
+    shown = _page(PROFILE).replace("dyn-table-continue hidden", "dyn-table-continue")
+    assert shown != _page(PROFILE), "подмена класса не сработала"
+
+    page = parse_reviews_page(shown, WHEN)
+    assert page.completeness is Completeness.PARTIAL
+    assert page.reason == "more_rows_available", page.reason
+
+
+def test_a_missing_pagination_form_is_a_page_defect() -> None:
+    """Требует заметить исчезновение механизма догрузки.
+
+    Форма стоит за таблицей отзывов на всех наблюдённых снимках. Её исчезновение
+    означает, что механизм изменился, - и молча вернуть по такой странице
+    «полное» чтение было бы худшим из возможных ответов.
+
+    Возвращает:
+        None
+    """
+    broken = _page(PROFILE).replace('class="dyn-table-form"', 'class="dyn-table-form-renamed"')
+    page = parse_reviews_page(broken, WHEN)
+
+    assert "pagination_form_missing" in {one.code for one in page.defects}
+    assert page.completeness is Completeness.PARTIAL
+    assert page.reason == "page_defects"
+
+
+def test_a_page_without_the_continue_button_is_not_called_complete() -> None:
+    """Требует не считать полнотой отсутствие кнопки догрузки.
+
+    Страницы без неё никто не видел. Объявить по её отсутствию полноту значило бы
+    повторить утреннюю ошибку с другого конца: вывести знание из ненаходки.
+
+    Возвращает:
+        None
+    """
+    without = _page(PROFILE).replace("dyn-table-continue hidden", "dyn-table-gone")
+    page = parse_reviews_page(without, WHEN)
+
+    assert page.completeness is Completeness.PARTIAL
+    assert page.reason == "pagination_control_missing", page.reason
 
 
 def test_every_field_of_every_review_is_read() -> None:
@@ -106,7 +183,7 @@ def test_every_field_of_every_review_is_read() -> None:
         "date_text",
         "detail_text",
     )
-    for review in parse_reviews_page(_page(PROFILE), WHEN).rows():
+    for review in parse_reviews_page(_page(PROFILE), WHEN).rows(accept_incomplete=True):
         for name in fields:
             value = getattr(review, name)
             assert value.is_observed, (
@@ -125,7 +202,7 @@ def test_the_rating_is_a_number_from_one_to_five() -> None:
     Возвращает:
         None
     """
-    for review in parse_reviews_page(_page(PROFILE), WHEN).rows():
+    for review in parse_reviews_page(_page(PROFILE), WHEN).rows(accept_incomplete=True):
         value = review.rating.value
         assert isinstance(value, int) and not isinstance(value, bool), (
             f"отзыв {review.row_index}: оценка пришла как {type(value).__name__}"
@@ -298,7 +375,7 @@ def test_the_date_is_a_string_and_not_a_moment() -> None:
     Возвращает:
         None
     """
-    for review in parse_reviews_page(_page(PROFILE), WHEN).rows():
+    for review in parse_reviews_page(_page(PROFILE), WHEN).rows(accept_incomplete=True):
         assert isinstance(review.date_text.value, str), (
             f"отзыв {review.row_index}: дата пришла как {type(review.date_text.value).__name__}"
         )

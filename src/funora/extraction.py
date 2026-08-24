@@ -125,6 +125,8 @@ SELECTORS: Final[dict[str, str]] = {
     "reviews.fields.text": ".review-item-text",
     "reviews.filter": ".reviews-filter",
     "reviews.filter.endpoint": 'form[action$="/users/reviews"]',
+    "reviews.pagination.continue_button": "button.dyn-table-continue",
+    "reviews.pagination.form": "form.dyn-table-form",
     "reviews.row": ".review-item",
     "reviews.row.wrapper": ".review-container",
     "reviews.rows_container": ".dyn-table-body",
