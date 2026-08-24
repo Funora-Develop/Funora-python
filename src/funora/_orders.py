@@ -87,6 +87,17 @@ _HEADER: Final[str] = SELECTORS["orders.container.header"]
 #: Контейнер строк. Второй, независимый от класса строки признак.
 _ROWS_CONTAINER: Final[str] = SELECTORS["orders.rows_container"]
 
+#: Сообщение, которое площадка ставит вместо таблицы, когда показывать нечего.
+#:
+#: Наблюдено 24.08.2026 контрольной парой: та же страница с фильтром, дающим
+#: пустоту, и без него. Признак сработал ровно в одну сторону - на пустой есть,
+#: на полной нет.
+_EMPTY_MARKER: Final[str] = SELECTORS["orders.empty_list.marker"]
+
+#: Форма фильтра. Остаётся и на пустой странице: второй признак того, что
+#: страница отрисовалась целиком, просто показывать нечего.
+_FILTER: Final[str] = SELECTORS["orders.empty_list.filter_stays"]
+
 #: Селектор строки заказа.
 _ROW: Final[str] = SELECTORS["orders.row"]
 
@@ -604,19 +615,32 @@ def parse_orders_page(html: str, *, observed_at: datetime) -> OrdersPage:
     tree = HTMLParser(html)
     defects: list[Defect] = []
 
-    if tree.css_first(_TABLE) is None:
+    # Пустой список площадка рисует БЕЗ таблицы вовсе - наблюдено 24.08.2026
+    # контрольной парой. Сторожа ниже поэтому обязаны знать о нём: прежде они
+    # объявляли такую страницу сменой разметки, и сообщение «пустой список
+    # вернуть нельзя: он неотличим от отсутствия заказов» говорило ровно то, что
+    # было правдой ДО наблюдения.
+    #
+    # Признак позитивный и двойной: сообщение вместо таблицы есть И форма
+    # фильтра на месте. Второе означает, что страница отрисовалась целиком.
+    # Одного первого мало: сообщение в отдельном абзаце может появиться и на
+    # сломанной странице.
+    empty_page = tree.css_first(_EMPTY_MARKER) is not None and tree.css_first(_FILTER) is not None
+
+    if tree.css_first(_TABLE) is None and not empty_page:
         raise ProtocolChangedError(
-            f"на странице нет контейнера таблицы заказов ({_TABLE}). "
-            "Пустой список вернуть нельзя: он неотличим от отсутствия заказов"
+            f"на странице нет контейнера таблицы заказов ({_TABLE}) и нет "
+            f"признака пустого списка ({_EMPTY_MARKER}). Пустой список вернуть "
+            "нельзя: без признака он неотличим от смены разметки"
         )
 
-    if tree.css_first(_ROWS_CONTAINER) is None:
+    if tree.css_first(_ROWS_CONTAINER) is None and not empty_page:
         raise ProtocolChangedError(
             f"на странице нет контейнера строк ({_ROWS_CONTAINER}). "
             "Без него нельзя проверить, что строки найдены все"
         )
 
-    if tree.css_first(_HEADER) is None:
+    if tree.css_first(_HEADER) is None and not empty_page:
         defects.append(
             Defect(
                 severity=Severity.PAGE,
@@ -696,7 +720,22 @@ def parse_orders_page(html: str, *, observed_at: datetime) -> OrdersPage:
             )
         )
 
-    if not rows_total:
+    # Пустой список объявляется ПОЛНЫМ чтением только по позитивному
+    # свидетельству: таблицы нет И сообщение вместо неё есть.
+    #
+    # Прежде всякая пустота шла в unknown, потому что страницы без заказов никто
+    # не видел. Цена того незнания была не в полноте: курсор снимается только с
+    # полного чтения, значит на пустом списке цикл наблюдения не заводился - и
+    # заводился на СЛЕДУЮЩЕМ чтении, том, где первая продажа уже была. Событие о
+    # ней поглощалось заведением курсора и не приходило вовсе.
+    #
+    # Одного отсутствия таблицы мало. Переименуй площадка класс контейнера - и
+    # всякое чтение стало бы «пустым списком», а бот решил бы, что продаж не
+    # осталось. Это то же правило, по которому возможность объявляется
+    # отсутствующей: только по положительному свидетельству, никогда по неудаче.
+    if not rows_total and empty_page:
+        completeness, reason = Completeness.COMPLETE, "empty_list"
+    elif not rows_total:
         completeness, reason = Completeness.UNKNOWN, "empty_list_not_observed"
     elif not defects:
         completeness, reason = Completeness.COMPLETE, "all_rows_parsed"

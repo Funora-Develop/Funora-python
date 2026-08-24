@@ -19,9 +19,16 @@ from pathlib import Path
 
 import pytest
 
+from funora._diff import diff_orders
 from funora._observed import Presence
-from funora._orders import Completeness, Severity, parse_orders_page
+from funora._orders import (
+    Completeness,
+    OrdersPage,
+    Severity,
+    parse_orders_page,
+)
 from funora.errors import IncompleteResultError, ProtocolChangedError, UnobservedFieldError
+from funora.events import EventType
 from funora.extraction import OrderStatus
 
 #: Каталог со снимками страниц.
@@ -675,3 +682,114 @@ def test_duplicate_order_ids_are_loud() -> None:
 
     assert page.completeness is not Completeness.COMPLETE
     assert any(d.code == "duplicate_identifiers" for d in page.defects)
+
+
+def test_empty_list_is_a_complete_read_by_positive_evidence() -> None:
+    """Проверяет, что пустой список читается полностью - и только по признаку.
+
+    Наблюдено 24.08.2026: площадка при пустом списке не рисует таблицу совсем.
+    Вместо неё стоит короткое сообщение в отдельном абзаце, а форма фильтра
+    остаётся. Контрольная пара снята в одну минуту - та же страница с фильтром,
+    дающим пустоту, и без него, - и признак сработал ровно в одну сторону.
+
+    До наблюдения всякая пустота объявлялась неполным чтением, и цена была не в
+    полноте: курсор снимается только с полного чтения, значит на пустом списке
+    цикл наблюдения не заводился, а заводился на СЛЕДУЮЩЕМ - том, где первая
+    продажа уже была. Событие о ней поглощалось заведением курсора.
+
+    Признак обязан быть ПОЛОЖИТЕЛЬНЫМ. Одного отсутствия таблицы мало:
+    переименуй площадка класс контейнера, и всякое чтение стало бы «пустым
+    списком», а бот решил бы, что продаж не осталось.
+
+    Returns:
+        None
+    """
+    empty = _parse(_fixture("orders-trade.empty.ru"))
+    assert empty.completeness is Completeness.COMPLETE, (
+        "пустой список объявлен неполным. Курсор с него не снимется, и событие "
+        "о первой продаже поглотится заведением курсора"
+    )
+    assert empty.reason == "empty_list"
+    assert empty.rows_total == 0
+
+    # Без признака та же страница обязана оставаться сменой разметки: пустота,
+    # о которой нечем сказать, что она пустота, - не наблюдение.
+    without = _fixture("orders-trade.empty.ru").replace('class="lead"', 'class="was-lead"', 1)
+    with pytest.raises(ProtocolChangedError, match="признака пустого списка"):
+        _parse(without)
+
+    # И обратная половина, без которой первая ничего не стоит: одного сообщения
+    # мало. Абзац с таким классом может оказаться на сломанной странице, и тогда
+    # «пусто» означало бы «я не понял разметку». Второй признак - форма фильтра:
+    # она говорит, что страница отрисовалась целиком.
+    #
+    # Мутация «выбросить проверку формы» проходила молча, пока этого случая не
+    # было: проверялась половина правила.
+    broken = _fixture("orders-trade.empty.ru").replace(
+        'class="orders-filter"', 'class="was-filter"', 1
+    )
+    with pytest.raises(ProtocolChangedError, match="признака пустого списка"):
+        _parse(broken)
+
+
+def test_the_first_sale_after_an_empty_start_is_announced() -> None:
+    """Проверяет, что первая продажа порождает событие.
+
+    Самое обычное начало работы: бота запускают, пока продаж нет. Прежде первая
+    продажа не порождала события вовсе - её поглощало заведение курсора, потому
+    что на пустом списке курсор не заводился.
+
+    Проверка идёт последовательностью, а не одним чтением: порознь каждый шаг
+    выглядел бы верным.
+
+    Returns:
+        None
+    """
+    full = _fixture("orders-trade.logged.ru")
+    first = full.index('<a class="tc-item')
+    last = full.rindex("</a>") + len("</a>")
+    rows, tail = full[first:last], full[last:]
+
+    starts: list[int] = []
+    at = 0
+    while (found := rows.find('<a class="tc-item', at)) >= 0:
+        starts.append(found)
+        at = found + 1
+
+    def page(count: int) -> OrdersPage:
+        """Строит страницу с первыми count строками.
+
+        Args:
+            count (int): Сколько строк оставить. Ноль - пустая страница.
+
+        Returns:
+            OrdersPage: Разобранная страница.
+        """
+        if count == 0:
+            return _parse(_fixture("orders-trade.empty.ru"))
+        end = starts[count] if count < len(starts) else len(rows)
+        return _parse(full[:first] + rows[:end] + tail)
+
+    cursor: dict[str, str] = {}
+    primed = False
+    announced: list[int] = []
+    for count in (0, 1, 2):
+        current = page(count)
+        assert current.completeness is Completeness.COMPLETE, (
+            f"шаг с {count} строками не прочёлся полностью: цикл не тронет курсор"
+        )
+        if not primed:
+            primed = True
+        else:
+            events = list(diff_orders(cursor, current, account_id="12345678"))
+            announced.append(sum(1 for one in events if one.type is EventType.ORDER_CREATED))
+        cursor = {
+            one.order_id: (one.status.or_none() or "?")
+            for one in current.rows(accept_incomplete=True)
+        }
+
+    assert announced == [1, 1], (
+        f"о продажах объявлено {announced}, ожидалось по одной на каждую. "
+        "Первая продажа у продавца, запустившего бота до неё, обязана приходить "
+        "событием - иначе бот промолчит ровно там, где от него ждут ответа"
+    )

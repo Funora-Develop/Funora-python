@@ -157,10 +157,14 @@ def main(argv: list[str] | None = None) -> int:
     if done:
         print(f"  снято: {', '.join(done)}")
     print()
-    print("Ключ кладётся в переменную окружения, а не в аргументы командной строки:")
+    print("ВСЁ НИЖЕ ВВОДИТСЯ В POWERSHELL - в том же окне, где запущен этот скрипт.")
+    print("В консоль браузера (F12) ничего из этого вставлять не надо: там живёт")
+    print("другой сборщик, tools/capture.py, и он тут ни при чём.")
+    print()
+    print("Один раз за сеанс - ключ. В переменную окружения, а не в аргументы:")
     print("аргументы видны в списке процессов и попадают в историю оболочки.")
     print()
-    print('  $env:FUNORA_GOLDEN_KEY = "..."      (PowerShell)')
+    print('  $env:FUNORA_GOLDEN_KEY = "ваш golden_key"')
     print()
 
     if not pending:
@@ -185,8 +189,10 @@ def main(argv: list[str] | None = None) -> int:
         if one.get("do_not_provoke"):
             print("  НЕ ДОБИВАТЬСЯ НАРОЧНО. Снимать, только если случилось само.")
         else:
-            print("  команда:")
-            print(f"    funora-observe {one['path']}")
+            print("  команда (в PowerShell, из каталога Funora-python):")
+            print(f"    .venv\\Scripts\\funora-observe.exe {one['path']}")
+            print()
+            print("  снятое ляжет в observations/ рядом с этим каталогом.")
         print()
 
     print("-" * 78)

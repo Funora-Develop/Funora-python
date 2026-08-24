@@ -42,6 +42,9 @@ EXPECTED = {
     "chat.logged.ru": ResponseClass.OK,
     "chat-thread.logged.ru": ResponseClass.OK,
     "orders-trade.guest.ru": ResponseClass.LOGIN_REQUIRED,
+    # Список продаж без единой продажи. Снят 24.08.2026 фильтром по
+    # состоянию, в котором заказов нет: у аккаунта продажи были.
+    "orders-trade.empty.ru": ResponseClass.OK,
 }
 
 

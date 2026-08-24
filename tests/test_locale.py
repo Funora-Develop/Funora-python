@@ -12,7 +12,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from funora._extract import observe_locale
+from selectolax.parser import HTMLParser
+
+from funora._extract import _LANGUAGE_TAG, observe_locale
 from funora.capabilities import Capability, CapabilityState
 from funora.contract import SUPPORTED_LOCALES
 
@@ -51,19 +53,38 @@ def test_a_masked_locale_is_not_passed_off_as_a_locale() -> None:
     checked = 0
     for path in sorted(PAGES.glob("*.skeleton.txt")):
         name = path.name.split(".skeleton")[0]
-        observed = observe_locale(_page(name))
-
-        assert not observed.is_observed, (
-            f"{name}: подпись выдана за локаль {observed.or_none()!r}. Возможность "
-            "protocol.locale станет неподдержанной из-за собственной фикстуры"
-        )
-        assert observed.reason == "locale_not_a_language_tag", (
-            f"{name}: причина названа как {observed.reason!r}, а узел с атрибутом в "
-            "снимке есть - значит дело не в том, что его не нашли"
-        )
+        html = _page(name)
+        observed = observe_locale(html)
+        declared = (HTMLParser(html).css_first("html").attributes or {}).get("lang") or ""
         checked += 1
 
-    assert checked, "снимков не нашлось - проверять нечего"
+        if _LANGUAGE_TAG.match(declared.strip()):
+            # Снимок формата v7 и новее хранит метку языка дословно: она говорит
+            # о странице, а не о человеке. Такую метку разбор ОБЯЗАН прочесть.
+            assert observed.is_observed, (
+                f"{name}: в снимке стоит настоящая метка языка {declared!r}, а "
+                "разбор её не прочёл. Возможность protocol.locale станет "
+                "неподдержанной из-за собственной фикстуры"
+            )
+            assert observed.or_none() == declared.strip(), (
+                f"{name}: прочитано {observed.or_none()!r} вместо {declared!r}"
+            )
+            continue
+
+        # Снимок постарше несёт на месте метки подпись. Подпись - не метка, и
+        # выдавать её за локаль нельзя: тогда разбор объявил бы локалью
+        # «T2:a#1».
+        assert not observed.is_observed, (
+            f"{name}: подпись {declared!r} выдана за локаль {observed.or_none()!r}"
+        )
+        assert observed.reason == "locale_not_a_language_tag", (
+            f"{name}: причина названа как {observed.reason!r}, а подпись - не метка"
+        )
+
+    assert checked >= 5, (
+        f"проверено снимков: {checked}. Их у проекта больше, и обход по каталогу "
+        "обязан видеть все: пропущенный снимок - непроверенное утверждение"
+    )
 
 
 def test_a_real_language_tag_is_read() -> None:
