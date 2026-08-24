@@ -207,8 +207,69 @@ def _looks_like_a_secret(payload: Any) -> str | None:
     for word in ("cookie", "authorization", "phpsessid", "golden_key", "password"):
         if word in lowered:
             return f"в наблюдении встретилось слово «{word}»"
-    if re.search(r"[А-Яа-яЁё]{4,}", text):
-        return "в наблюдении есть кириллическое слово: подписи её не содержат"
+
+    found = _find_cyrillic(payload, "")
+    if found is not None:
+        where, shape = found
+        return (
+            f"в наблюдении есть кириллическое слово: подписи её не содержат. "
+            f"Нашлось по пути {where}, {shape}. Само значение не печатается - "
+            "для того проверка и стоит"
+        )
+    return None
+
+
+def _shape_of(value: str) -> str:
+    """Описывает строку, не раскрывая её.
+
+    Args:
+        value (str): Строка.
+
+    Returns:
+        str: Длина и набор различных знаков пунктуации.
+    """
+    marks = "".join(sorted({one for one in value if not one.isalnum()}))
+    return f"длина {len(value)}, пунктуация {marks!r}" if marks else f"длина {len(value)}"
+
+
+def _find_cyrillic(value: Any, where: str) -> tuple[str, str] | None:
+    """Ищет кириллическое слово и называет путь до него.
+
+    Прежде проверка искала по всей записи разом и говорила «нашлось». Место
+    оставалось неизвестным, и починить наблюдение было нельзя - только снять его
+    заново наугад. Сегодня это стоило трёх отправок настоящих сообщений.
+
+    Путь называть безопасно: он состоит из имён полей, а имена полей и так лежат
+    в записи. Мерку называть безопасно: длина и знаки препинания не дают
+    восстановить слово.
+
+    Args:
+        value (Any): Значение любого вида.
+        where (str): Путь до значения, накопленный обходом.
+
+    Returns:
+        tuple[str, str] | None: Путь и мерка, либо None.
+    """
+    if isinstance(value, str):
+        if re.search(r"[А-Яа-яЁё]{4,}", value):
+            return where or "<корень>", _shape_of(value)
+        return None
+    if isinstance(value, dict):
+        for key, item in value.items():
+            # Кириллица бывает и в ИМЕНИ поля, а не только в значении. Имя
+            # структурно и записывается дословно по устройству, поэтому такой
+            # случай надо называть отдельно: снимать его нечем.
+            if isinstance(key, str) and re.search(r"[А-Яа-яЁё]{4,}", key):
+                return f"{where}.<имя поля>" if where else "<имя поля>", _shape_of(key)
+            found = _find_cyrillic(item, f"{where}.{key}" if where else str(key))
+            if found is not None:
+                return found
+        return None
+    if isinstance(value, list):
+        for at, item in enumerate(value):
+            found = _find_cyrillic(item, f"{where}[{at}]")
+            if found is not None:
+                return found
     return None
 
 

@@ -646,3 +646,81 @@ def test_a_network_observation_carries_its_collector_build(
     # обязан по-прежнему: иначе счётчик молча съедет на единицу.
     assert capture._record_count([1, 2, 3]) == 3
     assert capture._record_count(payload) == 2
+
+
+def test_a_refusal_names_the_place_and_the_shape_but_not_the_value() -> None:
+    """Требует, чтобы отказ приёмника называл место находки.
+
+    Прежде проверка искала кириллицу по всей записи разом и говорила
+    «нашлось». Место оставалось неизвестным, и починить наблюдение было нельзя -
+    только снять заново наугад. Это стоило трёх отправок настоящих сообщений в
+    настоящую переписку, и все три пропали впустую.
+
+    Путь называть безопасно: он состоит из имён полей, а имена полей и так лежат
+    в записи. Мерку называть безопасно: длина и знаки препинания не дают
+    восстановить слово. Само слово - нельзя, для того проверка и стоит.
+
+    Returns:
+        None
+    """
+    capture = _tool()
+
+    said = capture._looks_like_a_secret(
+        {"records": [{"response": {"objects": [{"data": {"html": "Привет всем"}}]}}]}
+    )
+    assert said is not None, "кириллица прошла молча"
+    assert "records[0].response.objects[0].data.html" in said, said
+    assert "длина 11" in said, said
+
+    # Самого слова в отказе нет ни в каком виде.
+    for secret in ("Привет", "всем", "Привет всем"):
+        assert secret not in said, f"«{secret}» уцелел в отказе: {said}"
+
+
+def test_a_refusal_tells_apart_a_field_name_from_a_field_value() -> None:
+    """Требует различать кириллицу в ИМЕНИ поля и в его значении.
+
+    Имя поля структурно и записывается дословно по устройству: маскировать его
+    нельзя, не потеряв разбор. Значение маскируется всегда. Лечение у этих двух
+    случаев разное, и отказ обязан сказать, какой из них перед ним.
+
+    Returns:
+        None
+    """
+    capture = _tool()
+
+    said = capture._looks_like_a_secret({"records": [{"data": {"название": "x"}}]})
+    assert said is not None
+    assert "<имя поля>" in said, said
+    assert "название" not in said, said
+
+    # Чистая запись проходит молча.
+    assert (
+        capture._looks_like_a_secret(
+            {"records": [{"path": "/runner/", "request": {"fields": {"csrf_token": "T16:ad"}}}]}
+        )
+        is None
+    )
+
+
+def test_the_cyrillic_check_still_refuses_what_it_refused_before() -> None:
+    """Требует, чтобы уточнение отказа не ослабило самого правила.
+
+    Проверка стала подробнее. Подробнее - не значит мягче: всё, что отвергалось
+    прежде, обязано отвергаться и теперь.
+
+    Returns:
+        None
+    """
+    capture = _tool()
+
+    for payload in (
+        {"headers": ["cookie"]},
+        {"a": {"b": "Authorization"}},
+        ["golden_key"],
+        {"x": ["y", {"z": "пароль от аккаунта"}]},
+    ):
+        assert capture._looks_like_a_secret(payload) is not None, payload
+
+    # Три кириллические буквы подряд - не слово. Порог тот же, что был.
+    assert capture._looks_like_a_secret({"a": "или"}) is None
