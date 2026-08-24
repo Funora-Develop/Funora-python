@@ -74,6 +74,10 @@ def _in_node(call: str) -> Any:
     """
     lines = [
         "const source = require('fs').readFileSync(process.argv[1], 'utf8');",
+        # Адреса разбираются относительно location.href, а в node его нет.
+        # Без заглушки maskUrl падает в свой же catch и возвращает подпись -
+        # то есть проверка мерила бы отказ, а не разбор.
+        "globalThis.location = globalThis.location || {href: 'https://funpay.com/'};",
         "const start = source.indexOf('function charClass');",
         "const end = source.indexOf('const recorded');",
         "eval(source.slice(start, end));",
@@ -420,3 +424,225 @@ def test_the_hint_never_carries_a_human_string() -> None:
 
     assert hint["has_digit"] is True
     assert set(hint["punctuation"]) <= set(" ,!.")
+
+
+def test_a_route_name_survives_but_an_identifier_does_not() -> None:
+    """Проверяет, чем имя метода в адресе отличается от идентификатора.
+
+    Загрузка изображения идёт на POST /file/<имя метода>, и имя писано горбатым
+    письмом. Прежнее правило маскировало всякий сегмент с заглавной буквой, и
+    операцию по такой записи собрать было нельзя: в записи стоял /file/{n}.
+
+    Расширение узкое по построению. Сегмент из одних строчных букв правило
+    пропускало и раньше - /orders/trade писался дословно. Меняется ровно одно:
+    заглавная ВНУТРИ сегмента, который начинается со строчной и не имеет цифр.
+
+    Returns:
+        None
+    """
+    kept = _in_node("maskUrl('https://funpay.com/file/addChatImage')")
+    assert kept["path"] == "/file/addChatImage", kept
+    assert "masked_segments" not in kept, "имя метода не маскируется, мерке взяться неоткуда"
+
+    # Восемь цифр - человек. Восемь ЗАГЛАВНЫХ - номер заказа. Оба под правило
+    # имени метода не подходят и остаются замаскированными.
+    for address, length, upper, digit in (
+        ("https://funpay.com/users/12345678/", 8, False, True),
+        ("https://funpay.com/orders/ZVVABCDE/", 8, True, False),
+    ):
+        masked = _in_node(f"maskUrl('{address}')")
+        assert "{n}" in masked["path"], f"{address}: идентификатор уцелел в {masked['path']}"
+        hint = masked["masked_segments"][0]
+        assert (hint["length"], hint["has_upper"], hint["has_digit"]) == (length, upper, digit), (
+            hint
+        )
+
+
+def test_the_masked_segment_hint_never_carries_the_segment() -> None:
+    """Требует, чтобы мерка замаскированного сегмента не выдавала его самого.
+
+    Мерка заведена затем, что отказ записать значение молчал о причине, и
+    следующее решение принималось наугад. Молчание она снимает, значения не
+    выдаёт.
+
+    Returns:
+        None
+    """
+    masked = _in_node("maskUrl('https://funpay.com/users/ZVV12345/')")
+    text = json.dumps(masked, ensure_ascii=False)
+    for piece in ("ZVV", "12345", "ZVV12345"):
+        assert piece not in text, f"«{piece}» уцелел в записи: {text}"
+
+    hint = masked["masked_segments"][0]
+    assert hint["has_upper"] is True
+    assert hint["has_digit"] is True
+    assert hint["length"] == 8
+
+
+def test_an_array_gives_every_distinct_shape_not_only_the_first() -> None:
+    """Проверяет, что из массива записывается каждая РАЗЛИЧНАЯ форма.
+
+    Прежде записывалась одна - форма первого элемента, - и канал обновлений
+    остался наполовину неизвестным: в подписке четыре объекта разных видов, а
+    знали мы про один.
+
+    Returns:
+        None
+    """
+    shapes = _in_node("shapeOfValue([{a:1},{a:2},{b:'x'},{c:true}],0)")
+    assert shapes[:-1] == [{"a": "int"}, {"b": "T1:a"}, {"c": "boolean"}], shapes
+    assert shapes[-1] == "...of 4, distinct 3", shapes
+
+    # Одинаковые формы схлопываются: перечень описывает виды, а не длину.
+    same = _in_node("shapeOfValue([{a:1},{a:2},{a:3}],0)")
+    assert same == [{"a": "int"}, "...of 3, distinct 1"], same
+
+    # Восемь - предел. Длинный список не выгружается в запись целиком.
+    many = _in_node("shapeOfValue(Array.from({length: 30}, (_, i) => ({['k'+i]: 1})),0)")
+    assert len(many) == 9, f"форм записано {len(many) - 1}, предел восемь"
+
+
+def test_the_array_marker_stays_free_of_cyrillic() -> None:
+    """Требует, чтобы служебная метка массива осталась на латинице.
+
+    Кириллица в записи означает утёкший русский текст, и принимающая сторона
+    отвергает такую запись целиком. Метка «различных форм 2» уронила бы честное
+    наблюдение - проверка это и поймала.
+
+    Returns:
+        None
+    """
+    text = json.dumps(_in_node("shapeOfValue([{a:1},{b:2}],0)"), ensure_ascii=False)
+    offenders = sorted({ch for ch in text if "А" <= ch <= "я" or ch in "Ёё"})
+    assert not offenders, f"в метке кириллица {offenders}: {text}"
+
+
+def _run_collector(script: str) -> Any:
+    """Выполняет браузерную часть ЦЕЛИКОМ под node с заглушками вместо браузера.
+
+    Проверка выше берёт из сборщика отдельные функции - от charClass до
+    headerNames. Этого хватает для мерок и подписей и не хватает для того, что
+    сборщик ОТПРАВЛЯЕТ: перехват запросов и window.funora лежат за пределами
+    среза.
+
+    Заглушкой служит сам fetch: сборщик запоминает исходный при загрузке и
+    ходит через него. Подменённый до выполнения, он ловит и перехваченные
+    обращения, и собственную отправку наблюдения - никуда наружу при этом не
+    уходит ничего.
+
+    Args:
+        script (str): Выражение на JavaScript, выполняемое после загрузки
+            сборщика. Результат печатается вызывающим через console.log.
+
+    Returns:
+        Any: Разобранный из JSON результат.
+    """
+    prelude = [
+        "const sent = [];",
+        "globalThis.window = globalThis;",
+        # origin обязателен: запись отбрасывает чужие источники, и заглушка
+        # без него молча не записала бы ничего.
+        "globalThis.location = {href: 'https://funpay.com/chat/', origin: 'https://funpay.com'};",
+        "globalThis.document = {documentElement: {outerHTML: '', lang: 'ru'}, title: ''};",
+        "globalThis.performance = {getEntriesByType: () => []};",
+        "globalThis.XMLHttpRequest = function () {};",
+        "globalThis.XMLHttpRequest.prototype = {open(){}, send(){}, "
+        "setRequestHeader(){}, addEventListener(){}};",
+        "globalThis.fetch = async (url, init) => {",
+        "  sent.push({url, init});",
+        "  return {ok: true, status: 200, text: async () => 'принято', "
+        "json: async () => ({}), clone(){ return this }, headers: {forEach(){}}};",
+        "};",
+        "const source = require('fs').readFileSync(process.argv[1], 'utf8')",
+        "  .replace('__FUNORA_ENDPOINT__', 'http://127.0.0.1:8731/')",
+        "  .replace('__FUNORA_BUILD__', 'sborka99');",
+        "eval(source);",
+        # Сборщик и сам печатает - приветствие и ответ приёмника. Свой ответ
+        # помечается, иначе он тонет в чужом выводе.
+        f"(async () => {{ console.log('@@' + JSON.stringify(await ({script}))); }})();",
+    ]
+    run = subprocess.run(  # noqa: S603
+        ["node", "-e", "\n".join(prelude), str(SNIPPET)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert run.returncode == 0, f"сборщик не выполнился: {run.stderr}"
+    marked = [one for one in (run.stdout or "").splitlines() if one.startswith("@@")]
+    assert marked, f"сборщик ничего не вернул. Вывод: {run.stdout!r} {run.stderr!r}"
+    return json.loads(marked[-1][2:])
+
+
+def test_the_collector_stamps_its_build_into_what_it_sends() -> None:
+    """Требует, чтобы браузерная часть ВПРАВДУ клала отпечаток сборки.
+
+    Вкладка держит ту редакцию сборщика, которую загрузила, и по виду записи это
+    не отличить. Три наблюдения отправки сообщения были сделаны старой
+    редакцией, и я объяснил их подписи слишком узким образцом - настоящей
+    причиной была старая вкладка.
+
+    Прежняя проверка мерила приёмник на нагрузке, которую сама же и сложила.
+    Мутация «отпечаток не кладётся» её пережила.
+
+    Returns:
+        None
+    """
+    payload = _run_collector(
+        "(async () => {"
+        "  funora.watch();"
+        "  await fetch('https://funpay.com/runner/', "
+        "    {method: 'POST', body: 'csrf_token=x&request=false'});"
+        "  await funora.stop('proba');"
+        "  const last = sent[sent.length - 1];"
+        "  return JSON.parse(last.init.body);"
+        "})()"
+    )
+
+    assert payload["kind"] == "network", payload
+    body = payload["payload"]
+    assert body["collector_build"] == "sborka99", (
+        f"отпечаток сборки не дошёл до наблюдения: {body}. Без него нельзя "
+        "отличить запись старой вкладки от свежей"
+    )
+    assert body["captured_at"].startswith("20"), body["captured_at"]
+    assert len(body["records"]) == 1, body["records"]
+    assert body["records"][0]["path"] == "/runner/", body["records"][0]
+
+
+def test_a_network_observation_carries_its_collector_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Требует, чтобы сетевое наблюдение называло сборку, которая его сделала.
+
+    Вкладка держит ту редакцию сборщика, которую загрузила, и по виду записи это
+    не отличить. Три наблюдения отправки сообщения были сделаны старой
+    редакцией, без механизма протокольных констант, и я объяснил их подписи
+    слишком узким образцом. Настоящей причиной была старая вкладка, и узнать это
+    было неоткуда.
+
+    Args:
+        tmp_path (Path): Временный каталог вместо observations.
+        monkeypatch (pytest.MonkeyPatch): Механизм подмены.
+
+    Returns:
+        None
+    """
+    capture = _tool()
+    monkeypatch.setattr(capture, "OUTPUT", tmp_path)
+
+    payload = {
+        "collector_build": "66d0c1ef",
+        "captured_at": "2026-08-24T04:09:00.000Z",
+        "records": [{"method": "POST", "path": "/runner/"}, {"method": "POST", "path": "/runner/"}],
+    }
+    said = capture._write_json("network", "проба", payload)
+    assert "записей 2" in said, said
+
+    written = json.loads((tmp_path / "network.проба.json").read_text(encoding="utf-8"))
+    assert written["collector_build"] == "66d0c1ef"
+
+    # Голый список - прежний вид записи, и такие файлы ещё лежат. Считаться он
+    # обязан по-прежнему: иначе счётчик молча съедет на единицу.
+    assert capture._record_count([1, 2, 3]) == 3
+    assert capture._record_count(payload) == 2
