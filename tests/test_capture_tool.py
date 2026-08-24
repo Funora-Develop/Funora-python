@@ -307,9 +307,10 @@ def test_only_a_protocol_constant_is_written_down_verbatim() -> None:
         None
     """
     allowed = _in_node(
-        "['chat_message','chat_node','orders_counters'].map((one) => constantOf('action', one))"
+        "['chat_message','chat_node','orders_counters','chat-node'].map("
+        "(one) => constantOf('action', one))"
     )
-    assert allowed == ["chat_message", "chat_node", "orders_counters"], allowed
+    assert allowed == ["chat_message", "chat_node", "orders_counters", "chat-node"], allowed
 
     refused = _in_node(
         "['users-1-2','a1b2c3d4','ABC','иван','x','user@mail'].map("
@@ -776,3 +777,32 @@ def test_nothing_the_collector_writes_is_ever_in_cyrillic() -> None:
     assert _tool()._looks_like_a_secret(payload["payload"]) is None, _tool()._looks_like_a_secret(
         payload["payload"]
     )
+
+
+def test_the_hyphen_was_admitted_by_measurement_and_admits_nothing_else() -> None:
+    """Проверяет, что расширение образца не ослабило ни одного отказа.
+
+    Дефис добавлен 24.08.2026 по измерению: четвёртый вид объекта подписки
+    канала под прежний образец не подошёл, и мерка сказала чем - длина пять,
+    строчные, пунктуация «-», цифр и заглавных нет.
+
+    Первая попытка расширить образец делалась НАУГАД и пропустила бы токен вида
+    a1b2c3d4. Разница между тем разом и этим - в том, что теперь известно, какой
+    именно знак мешает, и добавлен ровно он.
+
+    Возвращает:
+        None
+    """
+    admitted = _in_node(
+        "['chat-node','a-b-c','chat_message','ab-cd'].map((one) => constantOf('type', one))"
+    )
+    assert admitted == ["chat-node", "a-b-c", "chat_message", "ab-cd"], admitted
+
+    # Всё, что отвергалось до расширения, отвергается и после. Перечень тот же,
+    # что у проверки выше, и повторён нарочно: ослабление образца обязано
+    # ронять проверку, а не проходить незамеченным.
+    refused = _in_node(
+        "['users-1-2','a1b2c3d4','ABC','иван','x','user@mail','chat node','ZVVABCDE']"
+        ".map((one) => constantOf('type', one))"
+    )
+    assert refused == [None] * 8, refused
