@@ -139,6 +139,24 @@ def _write_page(name: str, html: str, where: dict[str, Any] | None = None) -> st
     )
 
 
+def _record_count(payload: Any) -> int:
+    """Считает записи в наблюдении любого из двух видов.
+
+    Сетевое наблюдение обзавелось шапкой: отпечаток сборки и время. Прежде оно
+    было голым списком, и такие файлы в observations/ ещё лежат - считать надо
+    оба вида.
+
+    Args:
+        payload (Any): Содержимое наблюдения.
+
+    Returns:
+        int: Число записей.
+    """
+    if isinstance(payload, dict) and isinstance(payload.get("records"), list):
+        return len(payload["records"])
+    return len(payload) if isinstance(payload, list) else 1
+
+
 def _write_json(kind: str, name: str, payload: Any) -> str:
     """Сохраняет наблюдение, пришедшее уже обезличенным.
 
@@ -167,8 +185,7 @@ def _write_json(kind: str, name: str, payload: Any) -> str:
         )
 
     target.write_text(body, encoding="utf-8", newline="\n")
-    size = len(payload) if isinstance(payload, list) else 1
-    return f"наблюдение сохранено: {target.name}, записей {size}"
+    return f"наблюдение сохранено: {target.name}, записей {_record_count(payload)}"
 
 
 def _looks_like_a_secret(payload: Any) -> str | None:
