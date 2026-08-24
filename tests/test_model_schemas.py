@@ -297,6 +297,9 @@ def test_unbuildable_models_say_so() -> None:
         # лежал в проекте. Обе модели собираются разбором целиком.
         "review",
         "reviews-page",
+        # Страница одного заказа читается с 0.10.0. Order с неё по-прежнему
+        # не собирается: сторон она не разделяет, кода валюты не даёт.
+        "order-view",
     }
     for path in sorted((root / "spec" / "models").glob("*.schema.json")):
         name = path.name.removesuffix(".schema.json")

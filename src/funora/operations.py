@@ -293,7 +293,7 @@ OPERATIONS: Final[dict[str, Operation]] = {
         capability="orders.get",
         safety=Safety.SAFE,
         request_class="interactive",
-        returns="Order",
+        returns="OrderView",
         errors=(
             "funora.domain.not_found",
             "funora.auth.session_expired",
