@@ -165,6 +165,17 @@ SELECTORS: Final[dict[str, str]] = {
     "reviews.rows_container": ".dyn-table-body",
     "reviews.table": ".dyn-table",
     "session.locale": "html[lang]",
+    "showcase.offers.fields.currency_symbol_text": ".tc-price .unit",
+    "showcase.offers.fields.description_text": ".tc-desc-text",
+    "showcase.offers.fields.price_cell": ".tc-price",
+    "showcase.offers.fields.price_text": ".tc-price > div",
+    "showcase.offers.optional_columns.amount": ".tc-amount",
+    "showcase.offers.optional_columns.auto_delivery": ".auto-dlv-icon",
+    "showcase.offers.optional_columns.server": ".tc-server",
+    "showcase.offers.row": "a.tc-item",
+    "showcase.sections.container": ".offer-tc-container",
+    "showcase.sections.manage_link": ".offer-list-title-button a",
+    "showcase.sections.title": ".offer-list-title h3 a",
     "updates.positions": "a.contact-item",
 }
 
@@ -196,6 +207,10 @@ ATTRIBUTES: Final[dict[str, str]] = {
     "reviews.fields.author_photo_href.attributes.author_photo": "href",
     "reviews.fields.order_href.attributes.order_link": "href",
     "session.locale.attribute": "lang",
+    "showcase.offers.fields.price_cell.attributes.sort_value": "data-s",
+    "showcase.offers.row.attributes.offer_href": "href",
+    "showcase.sections.manage_link.attributes.manage_href": "href",
+    "showcase.sections.title.attributes.category_href": "href",
     "updates.positions.attributes.last_message": "data-node-msg",
     "updates.positions.attributes.own": "data-user-msg",
 }

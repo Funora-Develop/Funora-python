@@ -37,6 +37,7 @@ from ._poll import Schedule
 from ._proxies import DEFAULT_ACCOUNT, Proxy, ProxyPool
 from ._reviews import ReviewsPage
 from ._secret import Secret, SecretProvider
+from ._showcase import ShowcasePage
 from ._thread import Thread
 from ._transport import AsyncFetcher, TransportSettings
 from ._watch import Router, adispatch
@@ -195,6 +196,39 @@ class AsyncAccountService:
         return await self._client.run(self._client.engine.read_balance())
 
 
+class AsyncLotsService:
+    """Операции с лотами.
+
+    Args:
+        client (AsyncClient): Клиент, которому принадлежит сервис.
+    """
+
+    __slots__ = ("_client",)
+
+    def __init__(self, client: AsyncClient) -> None:
+        self._client = client
+
+    async def showcase(self, user_id: str) -> ShowcasePage:
+        """Читает публичную витрину продавца.
+
+        Возвращает то, что видит покупатель: разделы и предложения. Ни признака
+        включённости, ни средств правки на витрине нет - для них нужна страница
+        управления лотами, которая пока не наблюдалась.
+
+        Args:
+            user_id (str): Идентификатор продавца.
+
+        Returns:
+            ShowcasePage: Разделы через `sections()`. Полным чтение не
+            объявляется ни разу, и признание неполноты требуется всегда.
+
+        Raises:
+            ValidationError: Если идентификатор непригоден для подстановки.
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        return await self._client.run(self._client.engine.read_showcase(user_id))
+
+
 class AsyncClient:
     """Асинхронный клиент площадки.
 
@@ -215,7 +249,7 @@ class AsyncClient:
             здесь не поможет, исправлять надо вызов.
     """
 
-    __slots__ = ("_fetcher", "chats", "engine", "orders", "pool", "reviews", "account")
+    __slots__ = ("_fetcher", "chats", "engine", "orders", "pool", "reviews", "account", "lots")
 
     def __init__(
         self,
@@ -265,6 +299,7 @@ class AsyncClient:
         self.chats = AsyncChatsService(self)
         self.reviews = AsyncReviewsService(self)
         self.account = AsyncAccountService(self)
+        self.lots = AsyncLotsService(self)
 
     async def __aenter__(self) -> AsyncClient:
         """Входит в асинхронный контекстный менеджер.

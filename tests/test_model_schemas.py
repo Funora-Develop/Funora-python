@@ -304,6 +304,10 @@ def test_unbuildable_models_say_so() -> None:
         "balance",
         "balance-page",
         "transaction",
+        # Витрина читается с 0.11.0: публичный вид предложений продавца.
+        "showcase-offer",
+        "showcase-page",
+        "showcase-section",
     }
     for path in sorted((root / "spec" / "models").glob("*.schema.json")):
         name = path.name.removesuffix(".schema.json")

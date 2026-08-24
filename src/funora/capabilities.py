@@ -153,6 +153,8 @@ class Capability(StrEnum):
     MARKET_OFFERS = "market.offers"
     #: Снимок рынка для сравнения и мониторинга.
     MARKET_SNAPSHOT = "market.snapshot"
+    #: Чтение публичной витрины продавца с его профиля.
+    LOTS_SHOWCASE = "lots.showcase"
     #: Чтение собственных предложений продавца.
     LOTS_LIST_OWN = "lots.list_own"
     #: Включение лота в выдачу.
@@ -200,6 +202,7 @@ CAPABILITY_SOURCE: Final[dict[Capability, str]] = {
     Capability.CATALOG_FIELD_SCHEMA: "probe",
     Capability.MARKET_OFFERS: "static",
     Capability.MARKET_SNAPSHOT: "derived",
+    Capability.LOTS_SHOWCASE: "probe",
     Capability.LOTS_LIST_OWN: "static",
     Capability.LOTS_ACTIVATE: "probe",
     Capability.LOTS_DEACTIVATE: "probe",
@@ -230,6 +233,7 @@ CAPABILITY_INITIAL: Final[dict[Capability, CapabilityState]] = {
     Capability.CATALOG_FIELD_SCHEMA: CapabilityState.UNKNOWN,
     Capability.MARKET_OFFERS: CapabilityState.SUPPORTED,
     Capability.MARKET_SNAPSHOT: CapabilityState.SUPPORTED,
+    Capability.LOTS_SHOWCASE: CapabilityState.UNKNOWN,
     Capability.LOTS_LIST_OWN: CapabilityState.SUPPORTED,
     Capability.LOTS_ACTIVATE: CapabilityState.UNKNOWN,
     Capability.LOTS_DEACTIVATE: CapabilityState.UNKNOWN,
