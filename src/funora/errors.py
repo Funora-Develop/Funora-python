@@ -38,6 +38,7 @@ __all__ = [
     "CurrencyMismatchError",
     "UnsupportedCapabilityError",
     "ExperimentalCapabilityError",
+    "NotImplementedOperationError",
     "TimeoutError",
     "NetworkError",
     "RateLimitedError",
@@ -489,6 +490,30 @@ class ExperimentalCapabilityError(CapabilityError):
     since_spec: ClassVar[str] = "0.1.0"
 
 
+class NotImplementedOperationError(CapabilityError, AttributeError):
+    """Операция объявлена контрактом и не написана этой реализацией. Отличается от
+    unsupported тем, что говорит о SDK, а не о площадке: площадка функцию имеет,
+    руки не дошли.
+
+    Повтор не поможет.
+
+    Attributes:
+        stable_id (str): Устойчивый идентификатор "funora.capability.not_implemented".
+        abi_code (int): Числовой код 1403, общий для всех SDK.
+        retryable (bool): Допустим ли повтор: False.
+        side_effects_possible (bool): Могло ли действие произойти: False.
+        user_actionable (bool): Исправляется ли вызывающим: False.
+        since_spec (str): Версия спецификации "0.6.0".
+    """
+
+    stable_id: ClassVar[str] = "funora.capability.not_implemented"
+    abi_code: ClassVar[int] = 1403
+    retryable: ClassVar[bool] = False
+    side_effects_possible: ClassVar[bool] = False
+    user_actionable: ClassVar[bool] = False
+    since_spec: ClassVar[str] = "0.6.0"
+
+
 class TimeoutError(TransportError):
     """Ответ не получен вовремя. Исход операции неизвестен - это ambiguous timeout, и
     повтор небезопасной операции без сверки состояния запрещён.
@@ -906,6 +931,7 @@ ERROR_BY_STABLE_ID: Final[dict[str, type[Exception]]] = {
     "funora.validation.currency_mismatch": CurrencyMismatchError,
     "funora.capability.unsupported": UnsupportedCapabilityError,
     "funora.capability.experimental": ExperimentalCapabilityError,
+    "funora.capability.not_implemented": NotImplementedOperationError,
     "funora.transport.timeout": TimeoutError,
     "funora.transport.network": NetworkError,
     "funora.transport.rate_limited": RateLimitedError,
@@ -949,6 +975,7 @@ ERROR_BY_ABI_CODE: Final[dict[int, type[Exception]]] = {
     1301: CurrencyMismatchError,
     1401: UnsupportedCapabilityError,
     1402: ExperimentalCapabilityError,
+    1403: NotImplementedOperationError,
     1501: TimeoutError,
     1502: NetworkError,
     1503: RateLimitedError,

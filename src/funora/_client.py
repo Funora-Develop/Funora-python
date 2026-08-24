@@ -19,7 +19,7 @@ from collections.abc import Callable, Generator
 from dataclasses import replace
 from pathlib import Path
 from time import sleep
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Final, TypeVar
 
 from ._budget import Budget
 from ._chats import ChatsPage
@@ -35,7 +35,7 @@ from ._thread import Thread
 from ._transport import Fetcher, TransportSettings
 from ._watch import Router, dispatch
 from .capabilities import Capability, CapabilityState
-from .errors import ConfigurationError, FunoraError, HandlerError
+from .errors import ConfigurationError, FunoraError, HandlerError, NotImplementedOperationError
 
 if TYPE_CHECKING:
     from ._transport import Observation
@@ -47,6 +47,20 @@ _log = logging.getLogger("funora.client")
 #: Тип, которым завершается сопрограмма ядра. Синтаксис PEP 695 не годится:
 #: пакет поддерживает Python 3.11, где его ещё нет.
 T = TypeVar("T")
+
+
+#: Службы, объявленные контрактом, и записи реестра о том, чего в них нет.
+#:
+#: Перечень здесь, а не в порождённом файле: он говорит о РЕАЛИЗАЦИИ - какие
+#: службы она не написала, - а не о контракте. Сверяется он проверкой, которая
+#: читает spec/services и spec/conformance/not-implemented.yaml: разойдись
+#: перечень с ними, обращение к новой службе давало бы голый отказ языка.
+_SERVICES_IN_CONTRACT: Final[dict[str, str]] = {
+    "account": "account_service_operations",
+    "catalog": "catalog_service_operations",
+    "lots": "lots_service_operations",
+    "market": "market_service_operations",
+}
 
 
 class OrdersService:
@@ -191,6 +205,44 @@ class Client:
         )
         self.orders = OrdersService(self)
         self.chats = ChatsService(self)
+
+    def __getattr__(self, name: str) -> object:
+        """Отвечает на обращение к службе, которой у этой реализации нет.
+
+        Служб в контракте шесть, написаны две. Прежде обращение к остальным
+        давало голый AttributeError: бот, обернувший работу в except FunoraError,
+        падал не операцией, а всем процессом, и узнавал причину из трассировки.
+
+        Заглушек не заводится нарочно. Заглушка существует как атрибут, и
+        hasattr на ней вернул бы True - проверка «умеет ли эта версия SDK
+        работать с лотами» начала бы врать. Здесь атрибута нет, hasattr
+        возвращает False, а обращение поднимает отказ, который ловится и общим
+        перехватом, и привычным except AttributeError.
+
+        Args:
+            name (str): Имя, которого у клиента нет.
+
+        Returns:
+            object: Ничего не возвращает.
+
+        Raises:
+            NotImplementedOperationError: Если имя - объявленная контрактом
+                служба. Текст называет запись реестра, где сказано, чего именно
+                не хватает.
+            AttributeError: Если имя просто опечатка. Обычный отказ языка: имя,
+                которого нет ни в контракте, ни в реализации, - не пробел
+                реализации, а ошибка вызывающего.
+        """
+        declared = _SERVICES_IN_CONTRACT.get(name)
+        if declared is None:
+            raise AttributeError(f"{type(self).__name__!r} не имеет атрибута {name!r}")
+        raise NotImplementedOperationError(
+            f"служба «{name}» объявлена контрактом и не написана этой "
+            f"реализацией. Чего именно не хватает, сказано в записи реестра "
+            f"«{declared}» - spec/conformance/not-implemented.yaml.\n\n"
+            "Проверить заранее можно через hasattr: у ненаписанной службы он "
+            "возвращает False."
+        )
 
     def __enter__(self) -> Client:
         """Входит в контекстный менеджер.
