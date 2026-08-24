@@ -306,6 +306,7 @@ def test_domain_types_come_from_the_spec() -> None:
 OPERATION_METHOD: dict[str, tuple[str, str]] = {
     "chats.list": ("ChatsService", "list"),
     "chats.history": ("ChatsService", "thread"),
+    "account.balance": ("AccountService", "balance"),
     "orders.get": ("OrdersService", "get"),
     "orders.list": ("OrdersService", "list"),
     "reviews.get": ("ReviewsService", "get"),

@@ -21,6 +21,7 @@ from pathlib import Path
 from time import sleep
 from typing import TYPE_CHECKING, Final, TypeVar
 
+from ._account import BalancePage
 from ._budget import Budget
 from ._chats import ChatsPage
 from ._engine import Deliver, Engine, Fetch, Pause, Reply, Request
@@ -188,6 +189,34 @@ class ReviewsService:
         return self._client.run(self._client.engine.read_reviews(user_id))
 
 
+class AccountService:
+    """Операции с аккаунтом.
+
+    Args:
+        client (Client): Клиент, которому принадлежит сервис.
+    """
+
+    __slots__ = ("_client",)
+
+    def __init__(self, client: Client) -> None:
+        self._client = client
+
+    def balance(self) -> BalancePage:
+        """Читает баланс аккаунта и операции по счёту.
+
+        Возвращает ПЕРЕЧЕНЬ балансов, а не одно значение: страница показывает
+        три узла значения, по одному на валюту. Кода валюты не даёт ни одному из
+        них - страница несёт только знак.
+
+        Returns:
+            BalancePage: Балансы полем, операции через `transactions()`.
+
+        Raises:
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        return self._client.run(self._client.engine.read_balance())
+
+
 class Client:
     """Клиент площадки.
 
@@ -211,7 +240,7 @@ class Client:
             здесь не поможет, исправлять надо вызов.
     """
 
-    __slots__ = ("_fetcher", "chats", "engine", "orders", "pool", "reviews")
+    __slots__ = ("_fetcher", "chats", "engine", "orders", "pool", "reviews", "account")
 
     def __init__(
         self,
@@ -260,6 +289,7 @@ class Client:
         self.orders = OrdersService(self)
         self.chats = ChatsService(self)
         self.reviews = ReviewsService(self)
+        self.account = AccountService(self)
 
     def __getattr__(self, name: str) -> object:
         """Отвечает на обращение к службе, которой у этой реализации нет.

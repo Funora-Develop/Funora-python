@@ -68,6 +68,18 @@ class Operation:
 
 #: Операции служб по идентификатору.
 OPERATIONS: Final[dict[str, Operation]] = {
+    "account.balance": Operation(
+        name="account.balance",
+        capability="account.balance",
+        safety=Safety.SAFE,
+        request_class="interactive",
+        returns="BalancePage",
+        errors=(
+            "funora.auth.session_expired",
+            "funora.protocol.changed",
+            "funora.transport",
+        ),
+    ),
     "account.get": Operation(
         name="account.get",
         capability="account.profile",

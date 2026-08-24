@@ -24,6 +24,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
 
+from ._account import BalancePage
 from ._budget import Budget
 from ._chats import ChatsPage
 from ._engine import Deliver, Engine, Fetch, Pause, Reply, Request
@@ -166,6 +167,34 @@ class AsyncChatsService:
         return await self._client.run(self._client.engine.read_thread(node_id))
 
 
+class AsyncAccountService:
+    """Операции с аккаунтом.
+
+    Args:
+        client (AsyncClient): Клиент, которому принадлежит сервис.
+    """
+
+    __slots__ = ("_client",)
+
+    def __init__(self, client: AsyncClient) -> None:
+        self._client = client
+
+    async def balance(self) -> BalancePage:
+        """Читает баланс аккаунта и операции по счёту.
+
+        Возвращает ПЕРЕЧЕНЬ балансов, а не одно значение: страница показывает
+        три узла значения, по одному на валюту. Кода валюты не даёт ни одному из
+        них - страница несёт только знак.
+
+        Returns:
+            BalancePage: Балансы полем, операции через `transactions()`.
+
+        Raises:
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        return await self._client.run(self._client.engine.read_balance())
+
+
 class AsyncClient:
     """Асинхронный клиент площадки.
 
@@ -186,7 +215,7 @@ class AsyncClient:
             здесь не поможет, исправлять надо вызов.
     """
 
-    __slots__ = ("_fetcher", "chats", "engine", "orders", "pool", "reviews")
+    __slots__ = ("_fetcher", "chats", "engine", "orders", "pool", "reviews", "account")
 
     def __init__(
         self,
@@ -235,6 +264,7 @@ class AsyncClient:
         self.orders = AsyncOrdersService(self)
         self.chats = AsyncChatsService(self)
         self.reviews = AsyncReviewsService(self)
+        self.account = AsyncAccountService(self)
 
     async def __aenter__(self) -> AsyncClient:
         """Входит в асинхронный контекстный менеджер.

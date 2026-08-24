@@ -37,6 +37,7 @@ from pathlib import Path
 from time import monotonic
 from typing import Final, TypeVar
 
+from ._account import BalancePage, parse_balance_page
 from ._budget import Budget
 from ._chats import ChatsPage, parse_chats_page
 from ._classify import DEFAULT_IDENTITY_CSS, Verdict, classify
@@ -107,6 +108,7 @@ __all__ = [
     "CHATS_PATH",
     "PROFILE_PATH",
     "ORDER_PATH",
+    "BALANCE_PATH",
 ]
 
 _log = logging.getLogger("funora.client")
@@ -125,6 +127,9 @@ PROFILE_PATH: Final[str] = "/users/{user_id}/"
 
 #: Страница одного заказа.
 ORDER_PATH: Final[str] = "/orders/{order_id}/"
+
+#: Страница баланса. Несёт и балансы по валютам, и операции по счёту.
+BALANCE_PATH: Final[str] = "/account/balance"
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,7 +240,7 @@ def integrity_verified(observation: Observation) -> bool:
 
 
 #: Прочитанное, у чего есть полнота: страница списка либо переписка.
-PageT = TypeVar("PageT", bound="OrdersPage | ChatsPage | Thread | ReviewsPage")
+PageT = TypeVar("PageT", bound="OrdersPage | ChatsPage | Thread | ReviewsPage | BalancePage")
 
 
 def unverified(page: PageT) -> PageT:
@@ -299,6 +304,7 @@ IMPLEMENTED: Final[frozenset[Capability]] = frozenset(
         Capability.CHATS_HISTORY,
         Capability.REVIEWS_GET,
         Capability.ORDERS_GET,
+        Capability.ACCOUNT_BALANCE,
     }
 )
 
@@ -466,6 +472,40 @@ class Engine:
         if not integrity_verified(observation):
             page = unverified(page)
         self._note_success(Capability.ORDERS_LIST, page.completeness, page)
+        return page
+
+    def read_balance(self) -> Generator[Request, Reply, BalancePage]:
+        """Читает страницу баланса: балансы по валютам и операции по счёту.
+
+        Операции приходят тем же чтением, потому что лежат на той же странице.
+        Отдельный запрос за ними означал бы два похода на площадку за одним
+        ответом.
+
+        Yields:
+            Request: Просьбы о вводе-выводе.
+
+        Returns:
+            BalancePage: Балансы и операции.
+
+        Raises:
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        observation = yield from self.fetch_ok(Capability.ACCOUNT_BALANCE, BALANCE_PATH)
+        page = parse_balance_page(observation.html, observed_at=datetime.now(UTC))
+        if not integrity_verified(observation):
+            page = unverified(page)
+        self._note_success(Capability.ACCOUNT_BALANCE, page.completeness, None)
+
+        # Состояние возможности чтения операций выставляется ОТДЕЛЬНО и не
+        # через _note_success: своей операции у неё нет, и в перечне выполняемых
+        # ей не место. Площадка вправе показать баланс и не показать историю, и
+        # сводить их в одно состояние значило бы объявить историю работающей по
+        # факту баланса.
+        self._state.capabilities[Capability.ACCOUNT_TRANSACTIONS] = (
+            CapabilityState.SUPPORTED
+            if page.rows_total and page.completeness is Completeness.COMPLETE
+            else CapabilityState.DEGRADED
+        )
         return page
 
     def read_order(self, order_id: str) -> Generator[Request, Reply, OrderView]:
@@ -1555,7 +1595,7 @@ class Engine:
         self,
         capability: Capability,
         completeness: Completeness,
-        page: OrdersPage | ChatsPage | Thread | ReviewsPage | None,
+        page: OrdersPage | ChatsPage | Thread | ReviewsPage | BalancePage | None,
     ) -> None:
         """Записывает состояние возможности по успешному чтению.
 

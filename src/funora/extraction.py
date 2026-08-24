@@ -83,6 +83,23 @@ PRESENCE_BY_CLASS: Final[dict[str, bool]] = {
 #: Ключ выведен из пути внутри документа: он однозначен и не
 #: зависит от языка реализации.
 SELECTORS: Final[dict[str, str]] = {
+    "account.balances.delimiter": "span.balances-delimiter",
+    "account.balances.list": "span.balances-list",
+    "account.balances.value": "span.balances-value",
+    "account.pagination.continue_button": "button.dyn-table-continue",
+    "account.pagination.form": "form.dyn-table-form",
+    "account.transactions.fields.amount_text": ".tc-price",
+    "account.transactions.fields.currency_symbol_text": ".tc-price .unit",
+    "account.transactions.fields.date_left_text": ".tc-date-left",
+    "account.transactions.fields.date_text": ".tc-date-time",
+    "account.transactions.fields.status": ".tc-item",
+    "account.transactions.fields.status_text": ".tc-status",
+    "account.transactions.fields.title_text": ".tc-title",
+    "account.transactions.fields.transaction_id": ".tc-item",
+    "account.transactions.header_is_not_a_row": ".tc-header",
+    "account.transactions.row": ".tc-item",
+    "account.transactions.rows_container": ".dyn-table-body",
+    "account.transactions.table": ".tc-finance",
     "chats.contact_list.fields.counterparty_name": ".media-user-name",
     "chats.contact_list.fields.preview_text": ".contact-item-message",
     "chats.contact_list.fields.time_text": ".contact-item-time",
@@ -161,6 +178,7 @@ SELECTORS: Final[dict[str, str]] = {
 #:
 #: Ключ выведен из пути внутри документа, как и у селекторов.
 ATTRIBUTES: Final[dict[str, str]] = {
+    "account.transactions.fields.transaction_id.attributes.transaction_id": "data-transaction",
     "chats.contact_list.attributes.last_message_position": "data-node-msg",
     "chats.contact_list.attributes.node_id": "data-id",
     "chats.contact_list.attributes.own_position": "data-user-msg",

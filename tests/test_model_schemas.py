@@ -300,6 +300,10 @@ def test_unbuildable_models_say_so() -> None:
         # Страница одного заказа читается с 0.10.0. Order с неё по-прежнему
         # не собирается: сторон она не разделяет, кода валюты не даёт.
         "order-view",
+        # Страница баланса читается с 0.10.0: балансы и операции по счёту.
+        "balance",
+        "balance-page",
+        "transaction",
     }
     for path in sorted((root / "spec" / "models").glob("*.schema.json")):
         name = path.name.removesuffix(".schema.json")
