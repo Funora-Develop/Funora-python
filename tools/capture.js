@@ -238,6 +238,35 @@
     }
   }
 
+  //: Как выглядит ИМЯ ПОЛЯ - ключ, который можно записать дословно.
+  //
+  // Проверка заведена 24.08.2026 после утечки. Ответ на догрузку строк - это
+  // HTML, а сборщик разобрал его как форму: знак равенства есть в каждом
+  // атрибуте разметки, разбор строки запроса сделал ключами куски HTML, и
+  // ключи записались дословно - вместе с настоящими суммами операций.
+  //
+  // Допущение «ключи структурны» верно ровно до тех пор, пока ключи вправду
+  // являются именами полей. Теперь это проверяется, а не предполагается.
+  const FIELD_NAME = /^[A-Za-z_][A-Za-z0-9_.[\]-]{0,64}$/
+
+  /**
+   * Говорит, похожа ли строка на строку запроса, а не на что угодно со знаком
+   * равенства внутри.
+   *
+   * @param {string} text Тело запроса строкой.
+   * @returns {boolean} Правда, если каждый ключ имеет вид имени поля.
+   */
+  function looksLikeAForm(text) {
+    if (text.includes('<') || text.includes('>') || /\s/.test(text.trim())) return false
+    const parts = text.split('&')
+    if (parts.length === 0) return false
+    return parts.every((one) => {
+      const at = one.indexOf('=')
+      if (at <= 0) return false
+      return FIELD_NAME.test(decodeURIComponent(one.slice(0, at)))
+    })
+  }
+
   /**
    * Сводит тело запроса или ответа к форме: имена полей и подписи значений.
    *
@@ -272,7 +301,7 @@
           /* не JSON - разбирается ниже как форма либо как строка */
         }
       }
-      if (text.includes('=')) {
+      if (looksLikeAForm(text)) {
         const fields = {}
         for (const [key, value] of new URLSearchParams(text).entries()) {
           fields[key] = constantOf(key, value) || shapeOfNested(value, 0)
@@ -323,6 +352,13 @@
     if (typeof value === 'object') {
       const out = {}
       for (const key of Object.keys(value).sort()) {
+        if (!FIELD_NAME.test(key)) {
+          // Ключ не похож на имя поля. Записать его дословно значило бы
+          // повторить утечку с другого конца: ключом бывает и то, что написал
+          // человек, - в словаре, собранном из данных.
+          out[signature(key)] = shapeOfValue(value[key], level + 1)
+          continue
+        }
         const literal = constantOf(key, value[key])
         if (literal !== null) {
           out[key] = literal
