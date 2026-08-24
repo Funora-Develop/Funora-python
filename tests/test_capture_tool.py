@@ -692,7 +692,11 @@ def test_a_refusal_tells_apart_a_field_name_from_a_field_value() -> None:
 
     said = capture._looks_like_a_secret({"records": [{"data": {"название": "x"}}]})
     assert said is not None
-    assert "<имя поля>" in said, said
+    # Ключ отвергается ДВАЖДЫ по разным основаниям, и первым срабатывает
+    # структурное: кириллическое слово - частный случай ключа, не похожего на
+    # имя поля. Годится любое из двух, лишь бы речь шла о ключе и лишь бы самого
+    # ключа в отказе не было.
+    assert "<ключ>" in said or "<имя поля>" in said, said
     assert "название" not in said, said
 
     # Чистая запись проходит молча.
@@ -806,3 +810,129 @@ def test_the_hyphen_was_admitted_by_measurement_and_admits_nothing_else() -> Non
         ".map((one) => constantOf('type', one))"
     )
     assert refused == [None] * 8, refused
+
+
+def test_markup_is_never_parsed_as_a_form() -> None:
+    """Требует не принимать разметку за строку запроса.
+
+    24.08.2026 в наблюдение утекли настоящие суммы операций. Ответ на догрузку
+    строк - это HTML, а сборщик разобрал его КАК ФОРМУ: знак равенства есть в
+    каждом атрибуте разметки, разбор строки запроса сделал ключами куски HTML,
+    и ключи записались дословно.
+
+    Допущение было такое: значения маскируются, а ключи структурны, потому что
+    имя поля говорит о протоколе, а не о человеке. Верно оно ровно до тех пор,
+    пока ключи вправду являются именами полей.
+
+    Returns:
+        None
+    """
+    markup = '<div class="tc-price">1031.40 <span class="unit">x</span></div>'
+    shape = _in_node(f"shapeOf({json.dumps(markup)})")
+
+    assert shape["kind"] == "string", f"разметка разобрана как {shape['kind']}: {shape}"
+    text = json.dumps(shape, ensure_ascii=False)
+    for secret in ("1031.40", "tc-price", "unit"):
+        assert secret not in text, f"«{secret}» уцелел в записи: {text}"
+
+    # Настоящая строка запроса при этом разбирается по-прежнему.
+    real = _in_node("shapeOf('user_id=12345678&continue=987654321&filter=')")
+    assert real["kind"] == "form", real
+    assert sorted(real["fields"]) == ["continue", "filter", "user_id"], real
+
+
+def test_a_key_that_is_not_a_field_name_is_masked_too() -> None:
+    """Требует маскировать ключ, пришедший из данных.
+
+    Ключом бывает и то, что написал человек, - в словаре, собранном из данных.
+    Проверка стоит с той же стороны, что и маскирование значений.
+
+    Returns:
+        None
+    """
+    shape = _in_node("shapeOfValue({'ok_name': 1, 'Иван Петров': 2, '<div class': 3}, 0)")
+    text = json.dumps(shape, ensure_ascii=False)
+
+    assert "ok_name" in shape, f"имя поля замаскировано зря: {shape}"
+    for secret in ("Иван", "Петров", "<div"):
+        assert secret not in text, f"«{secret}» уцелел в записи: {text}"
+
+
+def test_the_receiver_refuses_a_strange_key_on_its_own() -> None:
+    """Требует, чтобы приёмник ловил странный ключ независимо от сборщика.
+
+    Полагаться на одну сторону нельзя: инструмент пишет в каталог разработчика,
+    и цена пропуска несимметрична. Браузерная часть чинена - эта проверка стоит
+    на случай, если во вкладке окажется старая её редакция.
+
+    Returns:
+        None
+    """
+    capture = _tool()
+
+    leaked = {
+        "records": [
+            {
+                "response": {
+                    "kind": "form",
+                    "fields": {"minus; 1031.40 <span class": "T1706:acdops"},
+                }
+            }
+        ]
+    }
+    said = capture._looks_like_a_secret(leaked)
+    assert said is not None, "утечка прошла молча"
+    assert "<ключ>" in said, said
+    for secret in ("1031.40", "minus", "span"):
+        assert secret not in said, f"«{secret}» уцелел в отказе: {said}"
+
+    # Честная запись проходит.
+    assert (
+        capture._looks_like_a_secret(
+            {
+                "collector_build": "d03c765c",
+                "captured_at": "2026-08-24T05:00:00.000Z",
+                "records": [
+                    {
+                        "path": "/users/transactions",
+                        "request": {
+                            "kind": "form",
+                            "fields": {"user_id": "T8:d", "continue": "T9:d", "filter": ""},
+                        },
+                    }
+                ],
+            }
+        )
+        is None
+    )
+
+
+def test_markup_whose_first_key_looks_like_a_field_name_is_still_not_a_form() -> None:
+    """Требует не признавать формой разметку, начинающуюся именем поля.
+
+    Проверка отделяет ОДИН заслон от соседнего. Ключ, не похожий на имя поля,
+    ловится другой проверкой; здесь тело таково, что первый ключ имя поля
+    напоминает - и без заслона по угловым скобкам запись объявила бы разметку
+    формой.
+
+    Утечки от этого не будет: значения маскируются. Соврала бы сама запись -
+    она сказала бы «форма» там, где пришла разметка, и следующий читатель стал
+    бы искать поля запроса в ответе страницы.
+
+    Returns:
+        None
+    """
+    markup = 'data=1<div class="tc-price">1031.40</div>'
+    shape = _in_node(f"shapeOf({json.dumps(markup)})")
+
+    assert shape["kind"] == "string", (
+        f"разметка объявлена формой: {shape}. Ключ data имя поля напоминает, и "
+        "без заслона по угловым скобкам запись соврала бы о виде тела"
+    )
+    assert "1031.40" not in json.dumps(shape, ensure_ascii=False)
+
+    # Пробел внутри - второй признак того же: строка запроса пробелов не несёт,
+    # они в ней закодированы.
+    spaced = _in_node(f"shapeOf({json.dumps('name=Иван Петров')})")
+    assert spaced["kind"] == "string", spaced
+    assert "Иван" not in json.dumps(spaced, ensure_ascii=False)

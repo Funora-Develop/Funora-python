@@ -208,6 +208,16 @@ def _looks_like_a_secret(payload: Any) -> str | None:
         if word in lowered:
             return f"в наблюдении встретилось слово «{word}»"
 
+    strange = _find_strange_key(payload, "")
+    if strange is not None:
+        where, shape = strange
+        return (
+            f"в наблюдении есть ключ, не похожий на имя поля: {where}, {shape}. "
+            "Ключи записываются ДОСЛОВНО, и ключ, пришедший из данных, утечёт "
+            "целиком - так уже утекли суммы операций 24.08.2026, когда ответ в "
+            "виде разметки разобрался как форма"
+        )
+
     found = _find_cyrillic(payload, "")
     if found is not None:
         where, shape = found
@@ -216,6 +226,55 @@ def _looks_like_a_secret(payload: Any) -> str | None:
             f"Нашлось по пути {where}, {shape}. Само значение не печатается - "
             "для того проверка и стоит"
         )
+    return None
+
+
+#: Как выглядит имя поля - ключ, который можно записать дословно.
+_FIELD_NAME: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\[\]-]{0,64}$")
+
+#: Ключи, которые кладёт сам сборщик и которые именем поля не являются.
+#:
+#: Перечень закрытый: всё, чего в нём нет и что под образец имени не подходит,
+#: отвергается. Проще расширить перечень, чем однажды не заметить утечку.
+_OWN_KEYS: Final[frozenset[str]] = frozenset(
+    {"...", "nested", "hint", "signature", "collector_build", "captured_at", "records"}
+)
+
+
+def _find_strange_key(value: Any, where: str) -> tuple[str, str] | None:
+    """Ищет ключ, не похожий на имя поля.
+
+    Ключи записываются ДОСЛОВНО - на том основании, что имя поля говорит о
+    протоколе, а не о человеке. Основание верно ровно до тех пор, пока ключи
+    вправду являются именами полей.
+
+    24.08.2026 ответ на догрузку строк - разметка - разобрался как форма, ключами
+    стали куски HTML, и вместе с ними записались настоящие суммы операций.
+    Браузерная часть починена; эта проверка стоит независимо от неё, потому что
+    полагаться на одну сторону нельзя.
+
+    Args:
+        value (Any): Значение любого вида.
+        where (str): Путь до значения, накопленный обходом.
+
+    Returns:
+        tuple[str, str] | None: Путь и мерка ключа, либо None.
+    """
+    if isinstance(value, dict):
+        for key, item in value.items():
+            text = str(key)
+            known = text in _OWN_KEYS or text.startswith("...") or text.startswith("T")
+            if not known and not _FIELD_NAME.match(text):
+                return f"{where}.<ключ>" if where else "<ключ>", _shape_of(text)
+            found = _find_strange_key(item, f"{where}.{text}" if where else text)
+            if found is not None:
+                return found
+        return None
+    if isinstance(value, list):
+        for at, item in enumerate(value):
+            found = _find_strange_key(item, f"{where}[{at}]")
+            if found is not None:
+                return found
     return None
 
 
