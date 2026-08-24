@@ -46,6 +46,8 @@ EXPECTED = {
     # состоянию, в котором заказов нет: у аккаунта продажи были.
     "orders-trade.empty.ru": ResponseClass.OK,
     "user.logged.ru": ResponseClass.OK,
+    "account-balance.logged.ru": ResponseClass.OK,
+    "root.logged.ru": ResponseClass.OK,
 }
 
 
