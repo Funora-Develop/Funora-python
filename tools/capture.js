@@ -134,6 +134,39 @@
   }
 
   /**
+   * Говорит, ЧЕМ значение протокольного поля не подошло под образец.
+   *
+   * Три значения, без которых не собрать запрос отправки сообщения, остались
+   * подписями T12:ap, T15:ap и T9:ap. Подпись говорит «латиница и пунктуация», а
+   * какая пунктуация - не говорит, и расширять образец пришлось бы наугад.
+   * Наугад расширенный образец однажды пропустил бы токен.
+   *
+   * Подсказка называет длину, набор РАЗЛИЧНЫХ знаков пунктуации и наличие
+   * заглавных с цифрами. Буквой считается буква ЛЮБОГО письма, а не только
+   * латиница: первая редакция выбрасывала только латиницу, и кириллица
+   * оставалась в наборе знаков целиком. Проверка это поймала. Восстановить по ней значение нельзя: порядок знаков не
+   * сохраняется, буквы не сохраняются вовсе, повторы схлопнуты. Полей всего два,
+   * и оба несут имя действия протокола.
+   *
+   * @param {string} key Имя поля.
+   * @param {*} value Значение поля.
+   * @returns {object|null} Подсказка либо null, если поле не протокольное, либо
+   *   значение и без того записано дословно.
+   */
+  function constantHint(key, value) {
+    if (!CONSTANTS.has(key)) return null
+    if (typeof value !== 'string' || value === '') return null
+    if (CONSTANT_SHAPE.test(value)) return null
+    return {
+      length: value.length,
+      punctuation: [...new Set(value.replace(/[\p{L}\p{N}]/gu, ''))].sort().join(''),
+      has_upper: /[A-Z]/.test(value),
+      has_digit: /[0-9]/.test(value),
+      why_not_the_value: 'образец расширяется по измерению, а не по догадке',
+    }
+  }
+
+  /**
    * Сводит тело запроса или ответа к форме: имена полей и подписи значений.
    *
    * @param {*} body Тело в любом виде: строка, FormData, URLSearchParams, объект.
@@ -199,7 +232,14 @@
       const out = {}
       for (const key of Object.keys(value).sort()) {
         const literal = constantOf(key, value[key])
-        out[key] = literal === null ? shapeOfValue(value[key], level + 1) : literal
+        if (literal !== null) {
+          out[key] = literal
+          continue
+        }
+        const hint = constantHint(key, value[key])
+        out[key] = hint === null
+          ? shapeOfValue(value[key], level + 1)
+          : { signature: shapeOfValue(value[key], level + 1), hint }
       }
       return out
     }
