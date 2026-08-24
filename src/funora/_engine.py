@@ -230,7 +230,7 @@ def integrity_verified(observation: Observation) -> bool:
 
 
 #: Прочитанное, у чего есть полнота: страница списка либо переписка.
-PageT = TypeVar("PageT", bound="OrdersPage | ChatsPage | Thread")
+PageT = TypeVar("PageT", bound="OrdersPage | ChatsPage | Thread | ReviewsPage")
 
 
 def unverified(page: PageT) -> PageT:
@@ -1510,7 +1510,7 @@ class Engine:
         self,
         capability: Capability,
         completeness: Completeness,
-        page: OrdersPage | ChatsPage | Thread,
+        page: OrdersPage | ChatsPage | Thread | ReviewsPage,
     ) -> None:
         """Записывает состояние возможности по успешному чтению.
 
