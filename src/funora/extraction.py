@@ -100,6 +100,8 @@ SELECTORS: Final[dict[str, str]] = {
     "chats.widget": ".chat-contacts",
     "orders.container": ".orders-table",
     "orders.container.header": ".tc-header",
+    "orders.empty_list.filter_stays": "form.orders-filter",
+    "orders.empty_list.marker": "p.lead",
     "orders.fields.amount_text": ".tc-price",
     "orders.fields.category": ".order-desc .text-muted",
     "orders.fields.counterparty_link": ".tc-user [data-href]",
