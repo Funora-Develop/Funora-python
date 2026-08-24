@@ -157,9 +157,14 @@ def main(argv: list[str] | None = None) -> int:
     if done:
         print(f"  снято: {', '.join(done)}")
     print()
-    print("ВСЁ НИЖЕ ВВОДИТСЯ В POWERSHELL - в том же окне, где запущен этот скрипт.")
-    print("В консоль браузера (F12) ничего из этого вставлять не надо: там живёт")
-    print("другой сборщик, tools/capture.py, и он тут ни при чём.")
+    print("НАБЛЮДЕНИЯ БЫВАЮТ ДВУХ РОДОВ, И СНИМАЮТСЯ ОНИ РАЗНЫМИ ИНСТРУМЕНТАМИ.")
+    print()
+    print("  Страница - в PowerShell, командой funora-observe. Она ниже у каждого")
+    print("  такого пункта, вводится в том же окне, где запущен этот скрипт.")
+    print()
+    print("  Запрос - в консоли браузера, сборщиком tools/capture.js. Запрос")
+    print("  делает страница, а не мы, и наш транспорт его не видит по устройству.")
+    print("  У таких пунктов имя ожидаемого файла начинается на network.")
     print()
     print("Один раз за сеанс - ключ. В переменную окружения, а не в аргументы:")
     print("аргументы видны в списке процессов и попадают в историю оболочки.")
@@ -189,10 +194,27 @@ def main(argv: list[str] | None = None) -> int:
         if one.get("do_not_provoke"):
             print("  НЕ ДОБИВАТЬСЯ НАРОЧНО. Снимать, только если случилось само.")
         else:
-            print("  команда (в PowerShell, из каталога Funora-python):")
-            print(f"    .venv\\Scripts\\funora-observe.exe {one['path']}")
-            print()
-            print("  снятое ляжет в observations/ рядом с этим каталогом.")
+            if str(one.get("expect_file", "")).startswith("network."):
+                # Запрос делает СТРАНИЦА, а не мы. Наш транспорт его не видит по
+                # устройству, и funora-observe тут бесполезен.
+                name = str(one["expect_file"]).removeprefix("network.").removesuffix(".json")
+                print("  СНИМАЕТСЯ НЕ ЭТОЙ КОМАНДОЙ. Запрос делает страница, а не мы,")
+                print("  и наш транспорт его не видит. Порядок такой:")
+                print()
+                print(r"    1. в PowerShell:  .venv\Scripts\python.exe tools/capture.py")
+                print("       он поднимет приёмник и напечатает, что вставить в браузер")
+                print(f"    2. откройте в браузере {one['path']}")
+                print("    3. F12 -> Console -> вставьте напечатанное")
+                print("    4. funora.watch()")
+                print("    5. сделайте действие, которое надо наблюдать")
+                print(f'    6. funora.stop("{name}")')
+                print()
+                print(f"  ляжет в observations/{one['expect_file']}")
+            else:
+                print("  команда (в PowerShell, из каталога Funora-python):")
+                print(f"    .venv\\Scripts\\funora-observe.exe {one['path']}")
+                print()
+                print("  снятое ляжет в observations/ рядом с этим каталогом.")
         print()
 
     print("-" * 78)
