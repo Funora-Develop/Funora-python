@@ -20,13 +20,24 @@ import argparse
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 #: Куда сборщик кладёт снятое.
 OBSERVATIONS = Path(__file__).resolve().parent.parent / "observations"
 
 #: Где лежат уже перенесённые снимки.
 FIXTURES = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "pages"
+
+
+#: Как достать строку из защищённого ввода в Windows PowerShell 5.1.
+#:
+#: В седьмой версии для этого есть признак -AsPlainText у
+#: ConvertFrom-SecureString; в пятой его нет, и совет по семёрке там падает с
+#: сообщением про несуществующий параметр.
+_UNWRAP: Final[str] = (
+    "[Runtime.InteropServices.Marshal]::PtrToStringAuto("
+    "[Runtime.InteropServices.Marshal]::SecureStringToBSTR($s))"
+)
 
 
 def _load_yaml() -> Any:
@@ -169,7 +180,22 @@ def main(argv: list[str] | None = None) -> int:
     print("Один раз за сеанс - ключ. В переменную окружения, а не в аргументы:")
     print("аргументы видны в списке процессов и попадают в историю оболочки.")
     print()
-    print('  $env:FUNORA_GOLDEN_KEY = "ваш golden_key"')
+    # Ключ вводится В ПРИГЛАШЕНИЕ, а не в саму команду.
+    #
+    # Так он не попадает ни на экран, ни в историю оболочки: в историю ложится
+    # команда, а не введённое по ней. Прежде здесь печаталось присваивание
+    # строкой, и ключ дважды оказывался в переписке - один раз в присваивании,
+    # другой раз подсказкой к Read-Host, чей первый аргумент это текст
+    # приглашения.
+    #
+    # Способ именно для Windows PowerShell 5.1. У ConvertFrom-SecureString
+    # признак -AsPlainText появился только в седьмой версии, и совет,
+    # написанный по семёрке, у пятой падает.
+    print('  $s = Read-Host "введите ключ" -AsSecureString')
+    print("  $env:FUNORA_GOLDEN_KEY = " + _UNWRAP)
+    print()
+    print("  Ключ вводится ПОСЛЕ нажатия Enter, в приглашение. На экран он не")
+    print("  выводится и в историю команд не попадает.")
     print()
 
     if not pending:
