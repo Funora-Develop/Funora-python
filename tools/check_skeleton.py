@@ -22,6 +22,8 @@
 
 from __future__ import annotations
 
+import html
+import json
 import re
 import sys
 from collections import Counter
@@ -68,6 +70,48 @@ def _is_masked_url(value: str) -> bool:
     return not any(part.isdigit() for part in tail[0].split("/"))
 
 
+def _is_masked_json(value: str) -> bool:
+    """Атрибут-объект безопасен, если все его значения - подписи.
+
+    Формат скелета v8 сохраняет КЛЮЧИ объекта и маскирует значения. Такой
+    атрибут выглядит непомаскированным - он длинный и с кавычками, - и без этой
+    проверки попадал бы в список к чтению глазами на каждом снимке. Проверка,
+    шумящая всегда, перестаёт читаться.
+
+    Аргументы:
+        value (str): значение атрибута, как оно записано в скелете.
+
+    Возвращает:
+        bool: True, если это объект, у которого замаскировано каждое значение.
+    """
+    text = html.unescape(value).strip()
+    if not text.startswith("{"):
+        return False
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        return False
+
+    def masked(one: object) -> bool:
+        """Сообщает, замаскировано ли значение целиком.
+
+        Аргументы:
+            one (object): значение любого уровня вложенности.
+
+        Возвращает:
+            bool: True, если ни одного открытого значения внутри нет.
+        """
+        if isinstance(one, dict):
+            return all(masked(item) for item in one.values())
+        if isinstance(one, list):
+            return all(masked(item) for item in one)
+        if one is None or isinstance(one, bool):
+            return True
+        return isinstance(one, str) and _SIGNATURE.match(one) is not None
+
+    return isinstance(parsed, dict) and masked(parsed)
+
+
 def _scan(text: str) -> tuple[Counter[str], Counter[str]]:
     """Собирает всё, что не является подписью.
 
@@ -89,7 +133,7 @@ def _scan(text: str) -> tuple[Counter[str], Counter[str]]:
         name, value = match.groups()
         if not value or name in _VERBATIM or _SIGNATURE.match(value):
             continue
-        if _PLACEHOLDER.match(value) or _is_masked_url(value):
+        if _PLACEHOLDER.match(value) or _is_masked_url(value) or _is_masked_json(value):
             continue
         leaked_attrs[f"{name}={value}"] += 1
 

@@ -226,3 +226,47 @@ def test_providers_satisfy_protocol(tmp_path: Path) -> None:
     assert isinstance(EnvSecretProvider(), SecretProvider)
     assert isinstance(CallableSecretProvider(lambda n: "x"), SecretProvider)
     assert isinstance(FileSecretProvider(tmp_path), SecretProvider)
+
+
+def test_the_secret_file_option_accepts_a_file_as_well_as_a_directory(
+    tmp_path: Path,
+) -> None:
+    """Требует принимать и сам файл ключа, и каталог, где он лежит.
+
+    Ключ командной строки называется --secret-file, а принимался только
+    каталог: человек, прочитавший имя буквально, указывал файл и получал
+    «файл секрета не найден: golden_key/golden_key».
+
+    Имя обещало одно, поведение требовало другого - и это стоило трёх попыток
+    подряд у того, кто снимал наблюдения.
+
+    Возвращает:
+        None
+    """
+    target = tmp_path / "golden_key"
+    target.write_text("значение-ключа\n", encoding="utf-8")
+
+    by_directory = FileSecretProvider(tmp_path, check_permissions=False)
+    by_file = FileSecretProvider(target, check_permissions=False)
+
+    assert by_directory.get("golden_key").reveal() == "значение-ключа"
+    assert by_file.get("golden_key").reveal() == "значение-ключа", (
+        "указание самого файла не сработало, хотя ключ так и называется"
+    )
+
+
+def test_a_missing_secret_file_says_what_to_do(tmp_path: Path) -> None:
+    """Требует, чтобы отказ называл оба допустимых способа.
+
+    Отказ, говорящий только «не найден», оставляет человека гадать, что именно
+    от него хотят - путь к файлу или к каталогу.
+
+    Возвращает:
+        None
+    """
+    provider = FileSecretProvider(tmp_path / "нет-такого", check_permissions=False)
+    with pytest.raises(SecretNotFoundError) as refused:
+        provider.get("golden_key")
+
+    text = str(refused.value)
+    assert "сам файл" in text and "каталог" in text, f"отказ не говорит, что делать: {text}"

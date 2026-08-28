@@ -291,8 +291,8 @@ class FileSecretProvider:
     модель доступа.
 
     Args:
-        directory (Path): Каталог, в котором лежат файлы секретов. Имя файла
-            совпадает с именем секрета.
+        directory (Path): Сам файл секрета либо каталог, в котором он лежит. В
+            каталоге имя файла совпадает с именем секрета.
         check_permissions (bool): Проверять ли, что файл недоступен для чтения
             другими пользователями.
     """
@@ -316,9 +316,18 @@ class FileSecretProvider:
             SecretNotFoundError: Если файл отсутствует, пуст или доступен на
                 чтение посторонним.
         """
-        path = self._dir / name
+        # Принимается и каталог, и сам файл.
+        #
+        # Прежде принимался только каталог - при том что ключ командной строки
+        # называется --secret-file. Человек, прочитавший имя буквально, указывал
+        # файл и получал «файл секрета не найден: golden_key/golden_key»: имя
+        # обещало одно, поведение требовало другого.
+        path = self._dir if self._dir.is_file() else self._dir / name
         if not path.is_file():
-            raise SecretNotFoundError(f"файл секрета не найден: {path}")
+            raise SecretNotFoundError(
+                f"файл секрета не найден: {path}. Укажите либо сам файл, либо "
+                f"каталог, в котором лежит файл с именем {name}"
+            )
 
         if self._check and os.name == "posix":
             mode = path.stat().st_mode & 0o077

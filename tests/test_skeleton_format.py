@@ -222,3 +222,40 @@ def test_the_skeleton_stays_parseable_after_the_rule() -> None:
         "узел за атрибутом-объектом потерян: кавычка порвала разметку"
     )
     assert "&quot;" in skeleton, "кавычка не экранирована"
+
+
+def test_the_leak_check_does_not_flag_a_properly_masked_json_attribute() -> None:
+    """Требует, чтобы проверка утечек не шумела на честном атрибуте-объекте.
+
+    Атрибут формата v8 выглядит непомаскированным - он длинный и с кавычками, -
+    и без отдельного правила попадал бы в список к чтению глазами на КАЖДОМ
+    снимке. Проверка, шумящая всегда, перестаёт читаться, а перестав читаться,
+    перестаёт находить настоящее.
+
+    Возвращает:
+        None
+    """
+    import importlib.util
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    tool = _Path(__file__).resolve().parent.parent / "tools" / "check_skeleton.py"
+    spec = importlib.util.spec_from_file_location("_check_skeleton", tool)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    _sys.modules["_check_skeleton"] = module
+    spec.loader.exec_module(module)
+
+    # Честный атрибут: ключи на месте, каждое значение - подпись.
+    honest = "{&quot;csrf-token&quot;: &quot;T16:ad&quot;, &quot;userId&quot;: &quot;T1:d&quot;}"
+    assert module._is_masked_json(honest), "честный атрибут-объект принят за утечку"
+
+    # Непомаскированное значение внутри объекта проверку проходить НЕ должно.
+    leaked = "{&quot;csrf-token&quot;: &quot;a1b2c3d4e5f6a7b8&quot;}"
+    assert not module._is_masked_json(leaked), (
+        "объект с настоящим значением внутри признан безопасным"
+    )
+
+    # И то, что объектом не является, правилу не подлежит.
+    assert not module._is_masked_json("T20:acdps")
+    assert not module._is_masked_json("[1, 2, 3]")
