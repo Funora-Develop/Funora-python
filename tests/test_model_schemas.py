@@ -312,6 +312,9 @@ def test_unbuildable_models_say_so() -> None:
         "catalog-game",
         "catalog-page",
         "catalog-section",
+        # Чтение аккаунта, проверка сессии и профиль возможностей - с 0.14.0.
+        "session-health",
+        "capability-profile",
     }
     for path in sorted((root / "spec" / "models").glob("*.schema.json")):
         name = path.name.removesuffix(".schema.json")

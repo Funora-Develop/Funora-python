@@ -307,6 +307,10 @@ OPERATION_METHOD: dict[str, tuple[str, str]] = {
     "chats.list": ("ChatsService", "list"),
     "chats.history": ("ChatsService", "thread"),
     "account.balance": ("AccountService", "balance"),
+    "account.get": ("AccountService", "get"),
+    "account.refresh": ("AccountService", "refresh"),
+    "capabilities": ("AccountService", "capabilities"),
+    "session.health": ("AccountService", "health"),
     "catalog.categories": ("CatalogService", "categories"),
     "lots.showcase": ("LotsService", "showcase"),
     "orders.get": ("OrdersService", "get"),
@@ -439,6 +443,20 @@ def test_every_declared_operation_is_implemented_or_registered() -> None:
         for method in dir(cls)
         if not method.startswith("_")
     }
+
+    # Имя операции не всегда складывается из имени службы и метода. Контракт
+    # называет проверку сессии session.health, а профиль возможностей - просто
+    # capabilities; обе выполняются службой аккаунта.
+    #
+    # Соответствие для таких случаев рукописное и живёт в OPERATION_METHOD - той
+    # же таблице, которой сверяется возвращаемый тип. Читать её здесь обязательно:
+    # иначе операция с непрямым именем числилась бы нереализованной навсегда, и
+    # правило «либо написана, либо в реестре» требовало бы записи о том, что
+    # работает.
+    for name, (service_name, method) in OPERATION_METHOD.items():
+        cls = services.get(service_name.removesuffix("Service").lower())
+        if cls is not None and hasattr(cls, method):
+            implemented.add(name)
 
     registry = yaml.safe_load(
         (root / "spec" / "conformance" / "not-implemented.yaml").read_text(encoding="utf-8")

@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Generator
+from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -41,7 +42,7 @@ from ._account import BalancePage, parse_balance_page
 from ._budget import Budget
 from ._catalog import CatalogPage, parse_catalog
 from ._chats import ChatsPage, parse_chats_page
-from ._classify import DEFAULT_IDENTITY_CSS, Verdict, classify
+from ._classify import DEFAULT_IDENTITY_CSS, ResponseClass, Verdict, classify
 from ._diff import (
     UNREAD_STATUS,
     Delivery,
@@ -70,10 +71,12 @@ from ._thread import Thread, parse_thread
 from ._transport import Observation, TransportSettings
 from ._verdicts import error_for
 from ._watch import Router, StepResult, health_changed, incomplete, loss, primed
+from ._whoami import Account, CapabilityProfile, SessionHealth, parse_account
 from .budget import (
     COUNTS_REDIRECTS,
     COUNTS_RETRIES,
     MAX_QUEUE_DEPTH_PER_KEY,
+    MIN_HEALTH_INTERVAL_MS,
     WAIT_ATTEMPTS,
     WAIT_GUARD_MS,
     RequestClass,
@@ -113,6 +116,7 @@ __all__ = [
     "BALANCE_PATH",
     "SHOWCASE_PATH",
     "CATALOG_PATH",
+    "ACCOUNT_PATH",
 ]
 
 _log = logging.getLogger("funora.client")
@@ -134,6 +138,14 @@ ORDER_PATH: Final[str] = "/orders/{order_id}/"
 
 #: Страница баланса. Несёт и балансы по валютам, и операции по счёту.
 BALANCE_PATH: Final[str] = "/account/balance"
+
+#: Страница, по которой читается собственный аккаунт и проверяется сессия.
+#:
+#: Это адрес переписки, и выбран он не случайно. Собственный идентификатор лежит
+#: в атрибуте data-user, а тот есть только там, где есть виджет переписки: на
+#: списке продаж и на странице баланса его нет вовсе. Из страниц с виджетом эта -
+#: единственная с постоянным адресом, не требующим чужого идентификатора.
+ACCOUNT_PATH: Final[str] = CHATS_PATH
 
 #: Корень площадки. Несёт каталог целиком.
 CATALOG_PATH: Final[str] = "/"
@@ -202,6 +214,22 @@ class _State:
             ломается. Но поля, приходящие текстом, возвращаются на этом языке,
             и вызывающий вправе знать, на каком.
     """
+
+    #: Вердикт последней классификации.
+    #:
+    #: Нужен проверке сессии: она ОТЧИТЫВАЕТСЯ о состоянии, а не падает от него,
+    #: и потому обязана видеть вердикт даже тогда, когда чтение окончилось
+    #: отказом. Поле обнуляется перед каждой проверкой: несвежий вердикт хуже
+    #: отсутствующего, он выглядит свежим.
+    last_verdict: Verdict | None = None
+
+    #: Ответ последней проверки сессии и момент, когда он получен.
+    #:
+    #: Дроссель нужен затем, что проверку ставят в цикл ядра, а не зовут рукой.
+    #: Без него реализация пошла бы на площадку каждый тик - ровно то, чего
+    #: обещание операции запрещает.
+    health_cached: SessionHealth | None = None
+    health_checked_at: float = 0.0
 
     capabilities: dict[Capability, CapabilityState] = field(
         default_factory=lambda: dict(CAPABILITY_INITIAL)
@@ -322,6 +350,7 @@ IMPLEMENTED: Final[frozenset[Capability]] = frozenset(
         Capability.ACCOUNT_BALANCE,
         Capability.LOTS_SHOWCASE,
         Capability.CATALOG_CATEGORIES,
+        Capability.ACCOUNT_PROFILE,
     }
 )
 
@@ -490,6 +519,103 @@ class Engine:
             page = unverified(page)
         self._note_success(Capability.ORDERS_LIST, page.completeness, page)
         return page
+
+    def read_account(self) -> Generator[Request, Reply, Account]:
+        """Читает собственный аккаунт.
+
+        Балансов не читает: они на другой странице, и брать её ради профиля
+        значило бы ходить на площадку дважды за одним ответом.
+
+        Yields:
+            Request: Просьбы о вводе-выводе.
+
+        Returns:
+            Account: Собственный идентификатор, имя и метка языка.
+
+        Raises:
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        observation = yield from self.fetch_ok(Capability.ACCOUNT_PROFILE, ACCOUNT_PATH)
+        account = parse_account(observation.html, observed_at=datetime.now(UTC))
+        damaged = any(one.severity is Severity.PAGE for one in account.defects)
+        self._note_success(
+            Capability.ACCOUNT_PROFILE,
+            Completeness.PARTIAL if damaged else Completeness.COMPLETE,
+            None,
+        )
+        return account
+
+    def read_health(self) -> Generator[Request, Reply, SessionHealth]:
+        """Проверяет пригодность сессии самым дешёвым доступным способом.
+
+        ОТЧИТЫВАЕТСЯ, А НЕ ПАДАЕТ. Отказ площадки здесь - это ответ, а не
+        происшествие: проверку зовут именно затем, чтобы узнать о нём заранее.
+
+        Результат держится в кэше на объявленный срок. Проверку ставят в цикл
+        ядра, а не зовут рукой, и без дросселя она ходила бы на площадку каждый
+        тик - ровно то, чего обещание операции запрещает.
+
+        Yields:
+            Request: Просьбы о вводе-выводе.
+
+        Returns:
+            SessionHealth: Класс ответа, годность сессии и признак кэша.
+        """
+        now = monotonic()
+        cached = self._state.health_cached
+        if (
+            cached is not None
+            and (now - self._state.health_checked_at) * 1000 < MIN_HEALTH_INTERVAL_MS
+        ):
+            return replace(cached, from_cache=True)
+
+        # Несвежий вердикт хуже отсутствующего: он выглядит свежим.
+        self._state.last_verdict = None
+        # Отказ - это ответ. Вердикт уже записан классификатором, и по нему
+        # проверка и отчитывается: гасится здесь ровно иерархия Funora, чужие
+        # исключения проходят насквозь.
+        with suppress(FunoraError):
+            yield from self.fetch_ok(Capability.ACCOUNT_PROFILE, ACCOUNT_PATH)
+
+        verdict = self._state.last_verdict
+        checked_at = datetime.now(UTC)
+        if verdict is None:
+            # До классификации дело не дошло вовсе: ответа не было. Объявлять по
+            # этому «сессия негодна» нельзя - негодна может быть сеть.
+            health = SessionHealth(
+                response_class=ResponseClass.TRANSPORT_ERROR,
+                is_usable=False,
+                reason="no_response",
+                provisional=False,
+                checked_at=checked_at,
+                from_cache=False,
+            )
+        else:
+            health = SessionHealth.of(verdict, checked_at, from_cache=False)
+
+        self._state.health_cached = health
+        self._state.health_checked_at = monotonic()
+        return health
+
+    def capability_profile(self) -> CapabilityProfile:
+        """Собирает профиль возможностей БЕЗ СЕТИ.
+
+        Профиль отвечает на «что этот клиент умеет прямо сейчас», а это уже
+        известно из того, что наблюдалось. Ходить за этим на площадку незачем.
+
+        Ключ объявляется ровно для КАЖДОЙ возможности контракта: профиль,
+        умалчивающий о возможности, читался бы как «её нет», а это другой ответ.
+
+        Returns:
+            CapabilityProfile: Состояние каждой возможности.
+        """
+        return CapabilityProfile(
+            observed_at=datetime.now(UTC),
+            _states={
+                one: self._state.capabilities.get(one, CAPABILITY_INITIAL[one])
+                for one in Capability
+            },
+        )
 
     def read_catalog(self) -> Generator[Request, Reply, CatalogPage]:
         """Читает каталог с корня площадки.
@@ -800,6 +926,9 @@ class Engine:
                 )
                 self.note_locale(observation.html)
                 self.note_health(verdict)
+                # Вердикт запоминается ДО возможного отказа: проверка сессии
+                # отчитывается о состоянии, а не падает от него.
+                self._state.last_verdict = verdict
                 error = error_for(verdict, session_ever_valid=self._state.session_ever_valid)
                 if error is not None:
                     self.note_stop(error)
