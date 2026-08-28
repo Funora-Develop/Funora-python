@@ -178,6 +178,10 @@ def test_every_generated_selector_is_read() -> None:
         # перечисляет в нём все пять уровней.
         "reviews.filter",
         "reviews.filter.endpoint",
+        # Поиск по играм: операции в контракте нет, и объявлять её по одной
+        # форме нельзя - ответа никто не видел. Имя поля к тому же
+        # замаскировано, и собрать запрос по снимку не выйдет.
+        "catalog.search.form",
     }
 
     unexpected = [key for key in silent if key not in known_silent]

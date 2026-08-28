@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, TypeVar
 
 from ._account import BalancePage
 from ._budget import Budget
+from ._catalog import CatalogPage
 from ._chats import ChatsPage
 from ._engine import Deliver, Engine, Fetch, Pause, Reply, Request
 from ._host import host_of
@@ -229,6 +230,33 @@ class AsyncLotsService:
         return await self._client.run(self._client.engine.read_showcase(user_id))
 
 
+class AsyncCatalogService:
+    """Операции с каталогом.
+
+    Args:
+        client (AsyncClient): Клиент, которому принадлежит сервис.
+    """
+
+    __slots__ = ("_client",)
+
+    def __init__(self, client: AsyncClient) -> None:
+        self._client = client
+
+    async def categories(self) -> CatalogPage:
+        """Читает каталог: игры, их варианты и разделы каждого.
+
+        Читается только основной список. Избранное повторяет его целиком -
+        наблюдено, восемь карточек из восьми, - и новых сведений не даёт.
+
+        Returns:
+            CatalogPage: Игры через `games()`.
+
+        Raises:
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        return await self._client.run(self._client.engine.read_catalog())
+
+
 class AsyncClient:
     """Асинхронный клиент площадки.
 
@@ -249,7 +277,17 @@ class AsyncClient:
             здесь не поможет, исправлять надо вызов.
     """
 
-    __slots__ = ("_fetcher", "chats", "engine", "orders", "pool", "reviews", "account", "lots")
+    __slots__ = (
+        "_fetcher",
+        "account",
+        "catalog",
+        "chats",
+        "engine",
+        "lots",
+        "orders",
+        "pool",
+        "reviews",
+    )
 
     def __init__(
         self,
@@ -300,6 +338,7 @@ class AsyncClient:
         self.reviews = AsyncReviewsService(self)
         self.account = AsyncAccountService(self)
         self.lots = AsyncLotsService(self)
+        self.catalog = AsyncCatalogService(self)
 
     async def __aenter__(self) -> AsyncClient:
         """Входит в асинхронный контекстный менеджер.
