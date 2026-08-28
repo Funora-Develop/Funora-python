@@ -33,6 +33,7 @@ __all__ = [
     "DEMAND_WINDOW_MS",
     "COUNTS_RETRIES",
     "COUNTS_REDIRECTS",
+    "MIN_HEALTH_INTERVAL_MS",
     "MAX_QUEUE_DEPTH_PER_KEY",
     "MAX_CONCURRENT_HANDLERS",
     "HANDLER_TIMEOUT_MS",
@@ -169,6 +170,9 @@ COUNTS_RETRIES: Final[bool] = True
 COUNTS_REDIRECTS: Final[bool] = True
 
 #: Предел числа переходов на один запрос.
+
+#: Раньше какого срока проверка сессии возвращает кэш, миллисекунды.
+MIN_HEALTH_INTERVAL_MS: Final[int] = 60000
 
 #: Сколько событий помещается в очередь одного ключа упорядочивания, штук.
 MAX_QUEUE_DEPTH_PER_KEY: Final[int] = 128

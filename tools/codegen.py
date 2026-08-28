@@ -933,6 +933,7 @@ def render_budget(spec: Path) -> str:
         "DEMAND_WINDOW_MS",
         "COUNTS_RETRIES",
         "COUNTS_REDIRECTS",
+        "MIN_HEALTH_INTERVAL_MS",
         "MAX_QUEUE_DEPTH_PER_KEY",
         "MAX_CONCURRENT_HANDLERS",
         "HANDLER_TIMEOUT_MS",
@@ -1146,6 +1147,11 @@ def render_budget(spec: Path) -> str:
     # своя единица измерения в комментарии. Неизвестный ключ - отказ: раздел
     # дописали, а генератор об этом не знает, и знать об этом должен человек.
     known_limits = {
+        "min_health_interval_ms": (
+            "MIN_HEALTH_INTERVAL_MS",
+            "int",
+            "Раньше какого срока проверка сессии возвращает кэш, миллисекунды.",
+        ),
         "max_queue_depth_per_key": (
             "MAX_QUEUE_DEPTH_PER_KEY",
             "int",

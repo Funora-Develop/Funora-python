@@ -39,6 +39,7 @@ from ._showcase import ShowcasePage
 from ._thread import Thread
 from ._transport import Fetcher, TransportSettings
 from ._watch import Router, dispatch
+from ._whoami import Account, CapabilityProfile, SessionHealth
 from .capabilities import Capability, CapabilityState
 from .errors import ConfigurationError, FunoraError, HandlerError, NotImplementedOperationError
 
@@ -204,6 +205,57 @@ class AccountService:
 
     def __init__(self, client: Client) -> None:
         self._client = client
+
+    def get(self) -> Account:
+        """Читает собственный аккаунт: идентификатор, имя и метку языка.
+
+        Балансов не читает - они на другой странице, и брать её ради профиля
+        значило бы ходить на площадку дважды за одним ответом.
+
+        Returns:
+            Account: Сведения о собственном аккаунте.
+
+        Raises:
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        return self._client.run(self._client.engine.read_account())
+
+    def refresh(self) -> Account:
+        """Перечитывает собственный аккаунт.
+
+        ДЕЛАЕТ РОВНО ТО ЖЕ, что и get, и это сказано прямо. Кэша у чтения
+        аккаунта нет, а значит и обходить нечего: операция объявлена контрактом
+        отдельно, и молча свести её к первой значило бы обещать разницу, которой
+        нет.
+
+        Returns:
+            Account: Сведения о собственном аккаунте.
+
+        Raises:
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        return self._client.run(self._client.engine.read_account())
+
+    def health(self) -> SessionHealth:
+        """Проверяет пригодность сессии.
+
+        ОТЧИТЫВАЕТСЯ, А НЕ ПАДАЕТ: отказ площадки здесь - это ответ, а не
+        происшествие. Результат держится в кэше на объявленный срок.
+
+        Returns:
+            SessionHealth: Класс ответа, годность сессии и признак кэша.
+        """
+        return self._client.run(self._client.engine.read_health())
+
+    def capabilities(self) -> CapabilityProfile:
+        """Возвращает профиль возможностей.
+
+        Собирается БЕЗ СЕТИ - из того, что уже наблюдалось.
+
+        Returns:
+            CapabilityProfile: Состояние каждой возможности контракта.
+        """
+        return self._client.engine.capability_profile()
 
     def balance(self) -> BalancePage:
         """Читает баланс аккаунта и операции по счёту.
