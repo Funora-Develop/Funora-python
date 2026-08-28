@@ -15,8 +15,14 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from selectolax.parser import HTMLParser
 
-from funora._skeleton import SKELETON_FORMAT, SUPPORTED_SKELETON_FORMATS, _char_class
+from funora._skeleton import (
+    SKELETON_FORMAT,
+    SUPPORTED_SKELETON_FORMATS,
+    _char_class,
+    skeletonize,
+)
 from funora.skeleton_format import (
     ACCEPTED_SKELETON_FORMATS,
     CHARACTER_CLASSES,
@@ -108,3 +114,111 @@ def test_stored_snapshots_declare_a_readable_format() -> None:
         assert declared in SUPPORTED_SKELETON_FORMATS, (
             f"{path.name} объявляет формат {declared!r}, который читать нечем"
         )
+
+
+def test_a_json_attribute_keeps_its_keys_and_masks_its_values() -> None:
+    """Проверяет правило формата v8: ключи дословно, значения подписями.
+
+    Заведено ради одного места, и место это перекрывает семь операций записи:
+    защитный токен площадки лежит в объекте JSON атрибута data-app-data. Пока
+    атрибут маскировался целиком, в снимке не было ни одного ключа этого
+    объекта, и разбор, достающий оттуда токен, проверить было НЕ НА ЧЕМ.
+
+    Токен от правила читаемым не становится и не должен. Читаемым становится
+    путь до него.
+
+    Returns:
+        None
+    """
+    import json as _json
+
+    html = (
+        "<html><body data-app-data='"
+        '{"csrf-token":"a1b2c3d4e5f6a7b8","userId":12345678,"locale":"ru",'
+        '"nested":{"deep":"тайна"}}'
+        "'></body></html>"
+    )
+    skeleton = skeletonize(html)
+
+    raw = HTMLParser(skeleton).css_first("body").attributes.get("data-app-data")
+    assert raw is not None, "атрибут пропал из скелета"
+    parsed = _json.loads(raw)
+
+    # Ключи всех уровней на месте - по ним и пишется разбор.
+    assert set(parsed) == {"csrf-token", "userId", "locale", "nested"}
+    assert set(parsed["nested"]) == {"deep"}
+
+    # Значения - все до одного - замаскированы.
+    for secret in ("a1b2c3d4e5f6a7b8", "12345678", "тайна"):
+        assert secret not in skeleton, f"«{secret}» уцелел в скелете"
+    assert parsed["csrf-token"].startswith("T"), parsed["csrf-token"]
+    assert parsed["nested"]["deep"].startswith("T"), parsed["nested"]["deep"]
+
+    # Число маскируется подписью своей записи, а не остаётся числом:
+    # восьмизначное число - это идентификатор человека, а не количество.
+    assert isinstance(parsed["userId"], str), parsed["userId"]
+
+
+def test_a_json_attribute_with_a_human_key_is_masked_whole() -> None:
+    """Требует отменять правило, если хоть один ключ пришёл из данных.
+
+    Ключом бывает и то, что написал человек - в словаре, собранном из данных.
+    Сборщик наблюдений на этом уже обжёгся, записав вместе с ключами настоящие
+    суммы операций.
+
+    Returns:
+        None
+    """
+    for value in (
+        '{"Иван Петров":"x"}',
+        '{"nested":{"1031.40 рублей":"x"}}',
+        '{"<div class":"x"}',
+    ):
+        skeleton = skeletonize(f"<html><body data-app-data='{value}'></body></html>")
+        raw = HTMLParser(skeleton).css_first("body").attributes.get("data-app-data")
+        assert raw is not None and raw.startswith("T"), f"значение {value} сохранило ключи: {raw!r}"
+        for secret in ("Иван", "Петров", "1031.40", "<div"):
+            assert secret not in skeleton, f"«{secret}» уцелел в скелете при {value}"
+
+
+def test_only_an_object_falls_under_the_rule() -> None:
+    """Требует применять правило только к объекту, а не ко всему похожему.
+
+    Строка, случайно разбираемая как число либо как перечень, значением-объектом
+    не является, и распространять на неё правило значило бы расширить его
+    наугад.
+
+    Returns:
+        None
+    """
+    for value in ("[1, 2, 3]", "12345", '"строка"', "не объект"):
+        skeleton = skeletonize(f"<html><body data-app-data='{value}'></body></html>")
+        raw = HTMLParser(skeleton).css_first("body").attributes.get("data-app-data")
+        assert raw is not None and raw.startswith("T"), (
+            f"значение {value!r} прошло как объект: {raw!r}"
+        )
+
+
+def test_the_skeleton_stays_parseable_after_the_rule() -> None:
+    """Требует, чтобы скелет с объектом в атрибуте оставался разбираемым.
+
+    До формата v8 маскированное значение кавычек не содержало никогда.
+    Атрибут-объект их содержит, и неэкранированный он сделал бы снимок
+    неразбираемым - то есть бесполезным ровно для того, ради чего заводился.
+
+    Returns:
+        None
+    """
+    html = (
+        '<html><body data-app-data=\'{"csrf-token":"abc"}\'>'
+        "<div class='after-json'>т</div></body></html>"
+    )
+    skeleton = skeletonize(html)
+    tree = HTMLParser(skeleton)
+
+    # Узел ПОСЛЕ атрибута-объекта обязан найтись: если кавычка порвала атрибут,
+    # разбор потеряет всё, что за ним.
+    assert tree.css_first(".after-json") is not None, (
+        "узел за атрибутом-объектом потерян: кавычка порвала разметку"
+    )
+    assert "&quot;" in skeleton, "кавычка не экранирована"

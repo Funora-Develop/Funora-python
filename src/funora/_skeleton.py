@@ -58,6 +58,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
 from typing import Final
@@ -139,6 +140,14 @@ _LANGUAGE_ATTRS: Final[frozenset[str]] = frozenset({"lang", "hreflang"})
 
 #: Как выглядит метка языка по BCP 47.
 _LANGUAGE_TAG: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$")
+
+#: Как выглядит ИМЯ ПОЛЯ - ключ объекта, который можно сохранить дословно.
+#:
+#: Ключом бывает и то, что написал человек, - в словаре, собранном из данных, -
+#: и один такой ключ отменяет правило для всего атрибута. Проверка та же, что у
+#: сборщика наблюдений: там на этом уже обожглись, записав вместе с ключами
+#: настоящие суммы операций.
+_FIELD_NAME: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\[\]-]{0,64}$")
 
 #: Теги, содержимое которых не сохраняется.
 #:
@@ -394,6 +403,57 @@ def _numbered(part: str, ordinals: dict[str, int] | None) -> str:
     return _SEG_NUM if number is None else f"{{n{number}}}"
 
 
+def _keys_look_like_field_names(value: object) -> bool:
+    """Сообщает, состоят ли ключи объекта из одних имён полей.
+
+    Проверяются ключи ВСЕХ уровней вложенности. Проверка одного уровня
+    пропустила бы словарь внутри словаря - а туда и складывают то, что пришло из
+    данных.
+
+    Args:
+        value (object): Разобранное значение JSON.
+
+    Returns:
+        bool: True, если ни один ключ на именование поля не притворяется.
+    """
+    if isinstance(value, dict):
+        return all(
+            isinstance(key, str)
+            and _FIELD_NAME.match(key) is not None
+            and _keys_look_like_field_names(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return all(_keys_look_like_field_names(one) for one in value)
+    return True
+
+
+def _mask_json(value: object, ordinals: dict[str, int]) -> object:
+    """Маскирует значения объекта, сохраняя его ключи.
+
+    Дословно не сохраняется ни одно значение: правило про ключи, и только про
+    них. Читаемым становится ПУТЬ до значения, а не само значение.
+
+    Args:
+        value (object): Разобранное значение JSON.
+        ordinals (dict[str, int]): Таблица номеров документа.
+
+    Returns:
+        object: То же по строению, с замаскированными значениями.
+    """
+    if isinstance(value, dict):
+        return {key: _mask_json(item, ordinals) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_mask_json(one, ordinals) for one in value]
+    if isinstance(value, bool) or value is None:
+        # Булево и пустота значениями в смысле утечки не являются: они не несут
+        # ни имени, ни суммы, ни текста.
+        return value
+    # Число маскируется подписью СВОЕЙ ЗАПИСИ, а не остаётся числом:
+    # восьмизначное число - это идентификатор человека, а не количество.
+    return text_signature(str(value))
+
+
 def _mask_attr(name: str, value: str, ordinals: dict[str, int]) -> str:
     """Обезличивает значение произвольного атрибута.
 
@@ -414,6 +474,36 @@ def _mask_attr(name: str, value: str, ordinals: dict[str, int]) -> str:
         return value.strip()
     if name in _URL_ATTRS:
         return mask_path(value, DEFAULT_OWN_HOST, ordinals)
+
+    # Атрибут-объект сохраняет КЛЮЧИ и маскирует значения - правило формата v8.
+    #
+    # Заведено ради одного места, и место это перекрывает семь операций: защитный
+    # токен площадки лежит в объекте JSON атрибута data-app-data. Пока атрибут
+    # маскировался целиком, разбор, достающий оттуда токен, проверить было не на
+    # чем.
+    #
+    # Правило узкое по построению: значение обязано быть объектом, и каждый его
+    # ключ - иметь вид имени поля. Один ключ, пришедший из данных, отменяет
+    # правило для всего атрибута.
+    #
+    # Проверка на фигурную скобку - про ЦЕНУ, а не про правильность: отсечь
+    # лишнее и без неё способна проверка типа разобранного. Она измерена, и
+    # потому осталась: на корне площадки одиннадцать с половиной тысяч значений
+    # атрибутов, из которых с фигурной скобки начинаются сорок семь. Разбор
+    # всех подряд обходится в девятнадцать раз дороже.
+    #
+    # Отсюда следствие для мутационной проверки: мутация, снимающая эту строку,
+    # ВЫЖИВАЕТ, и это верно. Она меняет цену, а не поведение, и ловить её
+    # набором проверок было бы ловлей часов - измерение времени в наборе даёт
+    # ложные срабатывания чаще, чем находит правду.
+    stripped = value.strip()
+    if stripped.startswith("{"):
+        try:
+            parsed = json.loads(stripped)
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, dict) and _keys_look_like_field_names(parsed):
+            return json.dumps(_mask_json(parsed, ordinals), ensure_ascii=False, sort_keys=True)
     if not value:
         return value
     sig = text_signature(value)
@@ -465,7 +555,13 @@ def _render(node: Node, out: list[str], depth: int, ordinals: dict[str, int]) ->
             rendered.append(name)
             continue
         masked = _mask_attr(name.lower(), raw, ordinals)
-        rendered.append(f'{name}="{masked}"')
+        # Кавычка экранируется, иначе значение рвёт собственный атрибут.
+        #
+        # До формата v8 это не имело значения: маскированное значение кавычек не
+        # содержало никогда. Атрибут-объект их содержит, и неэкранированный он
+        # сделал бы снимок неразбираемым - то есть бесполезным ровно для того,
+        # ради чего заводился.
+        rendered.append(f'{name}="{masked.replace(chr(34), "&quot;")}"')
 
     head = tag if not rendered else tag + " " + " ".join(rendered)
 
