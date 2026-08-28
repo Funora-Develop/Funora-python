@@ -270,3 +270,45 @@ def test_a_missing_secret_file_says_what_to_do(tmp_path: Path) -> None:
 
     text = str(refused.value)
     assert "сам файл" in text and "каталог" in text, f"отказ не говорит, что делать: {text}"
+
+
+def test_a_missing_secret_file_points_at_the_near_miss(tmp_path: Path) -> None:
+    """Требует называть похожий файл, лежащий рядом.
+
+    Блокнот дописывает расширение, когда файла ещё не было: человек сохраняет
+    golden_key и получает golden_key.txt. Отказ, говорящий только «не найден»,
+    оставляет его гадать - при том что нужный файл лежит рядом и виден.
+
+    Это случилось на живой съёмке и стоило ещё одного круга.
+
+    Возвращает:
+        None
+    """
+    (tmp_path / "golden_key.txt").write_text("значение\n", encoding="utf-8")
+
+    provider = FileSecretProvider(tmp_path / "golden_key", check_permissions=False)
+    with pytest.raises(SecretNotFoundError) as refused:
+        provider.get("golden_key")
+
+    text = str(refused.value)
+    assert "golden_key.txt" in text, f"отказ не назвал соседа: {text}"
+    assert "--secret-file" in text, "отказ не показал готовой команды"
+    # Значение самого секрета в отказе не появляется никогда.
+    assert "значение" not in text, f"содержимое файла попало в отказ: {text}"
+
+
+def test_a_missing_secret_file_without_a_near_miss_stays_short(tmp_path: Path) -> None:
+    """Требует не выдумывать соседа там, где его нет.
+
+    Подсказка, срабатывающая всегда, перестаёт быть подсказкой.
+
+    Возвращает:
+        None
+    """
+    provider = FileSecretProvider(tmp_path / "golden_key", check_permissions=False)
+    with pytest.raises(SecretNotFoundError) as refused:
+        provider.get("golden_key")
+
+    assert "Рядом лежит" not in str(refused.value), (
+        f"подсказка о соседе выдана без соседа: {refused.value}"
+    )
