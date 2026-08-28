@@ -117,7 +117,7 @@ OPERATIONS: Final[dict[str, Operation]] = {
         capability="catalog.categories",
         safety=Safety.SAFE,
         request_class="interactive",
-        returns="Category[]",
+        returns="CatalogPage",
         errors=(
             "funora.protocol.changed",
             "funora.transport",

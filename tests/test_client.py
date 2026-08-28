@@ -873,24 +873,25 @@ def test_absent_service_refuses_by_contract_not_by_language() -> None:
     with _client([]) as client:
         assert hasattr(client, "orders"), "написанная служба обязана быть видна"
 
+        assert hasattr(client, "catalog"), "служба каталога написана с 0.13.0: каталог читается"
         assert hasattr(client, "lots"), (
             "служба лотов написана с 0.11.0: витрина читается. Написана она "
             "наполовину - операций записи нет, - но обращение к ней уже не "
             "языковая ошибка, и место ей среди видимых"
         )
 
-        assert not hasattr(client, "catalog"), (
+        assert not hasattr(client, "market"), (
             "hasattr увидел ненаписанную службу. Проверка возможностей начнёт "
             "врать, а заглушка - подсказываться в IDE"
         )
 
         with pytest.raises(FunoraError) as by_contract:
-            client.catalog  # noqa: B018
-        with pytest.raises(AttributeError):
             client.market  # noqa: B018
+        with pytest.raises(AttributeError):
+            client.unknown_service  # noqa: B018
 
         text = str(by_contract.value)
-        assert "catalog_service_operations" in text, (
+        assert "market_service_operations" in text, (
             "отказ не назвал записи реестра: вызывающему негде прочесть, чего именно не хватает"
         )
 

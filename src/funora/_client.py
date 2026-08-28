@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Final, TypeVar
 
 from ._account import BalancePage
 from ._budget import Budget
+from ._catalog import CatalogPage
 from ._chats import ChatsPage
 from ._engine import Deliver, Engine, Fetch, Pause, Reply, Request
 from ._host import host_of
@@ -65,7 +66,6 @@ T = TypeVar("T")
 #: перечень с ними, обращение к новой службе давало бы голый отказ языка.
 _SERVICES_IN_CONTRACT: Final[dict[str, str]] = {
     "account": "account_service_operations",
-    "catalog": "catalog_service_operations",
     "market": "market_service_operations",
 }
 
@@ -254,6 +254,33 @@ class LotsService:
         return self._client.run(self._client.engine.read_showcase(user_id))
 
 
+class CatalogService:
+    """Операции с каталогом.
+
+    Args:
+        client (Client): Клиент, которому принадлежит сервис.
+    """
+
+    __slots__ = ("_client",)
+
+    def __init__(self, client: Client) -> None:
+        self._client = client
+
+    def categories(self) -> CatalogPage:
+        """Читает каталог: игры, их варианты и разделы каждого.
+
+        Читается только основной список. Избранное повторяет его целиком -
+        наблюдено, восемь карточек из восьми, - и новых сведений не даёт.
+
+        Returns:
+            CatalogPage: Игры через `games()`.
+
+        Raises:
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        return self._client.run(self._client.engine.read_catalog())
+
+
 class Client:
     """Клиент площадки.
 
@@ -277,7 +304,17 @@ class Client:
             здесь не поможет, исправлять надо вызов.
     """
 
-    __slots__ = ("_fetcher", "chats", "engine", "orders", "pool", "reviews", "account", "lots")
+    __slots__ = (
+        "_fetcher",
+        "account",
+        "catalog",
+        "chats",
+        "engine",
+        "lots",
+        "orders",
+        "pool",
+        "reviews",
+    )
 
     def __init__(
         self,
@@ -328,6 +365,7 @@ class Client:
         self.reviews = ReviewsService(self)
         self.account = AccountService(self)
         self.lots = LotsService(self)
+        self.catalog = CatalogService(self)
 
     def __getattr__(self, name: str) -> object:
         """Отвечает на обращение к службе, которой у этой реализации нет.

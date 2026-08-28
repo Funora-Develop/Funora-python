@@ -308,6 +308,10 @@ def test_unbuildable_models_say_so() -> None:
         "showcase-offer",
         "showcase-page",
         "showcase-section",
+        # Каталог читается с 0.13.0: игры, их варианты и разделы каждого.
+        "catalog-game",
+        "catalog-page",
+        "catalog-section",
     }
     for path in sorted((root / "spec" / "models").glob("*.schema.json")):
         name = path.name.removesuffix(".schema.json")

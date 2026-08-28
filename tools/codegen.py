@@ -68,6 +68,7 @@ SOURCES: Final[frozenset[str]] = frozenset(
         "spec/errors/errors.yaml",
         "spec/events/delivery.yaml",
         "spec/extraction/account.yaml",
+        "spec/extraction/catalog.yaml",
         "spec/extraction/chats.yaml",
         "spec/extraction/order.yaml",
         "spec/extraction/orders.yaml",

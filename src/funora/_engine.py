@@ -39,6 +39,7 @@ from typing import Final, TypeVar
 
 from ._account import BalancePage, parse_balance_page
 from ._budget import Budget
+from ._catalog import CatalogPage, parse_catalog
 from ._chats import ChatsPage, parse_chats_page
 from ._classify import DEFAULT_IDENTITY_CSS, Verdict, classify
 from ._diff import (
@@ -111,6 +112,7 @@ __all__ = [
     "ORDER_PATH",
     "BALANCE_PATH",
     "SHOWCASE_PATH",
+    "CATALOG_PATH",
 ]
 
 _log = logging.getLogger("funora.client")
@@ -132,6 +134,9 @@ ORDER_PATH: Final[str] = "/orders/{order_id}/"
 
 #: Страница баланса. Несёт и балансы по валютам, и операции по счёту.
 BALANCE_PATH: Final[str] = "/account/balance"
+
+#: Корень площадки. Несёт каталог целиком.
+CATALOG_PATH: Final[str] = "/"
 
 #: Профиль продавца. Несёт и отзывы, и витрину.
 SHOWCASE_PATH: Final[str] = PROFILE_PATH
@@ -247,7 +252,9 @@ def integrity_verified(observation: Observation) -> bool:
 #: Прочитанное, у чего есть полнота: страница списка либо переписка.
 PageT = TypeVar(
     "PageT",
-    bound="OrdersPage | ChatsPage | Thread | ReviewsPage | BalancePage | ShowcasePage",
+    bound=(
+        "OrdersPage | ChatsPage | Thread | ReviewsPage | BalancePage | ShowcasePage | CatalogPage"
+    ),
 )
 
 
@@ -314,6 +321,7 @@ IMPLEMENTED: Final[frozenset[Capability]] = frozenset(
         Capability.ORDERS_GET,
         Capability.ACCOUNT_BALANCE,
         Capability.LOTS_SHOWCASE,
+        Capability.CATALOG_CATEGORIES,
     }
 )
 
@@ -481,6 +489,25 @@ class Engine:
         if not integrity_verified(observation):
             page = unverified(page)
         self._note_success(Capability.ORDERS_LIST, page.completeness, page)
+        return page
+
+    def read_catalog(self) -> Generator[Request, Reply, CatalogPage]:
+        """Читает каталог с корня площадки.
+
+        Yields:
+            Request: Просьбы о вводе-выводе.
+
+        Returns:
+            CatalogPage: Игры каталога с их вариантами и разделами.
+
+        Raises:
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        observation = yield from self.fetch_ok(Capability.CATALOG_CATEGORIES, CATALOG_PATH)
+        page = parse_catalog(observation.html, observed_at=datetime.now(UTC))
+        if not integrity_verified(observation):
+            page = unverified(page)
+        self._note_success(Capability.CATALOG_CATEGORIES, page.completeness, None)
         return page
 
     def read_balance(self) -> Generator[Request, Reply, BalancePage]:
