@@ -140,6 +140,46 @@ def _scan(text: str) -> tuple[Counter[str], Counter[str]]:
     return leaked_text, leaked_attrs
 
 
+def _expand(argv: list[str]) -> list[Path] | None:
+    """Раскрывает образцы путей и возвращает найденные файлы.
+
+    Звёздочку раскрывает ОБОЛОЧКА, и делает это не всякая: в Windows PowerShell
+    её нет вовсе, и до сюда доезжает буквальное «observations/*.skeleton.txt».
+    Прежде это кончалось сообщением «нет файла» с образцом вместо имени -
+    правдивым и совершенно бесполезным.
+
+    Аргументы:
+        argv (list[str]): пути к файлам либо образцы путей.
+
+    Возвращает:
+        list[Path] | None: найденные файлы; None, если что-то не нашлось.
+    """
+    found: list[Path] = []
+    for name in argv:
+        if any(one in name for one in "*?["):
+            # Образец раскрывается от корня, если путь полный, и от текущего
+            # каталога иначе.
+            source = Path(name)
+            anchor = Path(source.anchor) if source.anchor else Path()
+            matched = sorted(
+                one
+                for one in (anchor or Path()).glob(str(source.relative_to(source.anchor)))
+                if one.is_file()
+            )
+            if not matched:
+                print(f"по образцу {name} не нашлось ни одного файла")
+                return None
+            found.extend(matched)
+            continue
+
+        path = Path(name)
+        if not path.is_file():
+            print(f"нет файла: {path}")
+            return None
+        found.append(path)
+    return found
+
+
 def main(argv: list[str]) -> int:
     """Печатает всё непомаскированное и возвращает код выхода.
 
@@ -154,13 +194,12 @@ def main(argv: list[str]) -> int:
         print(__doc__)
         return 2
 
-    dirty = 0
-    for name in argv:
-        path = Path(name)
-        if not path.is_file():
-            print(f"нет файла: {path}")
-            return 2
+    paths = _expand(argv)
+    if paths is None:
+        return 2
 
+    dirty = 0
+    for path in paths:
         text = path.read_text(encoding="utf-8")
         leaked_text, leaked_attrs = _scan(text)
         print(f"=== {path.name} ({text.count(chr(10)) + 1} строк)")
@@ -185,7 +224,7 @@ def main(argv: list[str]) -> int:
         print("сумма, адрес или переписка, - снимок можно переносить в фикстуры.")
         print()
         print("Ненулевой код выхода здесь значит «есть что прочесть», а не")
-        print("«найдена утечка». На всех семи нынешних снимках остаток - ссылки")
+        print("«найдена утечка». Пока остатком на каждом снимке были ссылки")
         print("подвала площадки: они одинаковы на каждой странице и ничего о")
         print("владельце не сообщают.")
     return 1 if dirty else 0

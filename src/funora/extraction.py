@@ -252,6 +252,7 @@ SELECTOR_GROUPS: Final[dict[str, tuple[str, ...]]] = {
     ),
     "orders.fields.status.carriers": (".tc-status",),
     "session.content_markers": (
+        ".navbar-toggle-logged",
         ".orders-table",
         ".chat-contacts",
         ".chat-message-list",
