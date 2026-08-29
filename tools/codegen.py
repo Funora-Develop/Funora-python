@@ -13,7 +13,7 @@
 
 Запуск:
 
-    python tools/codegen.py --spec ПУТЬ_К_FUNORA_SPEC
+    .venv\Scripts\python.exe tools/codegen.py --spec ПУТЬ_К_FUNORA_SPEC
 
 Без аргумента путь берётся из переменной окружения FUNORA_SPEC_DIR.
 """
@@ -36,11 +36,11 @@ import yaml
 PACKAGE = Path(__file__).resolve().parent.parent / "src" / "funora"
 
 #: Шапка порождённого файла. Стоит первой строкой, чтобы правку заметили сразу.
-HEADER = '''"""{title}
+HEADER = r'''r"""{title}
 
 Файл порождён из спецификации, править его руками нельзя: правка исчезнет при
 следующей сборке. Источник - {source} в репозитории Funora-spec.
-Перестроить: python tools/codegen.py
+Перестроить: .venv\Scripts\python.exe tools/codegen.py
 
 {extra}"""
 
@@ -2461,7 +2461,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.check and stale:
         print(
-            "порождённые файлы отстали от спецификации. Перестройте: python tools/codegen.py",
+            "порождённые файлы отстали от спецификации. "
+            r"Перестройте: .venv\Scripts\python.exe tools/codegen.py",
             file=sys.stderr,
         )
         return 1

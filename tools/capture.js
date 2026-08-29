@@ -9,6 +9,7 @@
  *   funora.page('имя')  - отдать структуру страницы;
  *   funora.currency('метка') - собрать символы валют без сумм;
  *   funora.watch()      - начать запись ФОРМЫ запросов (не значений);
+ *   funora.probe()      - один опрос канала с пустой подпиской;
  *   funora.stop()       - остановить запись и отдать собранное;
  *   funora.status()     - показать, что уже собрано.
  *
@@ -238,6 +239,73 @@
     }
   }
 
+  //: Атрибуты, в которых площадка держит метки разделов.
+  //
+  // Перечень ЗАКРЫТ и написан здесь, в исходнике, а не собирается со страницы.
+  // Собранный со страницы, он принёс бы в наблюдение имена атрибутов, которых
+  // никто не читал, - а имя атрибута на странице продавца бывает и говорящим.
+  const TAG_ATTRIBUTES = ['data-orders', 'data-chat', 'data-message']
+
+  //: Значения меток, снятые ПЕРЕД уходом запроса.
+  //
+  // Ключ - значение атрибута, значение - его имя. Таблица живёт от снятия до
+  // записи одного запроса и наружу не уходит: в наблюдение попадает только имя.
+  let tagsBefore = null
+
+  /**
+   * Снимает значения меток со страницы.
+   *
+   * Зовётся ДО ухода запроса, и это существенно. Запись делается после ответа,
+   * а метки к тому времени приложение вправе уже обновить - в этом их
+   * назначение. Сверка с обновлённой меткой дала бы «не совпало» там, где
+   * совпадало.
+   *
+   * @returns {object|null} Таблица «значение -> имя атрибута» либо null.
+   */
+  function snapshotTags() {
+    // Отказ здесь НЕ ДОЛЖЕН выходить наружу, и это не перестраховка. Снимок
+    // берётся в подменённом window.fetch, до ухода запроса, - то есть на пути
+    // ЧУЖОГО запроса, который делает сама страница. Урони сборщик исключение
+    // здесь, и он сломал бы работу площадки в браузере пользователя.
+    //
+    // Наблюдатель обязан быть незаметен для наблюдаемого. Не вышло снять
+    // метки - сверки не будет, и только.
+    try {
+      const table = {}
+      let any = false
+      for (const name of TAG_ATTRIBUTES) {
+        const found = document.querySelectorAll('[' + name + ']')
+        for (let index = 0; index < found.length; index += 1) {
+          const value = found[index].getAttribute(name)
+          if (!value) continue
+          // Первое имя побеждает: два атрибута с одним значением - это одно
+          // значение, и называть его дважды нечем.
+          if (!(value in table)) table[value] = name
+          any = true
+        }
+      }
+      return any ? table : null
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Говорит, из какого атрибута страницы взято значение.
+   *
+   * Наружу уходит ИМЯ атрибута либо false. Ни одного значения: сверка целиком
+   * происходит здесь, в живой вкладке, где обе стороны видны разом.
+   *
+   * @param {*} value Значение поля запроса.
+   * @returns {string|boolean|null} Имя атрибута, false либо null, если сверять
+   *   не с чем.
+   */
+  function tagOrigin(value) {
+    if (tagsBefore === null) return null
+    if (typeof value !== 'string' || value === '') return null
+    return Object.prototype.hasOwnProperty.call(tagsBefore, value) ? tagsBefore[value] : false
+  }
+
   //: Как выглядит ИМЯ ПОЛЯ - ключ, который можно записать дословно.
   //
   // Проверка заведена 24.08.2026 после утечки. Ответ на догрузку строк - это
@@ -364,6 +432,15 @@
           out[key] = literal
           continue
         }
+        // Метка раздела сверяется со страницей ПРЯМО ЗДЕСЬ, рядом с самим
+        // значением. Ответ - имя атрибута либо false; значения не уходит.
+        if (key === 'tag') {
+          const origin = tagOrigin(value[key])
+          if (origin !== null) {
+            out[key] = { signature: shapeOfValue(value[key], level + 1), from_attribute: origin }
+            continue
+          }
+        }
         const hint = constantHint(key, value[key])
         out[key] = hint === null
           ? shapeOfValue(value[key], level + 1)
@@ -443,8 +520,11 @@
    * @param {string} responseBody Тело ответа.
    * @returns {void}
    */
-  function record(method, url, headers, body, status, responseHeaders, responseBody) {
+  function record(method, url, headers, body, status, responseHeaders, responseBody, tags) {
     if (!watching) return
+    // Снимок меток ставится на время разбора тела и снимается сразу после:
+    // разбор синхронный, и перепутать его с чужим запросом нечему.
+    tagsBefore = tags === undefined ? null : tags
     const where = maskUrl(url)
     if (where.origin !== location.origin) return
     // Мерка замаскированных сегментов кладётся В ЗАПИСЬ, а не теряется по
@@ -464,12 +544,16 @@
       response_headers: responseHeaders,
       response: shapeOf(responseBody),
     })
+    tagsBefore = null
   }
 
   const nativeFetch = window.fetch
   window.fetch = async function (input, init) {
     const options = init || {}
     const url = typeof input === 'string' ? input : input && input.url
+    // Метки снимаются ДО ухода запроса: приложение обновляет их по ответу, и
+    // сверка с обновлёнными дала бы «не совпало» там, где совпадало.
+    const tags = watching ? snapshotTags() : null
     const response = await nativeFetch.apply(this, arguments)
     if (watching) {
       try {
@@ -483,6 +567,7 @@
           response.status,
           headerNames(response.headers),
           text,
+          tags,
         )
       } catch {
         /* тело уже прочитано либо непрочитаемо - запись пропускается */
@@ -506,6 +591,9 @@
   }
   XMLHttpRequest.prototype.send = function (body) {
     const mine = this.__funora || {}
+    // Метки снимаются здесь, а не в обработчике load: там запрос уже прошёл, и
+    // приложение вправе было их обновить.
+    const tags = watching ? snapshotTags() : null
     this.addEventListener('load', function () {
       try {
         record(
@@ -520,6 +608,7 @@
             .filter(Boolean)
             .sort(),
           this.responseText,
+          tags,
         )
       } catch {
         /* ответ непрочитаем - запись пропускается */
@@ -698,6 +787,58 @@
     },
 
     /**
+     * Делает ОДИН опрос канала с пустой подпиской.
+     *
+     * Отвечает на вопрос, который иначе решался бы догадкой: принимает ли канал
+     * пустое поле objects. Во всех сорока пяти записанных запросах оно непусто,
+     * пустым его не видели ни разу, и отправка сообщения упирается ровно в это.
+     *
+     * ЧТО ОНА ДЕЛАЕТ НА ПЛОЩАДКЕ - НИЧЕГО. Поле request несёт false, то есть
+     * действия в запросе нет: это тот же самый опрос, который страница делает
+     * сама каждые пять секунд. Один опрос вместо одного опроса.
+     *
+     * Ответ записывается обычным перехватом, поэтому вызывать её надо между
+     * watch и stop - иначе запрос уйдёт, а записи не будет.
+     *
+     * @returns {Promise<string>} Что вышло.
+     */
+    probe() {
+      if (!watching) {
+        return Promise.reject(
+          new Error('сперва funora.watch(): иначе опрос уйдёт, а записи не будет'),
+        )
+      }
+      const carrier = document.querySelector('body[data-app-data]')
+      if (carrier === null) {
+        return Promise.reject(new Error('на странице нет носителя настроек body[data-app-data]'))
+      }
+      let token = ''
+      try {
+        token = String((JSON.parse(carrier.getAttribute('data-app-data')) || {})['csrf-token'] || '')
+      } catch {
+        return Promise.reject(new Error('настройки страницы не разбираются как JSON'))
+      }
+      if (!token) return Promise.reject(new Error('в настройках страницы нет защитного токена'))
+
+      const form = new URLSearchParams()
+      form.set('objects', '[]')
+      form.set('request', 'false')
+      form.set('csrf_token', token)
+
+      return window
+        .fetch('/runner/', {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json, text/javascript, */*; q=0.01',
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'X-Requested-With': 'XMLHttpRequest',
+          },
+          body: form.toString(),
+        })
+        .then((response) => 'опрос с пустой подпиской сделан, код ' + response.status)
+    },
+
+    /**
      * Начинает запись формы запросов.
      *
      * @returns {string} Что делать дальше.
@@ -758,7 +899,7 @@
   }
   console.log(
     `%cfunora%c собран, сборка ${BUILD}. Команды: funora.page("имя"), `
-      + 'funora.currency("метка"), funora.watch(), funora.stop("имя")',
+      + 'funora.currency("метка"), funora.watch(), funora.probe(), funora.stop("имя")',
     'font-weight:bold',
     '',
   )

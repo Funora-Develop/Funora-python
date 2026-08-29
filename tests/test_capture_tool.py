@@ -936,3 +936,340 @@ def test_markup_whose_first_key_looks_like_a_field_name_is_still_not_a_form() ->
     spaced = _in_node(f"shapeOf({json.dumps('name=Иван Петров')})")
     assert spaced["kind"] == "string", spaced
     assert "Иван" not in json.dumps(spaced, ensure_ascii=False)
+
+
+#: Разметка страницы с метками разделов - той формы, в какой их отдаёт площадка.
+WITH_TAGS = (
+    '<html><body data-app-data=\'{"csrf-token": "abcdefgh12345678"}\'>'
+    '<div class="hidden" id="a" data-orders="7f3a9b21"></div>'
+    '<div class="hidden" id="b" data-message="41"></div>'
+    "</body></html>"
+)
+
+#: Подставной браузер: документ, сеть и способ достать записанное.
+BROWSER = r"""
+const source = require('fs').readFileSync(process.argv[1], 'utf8')
+const html = process.argv[2]
+
+// Подставной документ. Разбирать разметку целиком незачем: сборщику нужен один
+// вызов - querySelectorAll по имени атрибута.
+const nodes = []
+for (const match of html.matchAll(/data-([a-z-]+)="([^"]*)"/g)) {
+  nodes.push({ name: 'data-' + match[1], value: match[2] })
+}
+for (const match of html.matchAll(/data-app-data='([^']*)'/g)) {
+  nodes.push({ name: 'data-app-data', value: match[1] })
+}
+globalThis.moveTheTag = function () {
+  for (const one of nodes) if (one.name !== 'data-app-data') one.value = 'ИНОЕ'
+}
+globalThis.document = {
+  querySelectorAll(selector) {
+    const name = selector.replace(/[[\]]/g, '')
+    return nodes.filter((one) => one.name === name).map((one) => ({
+      getAttribute: () => one.value,
+    }))
+  },
+  querySelector(selector) {
+    if (selector === 'body[data-app-data]') {
+      const found = nodes.find((one) => one.name === 'data-app-data')
+      return found ? { getAttribute: () => found.value } : null
+    }
+    return null
+  },
+  documentElement: { outerHTML: html, lang: 'ru' },
+  title: '',
+}
+globalThis.location = { href: 'https://funpay.com/chat/', origin: 'https://funpay.com' }
+globalThis.performance = { getEntriesByType: () => [] }
+globalThis.window = globalThis
+globalThis.XMLHttpRequest = function () {}
+globalThis.XMLHttpRequest.prototype = { open() {}, send() {}, setRequestHeader() {} }
+
+// Сеть подставная: она отвечает и НЕ ходит никуда.
+globalThis.sent = []
+// Что площадка делает, пока запрос в пути. Ставится проверкой на порядок:
+// приложение обновляет метки по ответу канала, и подмена обязана происходить
+// ПОСЛЕ снимка, но ДО записи - иначе проверка проверяет не то.
+globalThis.inFlight = null
+globalThis.window.fetch = async function (url, init) {
+  sent.push({ url, init: init || {} })
+  if (inFlight) inFlight()
+  const body = JSON.stringify({ objects: [], response: false })
+  return {
+    status: 200,
+    text: async () => 'ok',
+    clone: () => ({ text: async () => body }),
+    headers: new Map(),
+  }
+}
+
+// Записи достаются так же, как в жизни: stop отправляет их приёмнику, а
+// подставная сеть их запоминает. Внутрь сборщика проверка не лезет - она
+// смотрит на то, что он ОТДАЁТ.
+globalThis.takeRecords = async function () {
+  await funora.stop('proba')
+  const to = sent.filter((one) => String(one.url).indexOf('FUNORA_ENDPOINT') >= 0)
+  if (to.length === 0) throw new Error('сборщик ничего не отправил приёмнику')
+  return JSON.parse(to[to.length - 1].init.body).payload.records
+}
+
+// Сборщик печатает в консоль сам - и при загрузке, и после каждой отправки.
+// Поэтому консоль остаётся немой НАВСЕГДА, а проверка кладёт свой ответ прямо в
+// поток вывода: смешайся они, разбор ответа ловил бы приветствие сборщика.
+globalThis.console = { log() {}, error() {}, warn() {} }
+eval(source)
+globalThis.answer = function (value) {
+  process.stdout.write(JSON.stringify(value))
+}
+"""
+
+
+def _in_browser(script: str, *, html: str = WITH_TAGS) -> Any:
+    """Выполняет сборщик ЦЕЛИКОМ под node, подставив браузер.
+
+    Отличается от _in_node тем, что берёт не кусок исходника, а весь файл: то,
+    ради чего проверка и пишется, живёт в перехвате запроса, а он в вырезанный
+    кусок не попадает.
+
+    Args:
+        script (str): Тело асинхронной функции на JavaScript. Печатает результат.
+        html (str): Разметка страницы для подставного document.
+
+    Returns:
+        Any: Разобранный из JSON результат.
+    """
+    wrapped = (
+        BROWSER
+        + "\n;(async () => {\n"
+        + script
+        + "\n})().catch((e) => { process.stderr.write(String((e && e.stack) || e)); "
+        + "process.exit(1) })\n"
+    )
+    run = subprocess.run(  # noqa: S603
+        ["node", "-e", wrapped, str(SNIPPET), html],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert run.returncode == 0, f"сборщик не выполнился: {run.stderr}"
+    return json.loads(run.stdout)
+
+
+def test_the_tag_is_matched_against_the_page_and_only_its_name_is_written() -> None:
+    """Требует записывать ИМЯ совпавшего атрибута и никогда - значение.
+
+    Метка подписки - то единственное, обо что упирается сборка запроса записи.
+    Откуда она берётся, по двум файлам не узнать: скелет и сетевая запись
+    маскируют значения независимо, и две подписи «восемь знаков латиницы с
+    цифрами» совпадают у любых двух таких строк.
+
+    Сравнить может только сборщик - в живой вкладке, где страница и тело запроса
+    видны разом. Наружу при этом обязано уходить имя атрибута, и ничего больше.
+
+    Returns:
+        None
+    """
+    out = _in_browser(
+        """
+        funora.watch()
+        await window.fetch('/runner/', {
+          method: 'POST',
+          body: 'objects=' + encodeURIComponent(JSON.stringify([
+            {type: 'orders_counters', id: '12345678', tag: '7f3a9b21', data: true},
+            {type: 'c-p-u', id: '12345678', tag: 'nesovpalo', data: true}
+          ]))
+        })
+        answer(await takeRecords())
+        """
+    )
+
+    # Поле формы несёт строкой JSON, и сборщик разбирает его вглубь: отсюда
+    # обёртка nested.
+    subscription = out[0]["request"]["fields"]["objects"]["nested"]
+    first, second = subscription[0], subscription[1]
+
+    assert first["tag"]["from_attribute"] == "data-orders", first["tag"]
+    assert second["tag"]["from_attribute"] is False, second["tag"]
+
+    # Ни одного значения - ни совпавшего, ни несовпавшего.
+    written = json.dumps(out, ensure_ascii=False)
+    assert "7f3a9b21" not in written, "значение совпавшей метки ушло в запись"
+    assert "nesovpalo" not in written, "значение несовпавшей метки ушло в запись"
+
+
+def test_the_tags_are_read_before_the_request_leaves() -> None:
+    """Требует снимать метки ДО ухода запроса, а не после ответа.
+
+    Запись делается после ответа, а метки к тому времени приложение вправе уже
+    обновить - в этом их назначение. Сверка с обновлённой меткой дала бы «не
+    совпало» там, где совпадало, и вывод вышел бы обратным наблюдению.
+
+    Проверка подменяет значение атрибута МЕЖДУ вызовом и ответом.
+
+    Returns:
+        None
+    """
+    out = _in_browser(
+        """
+        // Страница правится, пока запрос в пути: ровно так ведёт себя
+        // приложение площадки, обновляя метку по ответу канала. Подмена стоит
+        // ВНУТРИ сети, а не поверх сборщика, - иначе она случилась бы до
+        // снимка, и проверка проверяла бы не порядок, а саму сверку.
+        inFlight = moveTheTag
+        funora.watch()
+        await window.fetch('/runner/', {
+          method: 'POST',
+          body: 'objects=' + encodeURIComponent(JSON.stringify([
+            {type: 'orders_counters', id: '12345678', tag: '7f3a9b21', data: true}
+          ]))
+        })
+        inFlight = null
+        answer(await takeRecords())
+        """
+    )
+
+    tag = out[0]["request"]["fields"]["objects"]["nested"][0]["tag"]
+    assert tag["from_attribute"] == "data-orders", (
+        f"метка сверялась с уже обновлённой страницей: {tag}. "
+        "Снимок атрибутов обязан браться до ухода запроса"
+    )
+
+
+def test_the_probe_sends_one_poll_with_no_action() -> None:
+    """Требует, чтобы опрос с пустой подпиской не нёс действия.
+
+    Команда существует ради одного вопроса: принимает ли канал пустое поле
+    objects. Отвечать на него догадкой нельзя - отправка сообщения упирается
+    ровно сюда, а отменить отправленное покупателю сообщение невозможно.
+
+    Опрос обязан быть именно опросом: поле request несёт false, то есть на
+    площадке не меняется ничего. Уйди туда действие - команда стала бы
+    отправкой, а называлась бы пробой.
+
+    Returns:
+        None
+    """
+    out = _in_browser(
+        """
+        funora.watch()
+        await funora.probe()
+        const mine = sent.filter((one) => String(one.url) === '/runner/')
+        answer(mine.map((one) => ({
+          method: one.init.method,
+          body: one.init.body,
+          headers: Object.keys(one.init.headers).sort(),
+        })))
+        """
+    )
+
+    assert len(out) == 1, f"ушёл не один запрос к каналу, а {len(out)}"
+    one = out[0]
+    assert one["method"] == "POST"
+
+    fields = dict(pair.split("=", 1) for pair in one["body"].split("&"))
+    assert fields["objects"] == "%5B%5D", f"подписка не пуста: {fields['objects']}"
+    assert fields["request"] == "false", (
+        f"в поле request оказалось {fields['request']!r}. Проба обязана быть опросом: "
+        "действие сделало бы её отправкой"
+    )
+    assert fields["csrf_token"], "защитный токен не подставлен"
+    assert "X-Requested-With" in one["headers"], "заголовок канала не выставлен"
+
+
+def test_the_probe_refuses_when_nothing_is_recording() -> None:
+    """Требует отказаться от опроса, пока запись не идёт.
+
+    Иначе запрос уйдёт, а наблюдения не будет: единственное, ради чего проба
+    делается, - её запись.
+
+    Returns:
+        None
+    """
+    out = _in_browser(
+        """
+        let refused = ''
+        try { await funora.probe() } catch (e) { refused = String(e.message) }
+        answer({
+          refused,
+          sent: sent.filter((one) => String(one.url) === '/runner/').length,
+        })
+        """
+    )
+
+    assert out["sent"] == 0, "запрос ушёл впустую"
+    assert "watch" in out["refused"], out["refused"]
+
+
+def test_the_page_attributes_are_read_from_a_closed_list() -> None:
+    """Требует брать имена атрибутов из ИСХОДНИКА, а не со страницы.
+
+    Перечень, собранный со страницы, принёс бы в наблюдение имена атрибутов,
+    которых никто не читал. Имя атрибута на странице продавца бывает и
+    говорящим.
+
+    Returns:
+        None
+    """
+    out = _in_browser(
+        """
+        funora.watch()
+        await window.fetch('/runner/', {
+          method: 'POST',
+          body: 'objects=' + encodeURIComponent(JSON.stringify([
+            {type: 'x', id: '1', tag: 'znachenie', data: true}
+          ]))
+        })
+        answer(await takeRecords())
+        """,
+        html=(
+            '<html><body data-app-data=\'{"csrf-token": "abcdefgh12345678"}\'>'
+            '<div data-seller-note="znachenie"></div>'
+            "</body></html>"
+        ),
+    )
+
+    tag = out[0]["request"]["fields"]["objects"]["nested"][0]["tag"]
+    origin = tag.get("from_attribute") if isinstance(tag, dict) else None
+    assert origin is not True and origin != "data-seller-note", (
+        f"метка сверилась с атрибутом вне закрытого перечня: {tag}"
+    )
+    assert "seller-note" not in json.dumps(out), "имя чужого атрибута попало в запись"
+
+
+def test_a_broken_page_never_breaks_the_page_own_requests() -> None:
+    """Требует, чтобы сборщик не ронял запросы САМОЙ страницы.
+
+    Снимок меток берётся в подменённом window.fetch, ДО ухода запроса - то есть
+    на пути чужого запроса, который делает площадка, а не мы. Урони сборщик
+    исключение там, и он сломал бы работу площадки в браузере наблюдателя:
+    переписка перестала бы обновляться, отправка - уходить.
+
+    Наблюдатель обязан быть незаметен для наблюдаемого. Проверка подставляет
+    документ, у которого querySelectorAll бросает, и требует, чтобы запрос
+    прошёл, а запись состоялась - просто без сверки.
+
+    Returns:
+        None
+    """
+    out = _in_browser(
+        """
+        document.querySelectorAll = function () { throw new Error('DOM недоступен') }
+        funora.watch()
+        const response = await window.fetch('/runner/', {
+          method: 'POST',
+          body: 'objects=' + encodeURIComponent(JSON.stringify([
+            {type: 'orders_counters', id: '12345678', tag: '7f3a9b21', data: true}
+          ]))
+        })
+        answer({status: response.status, records: await takeRecords()})
+        """
+    )
+
+    assert out["status"] == 200, "запрос страницы не прошёл из-за сборщика"
+    assert len(out["records"]) == 1, "запись не состоялась"
+
+    # Сверки нет - и это правильно: сверять было нечем. Но подпись на месте.
+    tag = out["records"][0]["request"]["fields"]["objects"]["nested"][0]["tag"]
+    assert tag == "T8:ad", f"без сверки метка обязана остаться обычной подписью, а стоит {tag}"
