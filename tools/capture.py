@@ -24,7 +24,7 @@
 
 Запуск::
 
-    python tools/capture.py
+    .venv\Scripts\python.exe tools/capture.py
 
 Дальше инструмент печатает, что делать. Собранное ложится в observations/ -
 каталог не отслеживается git и предназначен для просмотра ГЛАЗАМИ перед тем,

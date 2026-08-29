@@ -10,8 +10,14 @@
 снято, чтобы не ходить за тем же дважды.
 
 Запуск:
-    python tools/observe_plan.py
-    python tools/observe_plan.py --next     только ближайший шаг
+    .venv\Scripts\python.exe tools/observe_plan.py
+    .venv\Scripts\python.exe tools/observe_plan.py --next     только ближайший шаг
+
+Команды в этом файле пишутся ПОЛНЫМ путём внутрь окружения, и это не
+многословие. Голое funora-observe у читателя без активированного окружения не
+находится вовсе, а голое python находится - и оказывается системным. Второе
+хуже первого: pip install по нему кладёт пакет мимо .venv, и следующий запуск
+падает ровно там же, где падал.
 """
 
 from __future__ import annotations
@@ -21,6 +27,17 @@ import os
 import sys
 from pathlib import Path
 from typing import Any, Final
+
+#: Как звать питон окружения. Одна форма на весь инструмент.
+#:
+#: Прежде форма писалась в четырёх местах по-разному: где-то полным путём,
+#: где-то голым именем. Читатель, шедший по прозе, набирал нерабочее; читатель,
+#: шедший по шагу, - рабочее. Расхождение молчало, потому что печатаются они в
+#: разных местах вывода и рядом никогда не стоят.
+RUN_PY: Final[str] = r".venv\Scripts\python.exe"
+
+#: Как звать наблюдателя страниц.
+RUN_OBSERVE: Final[str] = r".venv\Scripts\funora-observe.exe"
 
 #: Куда сборщик кладёт снятое.
 OBSERVATIONS = Path(__file__).resolve().parent.parent / "observations"
@@ -66,7 +83,7 @@ def _load_yaml() -> Any:
                 f"    {venv} tools/observe_plan.py --next\n"
             )
         else:
-            hint = "Поставьте разборщик:\n\n    python -m pip install PyYAML\n"
+            hint = f"Поставьте разборщик:\n\n    {RUN_PY} -m pip install PyYAML\n"
         raise SystemExit(
             "нужен PyYAML: план наблюдений лежит в YAML, а разборщика нет."
             f"\n\n{hint}\n"
@@ -170,8 +187,9 @@ def main(argv: list[str] | None = None) -> int:
     print()
     print("НАБЛЮДЕНИЯ БЫВАЮТ ДВУХ РОДОВ, И СНИМАЮТСЯ ОНИ РАЗНЫМИ ИНСТРУМЕНТАМИ.")
     print()
-    print("  Страница - в PowerShell, командой funora-observe. Она ниже у каждого")
-    print("  такого пункта, вводится в том же окне, где запущен этот скрипт.")
+    print(f"  Страница - в PowerShell, командой {RUN_OBSERVE}")
+    print("  Она ниже у каждого такого пункта и вводится в том же окне, где")
+    print("  запущен этот скрипт.")
     print()
     print("  Запрос - в консоли браузера, сборщиком tools/capture.js. Запрос")
     print("  делает страница, а не мы, и наш транспорт его не видит по устройству.")
@@ -227,7 +245,7 @@ def main(argv: list[str] | None = None) -> int:
                 print("  СНИМАЕТСЯ НЕ ЭТОЙ КОМАНДОЙ. Запрос делает страница, а не мы,")
                 print("  и наш транспорт его не видит. Порядок такой:")
                 print()
-                print(r"    1. в PowerShell:  .venv\Scripts\python.exe tools/capture.py")
+                print(f"    1. в PowerShell:  {RUN_PY} tools/capture.py")
                 print("       он поднимет приёмник и напечатает, что вставить в браузер")
                 print(f"    2. откройте в браузере {one['path']}")
                 print("    3. F12 -> Console -> вставьте напечатанное")
@@ -238,7 +256,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  ляжет в observations/{one['expect_file']}")
             else:
                 print("  команда (в PowerShell, из каталога Funora-python):")
-                print(f"    .venv\\Scripts\\funora-observe.exe {one['path']}")
+                print(f"    {RUN_OBSERVE} {one['path']}")
                 print()
                 print("  снятое ляжет в observations/ рядом с этим каталогом.")
         print()
