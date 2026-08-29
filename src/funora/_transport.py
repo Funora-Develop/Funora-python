@@ -469,6 +469,47 @@ class Fetcher:
             elapsed=elapsed,
         )
 
+    def submit(self, path: str, fields: dict[str, str], headers: dict[str, str]) -> Observation:
+        """Отправляет форму и возвращает ответ.
+
+        ПЕРЕХОДЫ НЕ ВЫПОЛНЯЮТСЯ, и это не упрощение. Повторить отправку по
+        переходу значило бы отправить второй раз: у сообщения покупателю нет
+        отмены, а повтор при неоднозначном исходе - второе сообщение. Переход в
+        ответ на запись возвращается как есть, и решение принимает вызывающий,
+        видящий, ЧТО именно он отправлял.
+
+        Секрет уходит только на проверенный хост - тот же порядок, что и у
+        чтения. Адрес собирается от базового, а не берётся у вызывающего
+        целиком.
+
+        Args:
+            path (str): Путь обращения.
+            fields (dict[str, str]): Поля формы.
+            headers (dict[str, str]): Заголовки запроса, кроме Cookie.
+
+        Returns:
+            Observation: Результат обращения. Число переходов всегда ноль.
+
+        Raises:
+            TimeoutError: Если истёк предел ожидания.
+            NetworkError: При любом другом сетевом отказе.
+            RemoteServerError: Если ответ превысил предел размера.
+        """
+        url = _start_url(self._settings, path)
+        try:
+            response = self._client.post(url, data=fields, headers={**headers, **self._cookie()})
+        except httpx.HTTPError as exc:
+            raise _translate(exc, path) from exc
+
+        return _observe(
+            response,
+            settings=self._settings,
+            rejected_url=None,
+            redirects=0,
+            sent=1,
+            elapsed=response.elapsed.total_seconds(),
+        )
+
     def _cookie(self) -> dict[str, str]:
         """Собирает заголовок с сессионным секретом.
 
@@ -590,6 +631,51 @@ class AsyncFetcher:
             redirects=redirects,
             sent=sent,
             elapsed=elapsed,
+        )
+
+    async def submit(
+        self, path: str, fields: dict[str, str], headers: dict[str, str]
+    ) -> Observation:
+        """Отправляет форму и возвращает ответ.
+
+        ПЕРЕХОДЫ НЕ ВЫПОЛНЯЮТСЯ, и это не упрощение. Повторить отправку по
+        переходу значило бы отправить второй раз: у сообщения покупателю нет
+        отмены, а повтор при неоднозначном исходе - второе сообщение. Переход в
+        ответ на запись возвращается как есть, и решение принимает вызывающий,
+        видящий, ЧТО именно он отправлял.
+
+        Секрет уходит только на проверенный хост - тот же порядок, что и у
+        чтения. Адрес собирается от базового, а не берётся у вызывающего
+        целиком.
+
+        Args:
+            path (str): Путь обращения.
+            fields (dict[str, str]): Поля формы.
+            headers (dict[str, str]): Заголовки запроса, кроме Cookie.
+
+        Returns:
+            Observation: Результат обращения. Число переходов всегда ноль.
+
+        Raises:
+            TimeoutError: Если истёк предел ожидания.
+            NetworkError: При любом другом сетевом отказе.
+            RemoteServerError: Если ответ превысил предел размера.
+        """
+        url = _start_url(self._settings, path)
+        try:
+            response = await self._client.post(
+                url, data=fields, headers={**headers, **self._cookie()}
+            )
+        except httpx.HTTPError as exc:
+            raise _translate(exc, path) from exc
+
+        return _observe(
+            response,
+            settings=self._settings,
+            rejected_url=None,
+            redirects=0,
+            sent=1,
+            elapsed=response.elapsed.total_seconds(),
         )
 
     def _cookie(self) -> dict[str, str]:

@@ -213,3 +213,47 @@ async def test_network_failure_is_translated(secret: Secret) -> None:
     async with AsyncFetcher(secret, settings=settings) as fetcher:
         with pytest.raises(NetworkError):
             await fetcher.fetch("/a")
+
+
+async def test_a_write_matches_and_is_never_replayed_by_either(secret: Secret) -> None:
+    """Требует, чтобы оба транспорта отправляли одинаково и не повторяли записи.
+
+    Правило безопасности, написанное дважды, расходится молча. Здесь цена
+    расхождения - второе сообщение покупателю: у отправленного сообщения нет
+    отмены, а переход в ответ на запись выглядит как обычное приглашение
+    повторить запрос по другому адресу.
+
+    Args:
+        secret (Secret): Секрет.
+
+    Returns:
+        None
+    """
+    fields = {"request": "false", "csrf_token": "тк"}
+    headers = {"X-Requested-With": "XMLHttpRequest"}
+
+    sync_server = FakeServer([redirect_to("/somewhere-else"), ok()])
+    try:
+        settings = TransportSettings(base_url=f"http://127.0.0.1:{sync_server.port}")
+        with Fetcher(secret, settings=settings) as fetcher:
+            a = fetcher.submit("/runner/", fields, headers)
+    finally:
+        sync_server.close()
+
+    async_server = FakeServer([redirect_to("/somewhere-else"), ok()])
+    try:
+        settings = TransportSettings(base_url=f"http://127.0.0.1:{async_server.port}")
+        async with AsyncFetcher(secret, settings=settings) as fetcher:
+            b = await fetcher.submit("/runner/", fields, headers)
+    finally:
+        async_server.close()
+
+    assert _shape(a, sync_server.port) == _shape(b, async_server.port)
+    assert len(sync_server.requests) == len(async_server.requests) == 1, (
+        "один из транспортов повторил отправку по переходу"
+    )
+
+    # Тела запросов обязаны совпасть посимвольно: порядок полей формы - тоже
+    # часть того, что уходит в сеть.
+    sent = [one.requests[0].split("\r\n\r\n", 1)[1] for one in (sync_server, async_server)]
+    assert sent[0] == sent[1], f"транспорты отправили разное: {sent}"
