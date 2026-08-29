@@ -1,0 +1,18 @@
+{
+  "captured_at": "2026-08-29T03:09:18+00:00",
+  "captured_format": "structural-skeleton-v8",
+  "classification": "ok",
+  "classification_provisional": false,
+  "classification_reason": "identity_confirmed",
+  "content_length": 75887,
+  "converted": false,
+  "elapsed_ms": 324,
+  "final_url": "https://funpay.com/chat/?{q}",
+  "format": "structural-skeleton-v8",
+  "http_status": 200,
+  "locale": "ru",
+  "note": "Структурный скелет: текст заменён подписями, сегменты путей с идентификаторами обезличены. Сырой HTML не сохраняется.",
+  "note_on_purpose": "Второй снимок страницы диалога, рядом с chat-thread.logged.ru, а не вместо него. Тот снят форматом v5 и служит свидетельством числу сообщений: одиннадцать строк, пять ссылок автора. Этот снят другого диалога и другим форматом, и служит другому: в нём есть ключи объекта настроек, то есть защитный токен, и на нём впервые проверяется ПОЛОЖИТЕЛЬНЫЙ случай признака пригодности страницы для отправки.",
+  "path": "/chat/?{q}",
+  "redirects": 0
+}

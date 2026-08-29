@@ -24,6 +24,9 @@ LIST_ONLY: Final[str] = "chat.logged.ru"
 #: Страница заказа: виджет есть, списка диалогов нет.
 ORDER: Final[str] = "order.logged.ru"
 
+#: Та же страница диалога форматом v8: в ней есть ключи объекта настроек.
+THREAD_V8: Final[str] = "chat-thread.v8.logged.ru"
+
 
 def _page(name: str) -> str:
     """Читает снимок страницы.
@@ -194,3 +197,51 @@ def test_the_position_comes_from_the_dialogue_carrier_not_the_own_one() -> None:
         f"позиция сдвинулась вслед за data-user-msg: было {honest.last_message.value!r}, "
         f"стало {changed.last_message.value!r}. Читается не тот носитель"
     )
+
+
+def test_a_v8_thread_page_is_fit_for_sending_and_says_so() -> None:
+    """Требует, чтобы признак пригодности БЫВАЛ истинным.
+
+    До 29.08.2026 проверен был только отрицательный случай: на всех фикстурах
+    can_send выходил ложным, и по разным причинам. Признак, который не бывает
+    истинным ни разу, проверен наполовину - и половина эта та, что не ловит
+    ошибку «никогда не годится».
+
+    Возвращает:
+        None
+    """
+    context = parse_runner_context(_page(THREAD_V8))
+
+    assert context.can_send is True, [one.code for one in context.defects]
+    assert not context.defects, [one.code for one in context.defects]
+
+    assert context.csrf_token is not None
+    assert context.csrf_token.reveal()
+
+    for field in (
+        context.node_name,
+        context.node_id,
+        context.chat_tag,
+        context.bookmarks_tag,
+        context.orders_tag,
+        context.own_user_id,
+        context.last_message,
+    ):
+        assert field.is_observed, field.reason
+
+
+def test_the_token_of_a_fit_page_never_leaks_into_its_repr() -> None:
+    """Требует, чтобы токен не выходил наружу вместе с прочитанным.
+
+    Прочитанное складывают в журнал целиком - это первое, что делают при
+    разборе неудачи. Токен рядом с ним оказался бы там же.
+
+    Возвращает:
+        None
+    """
+    context = parse_runner_context(_page(THREAD_V8))
+    assert context.csrf_token is not None
+    value = context.csrf_token.reveal()
+
+    for rendered in (repr(context), str(context)):
+        assert value not in rendered, "значение токена вышло наружу"
