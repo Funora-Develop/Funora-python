@@ -18,6 +18,7 @@ from funora._classify import (
     DEFAULT_IDENTITY_CSS,
     ResponseClass,
     Signature,
+    _page_text,
     classify,
 )
 from funora.extraction import SELECTOR_GROUPS
@@ -896,3 +897,86 @@ def test_login_page_with_a_challenge_widget_is_not_a_challenge() -> None:
         "а вердикты у них разные: первый останавливает автоматику, второй "
         "говорит человеку обновить ключ"
     )
+
+
+#: Слова, по которым текстовые подписи выносят вердикт. Взяты из самих подписей,
+#: а не переписаны рядом: переписанный список разошёлся бы с настоящим молча.
+TRIGGERS: tuple[str, ...] = ("captcha", "ваш аккаунт заблокирован", "технические работы")
+
+
+def _logged_pages() -> list[Path]:
+    """Возвращает снимки страниц, отданных вошедшему пользователю.
+
+    Returns:
+        list[Path]: Пути снимков, на которых есть меню вошедшего.
+    """
+    found = [
+        one
+        for one in sorted(FIXTURES.glob("*.skeleton.txt"))
+        if HTMLParser(one.read_text(encoding="utf-8")).css_first(DEFAULT_IDENTITY_CSS)
+    ]
+    assert found, "снимков страниц вошедшего не нашлось - проверять нечего"
+    return found
+
+
+@pytest.mark.parametrize("page", _logged_pages(), ids=lambda one: one.name)
+@pytest.mark.parametrize("trigger", TRIGGERS)
+def test_someone_elses_words_never_decide_the_verdict(page: Path, trigger: str) -> None:
+    """Требует, чтобы чужой текст на странице приложения не давал вердикта.
+
+    Половину текста на страницах площадки пишут посторонние: названия чужих
+    лотов, чужие отзывы, сообщения собеседника. Догадка по такому тексту даёт
+    контрагенту право остановить чужого клиента одним словом.
+
+    Проверка не умозрительная. Ровно это и случилось: собственная страница лотов
+    продавца, торгующего защитой серверов от ботов, получила вердикт challenge -
+    по слову из его же описания.
+
+    Args:
+        page (Path): Снимок страницы вошедшего.
+        trigger (str): Слово, по которому срабатывает текстовая подпись.
+
+    Returns:
+        None
+    """
+    html = page.read_text(encoding="utf-8")
+
+    # Текст ставится в НАЧАЛО тела, и это не вкусовщина. Классификатор читает
+    # обрезанную страницу, и подстановка в конец на больших снимках уходила за
+    # предел: проверка проходила, ничего не проверив.
+    at = html.index(">", html.index("<body")) + 1
+    spoiled = html[:at] + f"<div>{trigger}</div>" + html[at:]
+    assert trigger in _page_text(spoiled), (
+        "подставленного текста не видно классификатору - проверка пуста"
+    )
+
+    verdict = classify(
+        status=200,
+        final_url=f"https://{HOST}/",
+        html=spoiled,
+        expected_host=HOST,
+    )
+    assert verdict.cls is ResponseClass.OK, (
+        f"страница вошельца получила класс {verdict.cls} по причине {verdict.reason!r} "
+        f"из-за слова {trigger!r} в чужом тексте"
+    )
+
+
+def test_a_real_challenge_page_is_still_caught_by_its_text() -> None:
+    """Требует, чтобы текстовые подписи остались рабочими там, где они уместны.
+
+    Правило запрещает догадку по тексту НА СТРАНИЦЕ ПРИЛОЖЕНИЯ. Проверка,
+    подставленная вместо страницы, меню вошедшего не несёт, и на ней подпись
+    обязана срабатывать по-прежнему. Без этой проверки правило чинилось бы
+    удалением подписей, и починка выглядела бы удачной.
+
+    Returns:
+        None
+    """
+    wall = "<html><body><h1>Подтвердите, что вы не робот</h1></body></html>"
+
+    verdict = classify(status=200, final_url=f"https://{HOST}/", html=wall, expected_host=HOST)
+    assert verdict.cls is ResponseClass.CHALLENGE, (
+        f"стена проверки получила класс {verdict.cls} по причине {verdict.reason!r}"
+    )
+    assert verdict.provisional is True, "решение непроверенной подписью выдано за наблюдение"
