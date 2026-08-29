@@ -24,6 +24,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Final
@@ -33,14 +34,26 @@ from selectolax.parser import HTMLParser, Node
 from ._classify import ResponseClass, Verdict
 from ._observed import Observed
 from ._result import Defect, Severity
+from ._secret import Secret
 from .capabilities import Capability, CapabilityState
 from .errors import ProtocolChangedError
 from .extraction import SELECTORS
 
-__all__ = ["Account", "CapabilityProfile", "SessionHealth", "parse_account"]
+__all__ = [
+    "Account",
+    "AppData",
+    "CapabilityProfile",
+    "SessionHealth",
+    "parse_account",
+    "parse_app_data",
+]
 
 _OWN_ID: Final[str] = SELECTORS["session.identity.own_user_id"]
 _OWN_NAME: Final[str] = SELECTORS["session.identity.own_username"]
+_APP_DATA: Final[str] = SELECTORS["session.identity.app_data"]
+
+#: Имя ключа защитного токена внутри объекта настроек страницы.
+_CSRF_KEY: Final[str] = "csrf-token"
 
 
 @dataclass(frozen=True, slots=True)
@@ -278,5 +291,142 @@ def parse_account(html: str, observed_at: datetime) -> Account:
         username=username,
         locale=_attribute(root, "lang", "locale"),
         observed_at=observed_at,
+        defects=tuple(defects),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class AppData:
+    """Настройки страницы из атрибута data-app-data.
+
+    ЗДЕСЬ ЛЕЖИТ ЗАЩИТНЫЙ ТОКЕН, без которого не собрать ни одного запроса
+    записи. Отдаётся он обёрнутым в Secret: значение видно только по явному
+    вызову reveal, и ни в repr, ни в журнал, ни в сообщение об ошибке не
+    попадает. Строкой его не отдают нарочно - подстановка в f-строку случайна,
+    вызов reveal виден при чтении кода.
+
+    Идентификатор и метка языка лежат в том же объекте ВТОРЫМИ носителями: их
+    же несут атрибут data-user и html[lang]. Сверка носителей - дело
+    вызывающего разбора, здесь читается ровно то, что написано.
+
+    Attributes:
+        csrf_token (Secret | None): Защитный токен. None, если не прочитан.
+        user_id (Observed[str]): Собственный идентификатор из объекта.
+        locale (Observed[str]): Метка языка из объекта.
+        defects (tuple[Defect, ...]): Замеченные повреждения.
+    """
+
+    csrf_token: Secret | None
+    user_id: Observed[str]
+    locale: Observed[str]
+    defects: tuple[Defect, ...] = ()
+
+
+def _json_field(data: dict[str, object], key: str, field_name: str) -> Observed[str]:
+    """Читает строковое поле объекта настроек как наблюдение.
+
+    Args:
+        data (dict[str, object]): Разобранный объект настроек.
+        key (str): Имя ключа в объекте.
+        field_name (str): Имя поля для причины отсутствия.
+
+    Returns:
+        Observed[str]: Наблюдение.
+    """
+    if key not in data:
+        return Observed.missing(f"key_absent:{field_name}")
+    value = data[key]
+    if not isinstance(value, str):
+        # Число здесь читалось бы как строка молча, и разница вышла бы наружу
+        # только при сравнении с другим носителем.
+        return Observed.missing(f"key_not_a_string:{field_name}")
+    value = value.strip()
+    return Observed.present(value) if value else Observed.empty("")
+
+
+def parse_app_data(html: str) -> AppData:
+    """Разбирает объект настроек страницы и достаёт защитный токен.
+
+    НЕ ПАДАЕТ НИ НА ЧЁМ. Атрибута может не быть, он может не разобраться, в нём
+    может не быть нужного ключа - и всё это разные обстоятельства с разными
+    причинами. Отказ здесь превратил бы «токена нет» в «страница сломана», а это
+    решается по-разному: первое ведёт к перезаходу, второе к разбирательству с
+    разметкой.
+
+    Отдельно стоит случай СТАРОГО СНИМКА. До формата скелета v8 атрибут
+    маскировался целиком, одной подписью, и разобрать его как JSON нельзя. Это
+    не поломка площадки, а возраст снимка, и причина названа отдельно.
+
+    Args:
+        html (str): Тело страницы.
+
+    Returns:
+        AppData: Токен, идентификатор и метка языка из объекта настроек.
+    """
+    tree = HTMLParser(html)
+    carrier = tree.css_first(_APP_DATA)
+    if carrier is None:
+        return AppData(
+            csrf_token=None,
+            user_id=Observed.missing("app_data_carrier_missing"),
+            locale=Observed.missing("app_data_carrier_missing"),
+            defects=(
+                Defect(
+                    severity=Severity.PAGE,
+                    code="app_data_carrier_missing",
+                    detail=f"на странице нет носителя настроек ({_APP_DATA})",
+                    field_name="csrf_token",
+                ),
+            ),
+        )
+
+    raw = (carrier.attributes or {}).get("data-app-data") or ""
+    try:
+        parsed: object = json.loads(raw)
+    except ValueError:
+        parsed = None
+
+    if not isinstance(parsed, dict):
+        masked = raw.startswith("T") and ":" in raw
+        code = "app_data_masked_by_skeleton" if masked else "app_data_not_json"
+        detail = (
+            "атрибут настроек замаскирован скелетом целиком: снимок сделан "
+            "форматом старше v8, и ключей объекта в нём нет"
+            if masked
+            else "атрибут настроек не разбирается как объект JSON"
+        )
+        return AppData(
+            csrf_token=None,
+            user_id=Observed.missing(code),
+            locale=Observed.missing(code),
+            defects=(
+                Defect(severity=Severity.PAGE, code=code, detail=detail, field_name="csrf_token"),
+            ),
+        )
+
+    defects: list[Defect] = []
+    token: Secret | None = None
+    value = parsed.get(_CSRF_KEY)
+    if not isinstance(value, str) or not value.strip():
+        # Значения токена в сообщении нет и быть не может: оно часть сессии
+        # владельца. Названо только то, чего не хватило.
+        defects.append(
+            Defect(
+                severity=Severity.PAGE,
+                code="csrf_token_absent",
+                detail=(
+                    f"в объекте настроек нет пригодного ключа {_CSRF_KEY}. "
+                    f"Прочитанные ключи: {sorted(parsed)}"
+                ),
+                field_name="csrf_token",
+            )
+        )
+    else:
+        token = Secret(value.strip(), label=_CSRF_KEY)
+
+    return AppData(
+        csrf_token=token,
+        user_id=_json_field(parsed, "userId", "user_id"),
+        locale=_json_field(parsed, "locale", "locale"),
         defects=tuple(defects),
     )
