@@ -426,7 +426,10 @@ def main(argv: list[str] | None = None) -> int:
         "--secret-file",
         type=Path,
         default=None,
-        help="каталог с файлами секретов; по умолчанию секрет читается из окружения",
+        help=(
+            "файл с ключом либо каталог, где он лежит; "
+            "по умолчанию ключ читается из переменной окружения"
+        ),
     )
     parser.add_argument("--secret-name", default="golden_key", help="имя секрета")
     parser.add_argument(

@@ -282,6 +282,54 @@ class CallableSecretProvider:
         return Secret(value, label=name)
 
 
+def _not_found(asked: Path, tried: Path, name: str) -> str:
+    """Объясняет, почему файла нет, и называет похожий, если он рядом.
+
+    Блокнот дописывает расширение, когда файла ещё не было: человек сохраняет
+    golden_key и получает golden_key.txt. Отказ, говорящий только «не найден»,
+    оставляет его гадать - при том что нужный файл лежит рядом и виден.
+
+    Args:
+        asked (Path): Путь, который назвал вызывающий.
+        tried (Path): Путь, по которому искали.
+        name (str): Логическое имя секрета.
+
+    Returns:
+        str: Сообщение отказа.
+    """
+    base = (
+        f"файл секрета не найден: {tried}. Укажите либо сам файл, либо "
+        f"каталог, в котором лежит файл с именем {name}"
+    )
+
+    # Сосед ищется ТОЛЬКО там, куда указали, - и это не мелочь. Первая редакция
+    # заглядывала ещё и в текущий каталог: подсказка находила чужой файл,
+    # никакого отношения к названному пути не имеющий, и уверенно советовала
+    # взять его. Проверка это и поймала.
+    folder = asked.parent if str(asked.parent) else Path()
+    try:
+        seen = [
+            one
+            for one in folder.iterdir()
+            if one.is_file() and one.stem == asked.stem and one != asked
+        ]
+    except OSError:
+        seen = []
+
+    if not seen:
+        return base
+
+    nearby = sorted({str(one) for one in seen})
+    return (
+        f"{base}."
+        + chr(10)
+        + chr(10)
+        + f"Рядом лежит похожее: {', '.join(nearby)}. Блокнот дописывает "
+        + "расширение, когда файла ещё не было - возможно, нужен именно этот "
+        + f"путь: --secret-file {nearby[0]}"
+    )
+
+
 class FileSecretProvider:
     """Источник, читающий секрет из файла.
 
@@ -291,8 +339,8 @@ class FileSecretProvider:
     модель доступа.
 
     Args:
-        directory (Path): Каталог, в котором лежат файлы секретов. Имя файла
-            совпадает с именем секрета.
+        directory (Path): Сам файл секрета либо каталог, в котором он лежит. В
+            каталоге имя файла совпадает с именем секрета.
         check_permissions (bool): Проверять ли, что файл недоступен для чтения
             другими пользователями.
     """
@@ -316,9 +364,15 @@ class FileSecretProvider:
             SecretNotFoundError: Если файл отсутствует, пуст или доступен на
                 чтение посторонним.
         """
-        path = self._dir / name
+        # Принимается и каталог, и сам файл.
+        #
+        # Прежде принимался только каталог - при том что ключ командной строки
+        # называется --secret-file. Человек, прочитавший имя буквально, указывал
+        # файл и получал «файл секрета не найден: golden_key/golden_key»: имя
+        # обещало одно, поведение требовало другого.
+        path = self._dir if self._dir.is_file() else self._dir / name
         if not path.is_file():
-            raise SecretNotFoundError(f"файл секрета не найден: {path}")
+            raise SecretNotFoundError(_not_found(self._dir, path, name))
 
         if self._check and os.name == "posix":
             mode = path.stat().st_mode & 0o077
