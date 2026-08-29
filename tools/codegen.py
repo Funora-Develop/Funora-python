@@ -967,6 +967,31 @@ def render_budget(spec: Path) -> str:
     out.append("\n\n#: Вёдра бюджета. Вложены: запрос расходует сначала общее, потом ведро\n")
     out.append("#: аккаунта. Порядок нормативен, иначе при нескольких аккаунтах в одном\n")
     out.append("#: процессе общий предел обходится.\n")
+    # Ключи ведра, которые кодогенератор ЧИТАЕТ.
+    read_here = {"capacity", "refill_per_second", "burst"}
+
+    # Ключи, объявленные и намеренно не читаемые. Каждый обязан быть назван
+    # записью реестра неисполненного - иначе он «объявлен и молчит», а это в
+    # проекте запрещено.
+    #
+    # summary - проза для человека, механизма за ней нет.
+    # unit - единица учёта ведра записи; записана как write_bucket_unit.
+    known_unread = {"summary": None, "unit": "write_bucket_unit"}
+
+    for name, entry in buckets.items():
+        unknown = set(entry) - read_here - set(known_unread)
+        if unknown:
+            # Прежде такой ключ пропадал МОЛЧА. Признак unit у ведра записи
+            # объявлен и не читается, и узнать это удалось только разбором
+            # вручную: ни одна проверка о нём не говорила.
+            raise SystemExit(
+                f"spec/runtime/budget.yaml: у ведра {name} объявлены ключи, которых "
+                f"кодогенератор не читает: {sorted(unknown)}. Молча пропасть они не "
+                "должны - объявленное и не исполняемое либо порождается, либо "
+                "заводит запись в spec/conformance/not-implemented.yaml и "
+                "называется здесь среди намеренно не читаемых"
+            )
+
     out.append("BUCKETS: Final[dict[str, BucketLimits]] = {\n")
     for name, entry in buckets.items():
         out.append(f'    "{name}": BucketLimits(\n')

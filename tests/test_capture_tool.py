@@ -1273,3 +1273,54 @@ def test_a_broken_page_never_breaks_the_page_own_requests() -> None:
     # Сверки нет - и это правильно: сверять было нечем. Но подпись на месте.
     tag = out["records"][0]["request"]["fields"]["objects"]["nested"][0]["tag"]
     assert tag == "T8:ad", f"без сверки метка обязана остаться обычной подписью, а стоит {tag}"
+
+
+def test_the_action_fields_are_matched_against_the_page_too() -> None:
+    """Требует сверять со страницей не только метку, но и поля действия.
+
+    Метка была первой, и на ней приём себя оправдал: выяснилось, что метки
+    разных видов подписки - разные значения. Тем же приёмом отвечается и
+    следующий вопрос - откуда берётся то, что площадка кладёт в поля действия
+    отправки. Иначе на него не ответить по той же причине: маскирование у снимка
+    страницы и у сетевой записи независимое.
+
+    ЧИСЛО СВЕРЯЕТСЯ ПО СВОЕЙ ЗАПИСИ. Поле last_message приходит числом, а в
+    атрибуте страницы лежит строка тех же цифр. Правило «сверяем только строки»
+    отвечало бы «сверять нечем» там, где сверить можно.
+
+    Returns:
+        None
+    """
+    out = _in_browser(
+        """
+        funora.watch()
+        await window.fetch('/runner/', {
+          method: 'POST',
+          body: 'request=' + encodeURIComponent(JSON.stringify({
+            action: 'chat_message',
+            data: {node: 'users-12345678-87654321', last_message: 2010613313, content: 'privet'}
+          }))
+        })
+        answer(await takeRecords())
+        """,
+        html=(
+            '<html><body data-app-data=\'{"csrf-token": "abcdefgh12345678"}\'>'
+            '<div class="chat chat-float" data-name="users-12345678-87654321"></div>'
+            '<div class="contact-item" data-node-msg="2010613313"></div>'
+            "</body></html>"
+        ),
+    )
+
+    data = out[0]["request"]["fields"]["request"]["nested"]["data"]
+
+    assert data["node"]["from_attribute"] == "data-name", data["node"]
+    assert data["last_message"]["from_attribute"] == "data-node-msg", (
+        f"число не сверилось со строкой атрибута: {data['last_message']}"
+    )
+
+    # Содержимое сообщения не сверяется вовсе: это текст человека.
+    assert data["content"] == "T6:a", f"содержимое попало под сверку: {data['content']}"
+
+    written = json.dumps(out, ensure_ascii=False)
+    assert "users-12345678-87654321" not in written, "значение узла ушло в запись"
+    assert "2010613313" not in written, "значение позиции ушло в запись"
