@@ -62,7 +62,21 @@ class FakeServer:
                 if not chunk:
                     break
                 data += chunk
-            self.requests.append(data.decode("latin-1"))
+            # Тело дочитывается по объявленной длине. Без этого проверка
+            # отправки смотрела бы только на заголовки, а весь смысл её - в том,
+            # ЧТО ушло в теле.
+            separator = b"\r\n\r\n"
+            head, _, rest = data.partition(separator)
+            length = 0
+            for line in head.decode("latin-1").split("\r\n"):
+                if line.lower().startswith("content-length:"):
+                    length = int(line.split(":", 1)[1].strip())
+            while len(rest) < length:
+                chunk = conn.recv(4096)
+                if not chunk:
+                    break
+                rest += chunk
+            self.requests.append((head + separator + rest).decode("latin-1"))
             conn.sendall(response)
             conn.close()
 
@@ -523,3 +537,97 @@ def test_accepted_languages_follow_the_spec_when_it_changes(
     assert header.startswith("de"), f"перечень сменился, а заголовок остался: {header}"
     assert "fr" in header and "es" in header
     assert "ru" not in header, "заголовок держит язык, которого нет в перечне"
+
+
+def test_a_submitted_form_goes_out_as_a_post_with_its_fields(secret: Secret) -> None:
+    """Требует, чтобы отправка ушла методом POST с полями в теле.
+
+    Проверка смотрит на ПРОВОД, а не на возвращённое значение. Ошибка здесь -
+    например, поля, уехавшие строкой запроса вместо тела, - выглядела бы изнутри
+    работающей: объект собран, вызов состоялся, ответ получен.
+
+    Args:
+        secret (Secret): Секрет.
+
+    Returns:
+        None
+    """
+    server = FakeServer([ok()])
+    try:
+        settings = TransportSettings(base_url=f"http://127.0.0.1:{server.port}")
+        with Fetcher(secret, settings=settings) as fetcher:
+            fetcher.submit(
+                "/runner/",
+                {"request": '{"action": "проба"}', "csrf_token": "тк"},
+                {"X-Requested-With": "XMLHttpRequest"},
+            )
+    finally:
+        server.close()
+
+    assert len(server.requests) == 1, "запросов ушло не один"
+    sent = server.requests[0]
+    assert sent.startswith("POST /runner/ "), sent.split("\r\n")[0]
+    assert "x-requested-with: xmlhttprequest" in sent.lower(), "заголовок канала не ушёл"
+
+    body = sent.split("\r\n\r\n", 1)[1]
+    assert "csrf_token=" in body, "защитного поля нет в теле"
+    assert "action" in body, "поля действия нет в теле"
+    assert "?" not in sent.split(" ")[1], "поля уехали строкой запроса, а не телом"
+
+
+def test_the_secret_rides_the_write_the_same_way_it_rides_a_read(secret: Secret) -> None:
+    """Требует, чтобы секрет уходил заголовком Cookie и только им.
+
+    Args:
+        secret (Secret): Секрет.
+
+    Returns:
+        None
+    """
+    server = FakeServer([ok()])
+    try:
+        settings = TransportSettings(base_url=f"http://127.0.0.1:{server.port}")
+        with Fetcher(secret, settings=settings) as fetcher:
+            fetcher.submit("/runner/", {"request": "false"}, {})
+    finally:
+        server.close()
+
+    sent = server.requests[0]
+    assert secret.reveal() in server.cookie_headers()[0], "секрет не уехал заголовком"
+
+    body = sent.split("\r\n\r\n", 1)[1]
+    assert secret.reveal() not in body, "секрет оказался в теле запроса"
+    assert secret.reveal() not in sent.split(" ")[1], "секрет оказался в адресе"
+
+
+def test_a_redirect_on_a_write_is_never_replayed(secret: Secret) -> None:
+    """Требует НЕ повторять отправку по переходу.
+
+    Чтение по переходу повторить безвредно, запись - нет. У отправленного
+    сообщения нет отмены, и повтор при неоднозначном исходе означает второе
+    сообщение покупателю.
+
+    Заготовлено два ответа, а уйти обязан один запрос: второй ответ здесь
+    затем, чтобы повтор было ВИДНО. Сервер, ожидающий одного запроса, на
+    повторе просто повис бы, и проверка упала бы по сроку, не назвав причины.
+
+    Args:
+        secret (Secret): Секрет.
+
+    Returns:
+        None
+    """
+    server = FakeServer([redirect_to("/somewhere-else"), ok()])
+    try:
+        settings = TransportSettings(base_url=f"http://127.0.0.1:{server.port}")
+        with Fetcher(secret, settings=settings) as fetcher:
+            seen = fetcher.submit("/runner/", {"request": "false"}, {})
+    finally:
+        server.close()
+
+    assert len(server.requests) == 1, (
+        f"по переходу ушёл второй запрос: отправка повторена {len(server.requests)} раза"
+    )
+    assert seen.status == 302, "переход подменён чем-то другим"
+    assert seen.redirects == 0
+    assert seen.requests_sent == 1, "бюджету списано больше запросов, чем ушло"
