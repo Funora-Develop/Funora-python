@@ -63,7 +63,7 @@ from ._order import OrderView, parse_order_page
 from ._orders import Completeness, OrdersPage, parse_orders_page
 from ._poll import Deduplicator, Schedule
 from ._result import Defect, Severity
-from ._retry import plan_attempt
+from ._retry import RETRY_REASON_ATTR, plan_attempt
 from ._reviews import ReviewsPage, parse_reviews_page
 from ._showcase import ShowcasePage, parse_showcase
 from ._state import StateFile
@@ -973,6 +973,10 @@ class Engine:
                     retry_after_ms=retry_after_ms,
                 )
                 if not plan.retry:
+                    # Причина уходит НАРУЖУ, а не только в журнал. Прежде здесь
+                    # стоял голый raise, и вызывающий не мог отличить «повторять
+                    # нельзя, сперва сверься» от «повторять бессмысленно».
+                    setattr(exc, RETRY_REASON_ATTR, plan.reason)
                     raise
                 _log.info(
                     "повтор после ограничения частоты через %d мс (попытка %d)",
@@ -996,6 +1000,7 @@ class Engine:
                     retry_after_ms=retry_after_ms,
                 )
                 if not plan.retry:
+                    setattr(exc, RETRY_REASON_ATTR, plan.reason)
                     raise
                 _log.info(
                     "повтор после %s через %d мс (попытка %d, причина %s)",

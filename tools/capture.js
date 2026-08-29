@@ -239,12 +239,35 @@
     }
   }
 
-  //: Атрибуты, в которых площадка держит метки разделов.
+  //: Атрибуты, значения которых сверяются с полями запроса.
   //
   // Перечень ЗАКРЫТ и написан здесь, в исходнике, а не собирается со страницы.
   // Собранный со страницы, он принёс бы в наблюдение имена атрибутов, которых
   // никто не читал, - а имя атрибута на странице продавца бывает и говорящим.
-  const TAG_ATTRIBUTES = ['data-orders', 'data-chat', 'data-message']
+  //
+  // Первая редакция знала три имени и сверяла одно поле - метку раздела. Этого
+  // хватило, чтобы выяснить: метки разных видов подписки - РАЗНЫЕ значения. Но
+  // тем же приёмом отвечается и следующий вопрос: откуда берётся то, что
+  // площадка кладёт в поля действия. Ответить на него иначе нельзя по той же
+  // причине - маскирование у снимка и у записи независимое.
+  const PAGE_ATTRIBUTES = [
+    'data-orders',
+    'data-chat',
+    'data-message',
+    'data-id',
+    'data-tag',
+    'data-name',
+    'data-node-msg',
+    'data-user-msg',
+    'data-user',
+  ]
+
+  //: Поля запроса, значение которых стоит сверить со страницей.
+  //
+  // Перечень тоже закрыт. Сверять ВСЁ подряд нельзя: содержимое сообщения -
+  // текст человека, и «совпало с атрибутом» о нём говорить нечего, а вот
+  // отрицательный ответ сузил бы круг поиска для того, кто читает запись.
+  const CHECKED_FIELDS = ['tag', 'node', 'last_message', 'id']
 
   //: Значения меток, снятые ПЕРЕД уходом запроса.
   //
@@ -273,7 +296,7 @@
     try {
       const table = {}
       let any = false
-      for (const name of TAG_ATTRIBUTES) {
+      for (const name of PAGE_ATTRIBUTES) {
         const found = document.querySelectorAll('[' + name + ']')
         for (let index = 0; index < found.length; index += 1) {
           const value = found[index].getAttribute(name)
@@ -302,8 +325,12 @@
    */
   function tagOrigin(value) {
     if (tagsBefore === null) return null
-    if (typeof value !== 'string' || value === '') return null
-    return Object.prototype.hasOwnProperty.call(tagsBefore, value) ? tagsBefore[value] : false
+    // Число сверяется по своей записи: last_message приходит числом, а в
+    // атрибуте страницы лежит строка тех же цифр. Правило «только строка»
+    // отвечало бы «сверять нечем» там, где сверить можно.
+    const text = typeof value === 'number' ? String(value) : value
+    if (typeof text !== 'string' || text === '') return null
+    return Object.prototype.hasOwnProperty.call(tagsBefore, text) ? tagsBefore[text] : false
   }
 
   //: Как выглядит ИМЯ ПОЛЯ - ключ, который можно записать дословно.
@@ -432,9 +459,9 @@
           out[key] = literal
           continue
         }
-        // Метка раздела сверяется со страницей ПРЯМО ЗДЕСЬ, рядом с самим
-        // значением. Ответ - имя атрибута либо false; значения не уходит.
-        if (key === 'tag') {
+        // Значение сверяется со страницей ПРЯМО ЗДЕСЬ, рядом с самим полем.
+        // Ответ - имя атрибута либо false; значения не уходит.
+        if (CHECKED_FIELDS.indexOf(key) >= 0) {
           const origin = tagOrigin(value[key])
           if (origin !== null) {
             out[key] = { signature: shapeOfValue(value[key], level + 1), from_attribute: origin }
