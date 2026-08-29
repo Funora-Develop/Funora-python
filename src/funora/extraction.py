@@ -193,6 +193,7 @@ SELECTORS: Final[dict[str, str]] = {
     "showcase.sections.manage_link": ".offer-list-title-button a",
     "showcase.sections.title": ".offer-list-title h3 a",
     "updates.positions": "a.contact-item",
+    "updates.tags.carrier": "div.hidden[data-orders]",
 }
 
 
@@ -215,7 +216,9 @@ ATTRIBUTES: Final[dict[str, str]] = {
     "chats.contact_list.attributes.own_position": "data-user-msg",
     "order.chat.full_chat_link.attributes.chat_href": "href",
     "order.chat.messages.attributes.message_id": "id",
+    "order.chat.widget.attributes.bookmarks_tag": "data-bookmarks-tag",
     "order.chat.widget.attributes.node_id": "data-id",
+    "order.chat.widget.attributes.node_name": "data-name",
     "order.chat.widget.attributes.tag": "data-tag",
     "order.counterparty.link.attributes.profile_href": "href",
     "order.identity.category_link.attributes.category_href": "href",
@@ -235,6 +238,7 @@ ATTRIBUTES: Final[dict[str, str]] = {
     "showcase.sections.title.attributes.category_href": "href",
     "updates.positions.attributes.last_message": "data-node-msg",
     "updates.positions.attributes.own": "data-user-msg",
+    "updates.tags.carrier.attributes.orders_tag": "data-orders",
 }
 
 

@@ -260,6 +260,8 @@
     'data-node-msg',
     'data-user-msg',
     'data-user',
+    'data-bookmarks-tag',
+    'data-type',
   ]
 
   //: Поля запроса, значение которых стоит сверить со страницей.
