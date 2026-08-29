@@ -23,7 +23,7 @@ import os
 from pathlib import Path
 
 import pytest
-from selectolax.parser import HTMLParser
+from selectolax.parser import HTMLParser, Node
 
 #: Каталог со снимками страниц.
 FIXTURES = Path(__file__).parent / "fixtures" / "pages"
@@ -465,6 +465,44 @@ def test_declared_attributes_do_not_share_a_name() -> None:
         seen[where] = key
 
 
+def _inside_json(node: Node, path: str) -> str | None:
+    """Достаёт значение по пути внутри JSON, лежащего в атрибуте узла.
+
+    Третья форма источника - ``$путь.до.ключа``. Заведена под защитный токен: он
+    лежит не текстом и не атрибутом, а ключом внутри объекта JSON атрибута
+    data-app-data. Без неё подпись такого значения объявить было нечем, и
+    единственное место, на котором держатся все семь операций записи, осталось
+    бы непроверяемым.
+
+    Атрибут не называется: перебираются все, и годится тот, чьё значение
+    разбирается как объект и содержит путь. Так проверка не зависит от того, где
+    именно в объявлении записано имя атрибута.
+
+    Аргументы:
+        node (Node): узел-носитель.
+        path (str): путь до ключа, части через точку.
+
+    Возвращает:
+        str | None: значение, если нашлось строкой; иначе None.
+    """
+    parts = path.split(".")
+    for raw in (node.attributes or {}).values():
+        if not raw or not raw.strip().startswith("{"):
+            continue
+        try:
+            value: object = json.loads(raw)
+        except ValueError:
+            continue
+        for part in parts:
+            if not isinstance(value, dict) or part not in value:
+                value = None
+                break
+            value = value[part]
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
 def _signature_claims() -> list[tuple[str, str, str, tuple[str, ...], tuple[str, ...]]]:
     """Собирает объявленные подписи значений вместе с носителем и снимками.
 
@@ -620,11 +658,12 @@ def test_declared_signature_matches_the_fixture(
 
         for node in HTMLParser(_read(snapshot)).css(holder):
             for source in reads:
-                raw = (
-                    (node.text() or "").strip()
-                    if source == "text"
-                    else (node.attributes or {}).get(source[1:])
-                )
+                if source == "text":
+                    raw = (node.text() or "").strip()
+                elif source.startswith("@"):
+                    raw = (node.attributes or {}).get(source[1:])
+                else:
+                    raw = _inside_json(node, source[1:])
                 if raw:
                     seen.add(str(raw).split("#")[0])
 

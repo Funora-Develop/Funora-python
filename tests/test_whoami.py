@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
@@ -10,7 +11,7 @@ import pytest
 
 from funora._classify import ResponseClass, Verdict
 from funora._result import Severity
-from funora._whoami import CapabilityProfile, SessionHealth, parse_account
+from funora._whoami import CapabilityProfile, SessionHealth, parse_account, parse_app_data
 from funora.capabilities import Capability, CapabilityState
 from funora.errors import ProtocolChangedError
 
@@ -264,3 +265,157 @@ def test_a_stale_verdict_is_never_reported_as_a_fresh_check() -> None:
     )
     assert health.is_usable is False
     assert health.reason == "no_response"
+
+
+#: Снимок в формате v8: ключи объекта настроек в нём сохранены.
+WITH_APP_DATA: Final[str] = "chat.logged.ru"
+
+#: Снимок формата старше v8: атрибут настроек замаскирован целиком.
+BEFORE_V8: Final[str] = "orders-trade.logged.ru"
+
+
+def _with_settings(settings: dict[str, object]) -> str:
+    """Собирает страницу с объектом настроек в атрибуте.
+
+    Кавычки внутри атрибута заменяются на &quot; - ровно так их и отдаёт
+    площадка, и ровно так их пишет сборщик наблюдений. Разметка, собранная
+    иначе, проверяла бы разбор на том, чего в жизни не встречается.
+
+    Аргументы:
+        settings (dict[str, object]): содержимое объекта настроек.
+
+    Возвращает:
+        str: разметка страницы.
+    """
+    encoded = json.dumps(settings, ensure_ascii=False).replace('"', "&quot;")
+    return f'<html><body data-app-data="{encoded}"></body></html>'
+
+
+def test_the_csrf_token_is_read_from_the_page_settings() -> None:
+    """Требует прочесть защитный токен из объекта настроек страницы.
+
+    Все семь операций записи упираются в это одно место: без токена не собрать
+    ни одного запроса. До формата скелета v8 разбор проверить было НЕ НА ЧЕМ -
+    атрибут маскировался целиком, и ни одного ключа объекта в снимке не было.
+
+    Проверяется ПУТЬ до значения, а не значение: в фикстуре на месте токена
+    стоит подпись, и так и должно быть.
+
+    Возвращает:
+        None
+    """
+    data = parse_app_data(_page(WITH_APP_DATA))
+
+    assert data.csrf_token is not None, [one.code for one in data.defects]
+    assert data.csrf_token.reveal(), "токен прочитан пустым"
+    assert not data.defects, [one.code for one in data.defects]
+
+
+def test_the_token_never_shows_itself_in_any_text_form() -> None:
+    """Требует, чтобы значение токена не выходило наружу само.
+
+    Токен - часть сессии владельца. Подстановка в f-строку случайна и незаметна
+    при чтении кода; вызов reveal заметен. Проверка держит именно это различие.
+
+    Возвращает:
+        None
+    """
+    data = parse_app_data(_page(WITH_APP_DATA))
+    assert data.csrf_token is not None
+    value = data.csrf_token.reveal()
+
+    for rendered in (repr(data), str(data), repr(data.csrf_token), str(data.csrf_token)):
+        assert value not in rendered, f"значение токена вышло наружу в {rendered!r}"
+
+
+def test_an_older_snapshot_says_why_the_token_is_unreadable() -> None:
+    """Требует отличать «токена нет» от «снимок старый».
+
+    Атрибут, замаскированный скелетом, - это возраст снимка, а не поломка
+    площадки. Названные одинаково, эти случаи повели бы читающего в разные
+    стороны: первый чинится пересъёмкой, второй разбирательством с разметкой.
+
+    Возвращает:
+        None
+    """
+    data = parse_app_data(_page(BEFORE_V8))
+
+    assert data.csrf_token is None
+    assert "app_data_masked_by_skeleton" in {one.code for one in data.defects}
+    assert not data.user_id.is_observed
+    assert data.user_id.reason == "app_data_masked_by_skeleton"
+
+
+def test_settings_without_the_token_key_are_reported_without_values() -> None:
+    """Требует громко заметить пропажу ключа и НЕ печатать значений.
+
+    Сообщение о повреждении читают глазами и кладут в журнал. Попади в него
+    содержимое объекта настроек - там же лежит и токен.
+
+    Возвращает:
+        None
+    """
+    data = parse_app_data(_with_settings({"locale": "ru", "userId": "12345678"}))
+
+    assert data.csrf_token is None
+    absent = [one for one in data.defects if one.code == "csrf_token_absent"]
+    assert absent, [one.code for one in data.defects]
+
+    # Прочитанные КЛЮЧИ назвать можно, значения - нельзя.
+    assert "locale" in absent[0].detail
+    assert "12345678" not in absent[0].detail, "в сообщении о повреждении оказалось значение"
+
+
+def test_a_settings_attribute_that_is_not_json_is_a_page_defect() -> None:
+    """Требует не падать на атрибуте, который не разбирается.
+
+    Возвращает:
+        None
+    """
+    data = parse_app_data('<html><body data-app-data="{не json">')
+
+    assert data.csrf_token is None
+    assert "app_data_not_json" in {one.code for one in data.defects}
+
+
+def test_a_page_without_the_settings_carrier_is_named_as_such() -> None:
+    """Требует отличать отсутствие носителя от прочих случаев.
+
+    Возвращает:
+        None
+    """
+    data = parse_app_data("<html><body></body></html>")
+
+    assert data.csrf_token is None
+    assert "app_data_carrier_missing" in {one.code for one in data.defects}
+
+
+def test_the_settings_carry_the_id_and_the_locale_as_second_carriers() -> None:
+    """Требует прочесть идентификатор и метку языка из того же объекта.
+
+    Оба поля есть и в других местах: идентификатор в атрибуте data-user, метка
+    языка в html[lang]. Второй носитель нужен не ради значения, а ради сверки -
+    разошлись, значит разметка изменилась.
+
+    Возвращает:
+        None
+    """
+    data = parse_app_data(_page(WITH_APP_DATA))
+
+    assert data.user_id.is_observed, data.user_id.reason
+    assert data.locale.is_observed, data.locale.reason
+
+
+def test_a_numeric_id_in_the_settings_is_refused_rather_than_stringified() -> None:
+    """Требует отказаться от значения не того типа, а не привести его молча.
+
+    Число, прочитанное как строка, сравнялось бы со вторым носителем неверно, и
+    разница вышла бы наружу гораздо позже места, где возникла.
+
+    Возвращает:
+        None
+    """
+    data = parse_app_data(_with_settings({"csrf-token": "abc", "userId": 12345678}))
+
+    assert not data.user_id.is_observed
+    assert data.user_id.reason == "key_not_a_string:user_id"

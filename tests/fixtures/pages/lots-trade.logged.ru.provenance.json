@@ -1,0 +1,23 @@
+{
+  "captured_at": "2026-08-28T23:53:43+00:00",
+  "captured_format": "structural-skeleton-v8",
+  "classification": "ok",
+  "classification_at_capture": {
+    "classification": "challenge",
+    "classification_provisional": true,
+    "classification_reason": "signature:challenge_text",
+    "why_it_was_wrong": "Слово captcha стоит в описании лота владельца аккаунта, торгующего защитой игровых серверов от ботов. Текстовая подпись искала его по всему тексту страницы, а страница своих лотов не входила в перечень признаков приложения. Исправлено в контракте 0.16.0: признаком объявлено меню вошедшего."
+  },
+  "classification_provisional": false,
+  "classification_reason": "identity_confirmed",
+  "content_length": 37269,
+  "converted": false,
+  "elapsed_ms": 246,
+  "final_url": "https://funpay.com/lots/{n}/trade",
+  "format": "structural-skeleton-v8",
+  "http_status": 200,
+  "locale": "ru",
+  "note": "Структурный скелет: текст заменён подписями, сегменты путей с идентификаторами обезличены. Сырой HTML не сохраняется.",
+  "path": "/lots/{n}/trade",
+  "redirects": 0
+}
