@@ -36,6 +36,7 @@ from ._canonical import canonical_dumps
 from ._diff import Event, _fingerprint
 from ._gate import check_capability
 from ._identity import REGISTRY, identity_of
+from ._outbound import OutboundGovernor
 from ._poll import Deduplicator
 from .budget import WAIT_ATTEMPTS, RequestClass
 from .capabilities import Capability, CapabilityState
@@ -453,6 +454,60 @@ def _decision(case: dict[str, Any]) -> str:
     return "разрешено"
 
 
+def _run_outbound(scenario: dict[str, Any]) -> list[str]:
+    """Прогоняет сценарий ограничителя исходящих по виртуальным часам.
+
+    Часы подаются СНАРУЖИ, обе оси. Стенная метка живёт на диске, монотонная -
+    внутри запуска, и сценарий с переводом часов подаёт их расходящимися: это
+    единственный способ проверить, что реализация не путает одно с другим.
+
+    Перезапуск изображается снимком и восстановлением: ровно то, что делает
+    файл состояния. Реестр, не переживший его, превратил бы часовую квоту в
+    квоту на запуск.
+
+    Args:
+        scenario (dict[str, Any]): Сценарий: события и признак долговечности.
+
+    Returns:
+        list[str]: По решению на каждую попытку отправки - allowed либо имя
+        упёршегося предела.
+    """
+    governor = OutboundGovernor(durable=bool(scenario.get("durable", True)))
+    decisions: list[str] = []
+
+    for event in scenario.get("events", []):
+        kind = str(event.get("kind"))
+        if kind == "incoming":
+            governor.note_incoming(str(event["chat"]), at_ms=int(event["at_ms"]))
+            continue
+        if kind == "restart":
+            # Реестр уходит на диск и возвращается оттуда. Монотонных меток у
+            # восстановленных записей нет и быть не может: отсчёт свой в каждом
+            # запуске.
+            saved = governor.snapshot()
+            governor = OutboundGovernor(durable=bool(scenario.get("durable", True)))
+            governor.restore(saved)
+            continue
+        if kind != "send":
+            raise ValueError(f"неизвестное событие сценария: {kind}")
+
+        now_ms = int(event["at_ms"])
+        now_s = float(event.get("monotonic_s", 0.0))
+        refusal = governor.check(
+            str(event["chat"]),
+            now_ms=now_ms,
+            now_s=now_s,
+            declared_cold=bool(event.get("declared_cold", False)),
+        )
+        if refusal is not None:
+            decisions.append(refusal.limit)
+            continue
+        governor.record(str(event["chat"]), now_ms=now_ms, now_s=now_s)
+        decisions.append("allowed")
+
+    return decisions
+
+
 def answer(case: dict[str, Any]) -> dict[str, Any]:
     """Отвечает на один случай набора.
 
@@ -488,6 +543,10 @@ def answer(case: dict[str, Any]) -> dict[str, Any]:
                     "not_implemented": trace["requires"],
                 }
             return {"id": case_id, "outcome": "pass", "sent": _run_trace(trace)}
+
+        if kind == "outbound_governor":
+            scenario = _scenario(case["vector"], "outbound-governor.vectors.json")
+            return {"id": case_id, "outcome": "pass", "decisions": _run_outbound(scenario)}
 
         if kind == "capability_decision":
             return {"id": case_id, "outcome": "pass", "value": _decision(case)}

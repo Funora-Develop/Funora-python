@@ -90,6 +90,15 @@ class SessionHealth:
         provisional (bool): Принято ли решение непроверенной сигнатурой.
         checked_at (datetime): Момент проверки.
         from_cache (bool): Отдан ли ответ из кэша, а не получен запросом.
+        unsafe_marks (frozenset[str]): Какие защиты вызывающий снял с себя сам.
+
+            Поле заведено потому, что отметки ставились и не читались. Понижение
+            нижнего предела опроса помечалось внутри расписания с самого его
+            появления, и не смотрел на эту пометку никто: защита снималась, след
+            оставался, и вёл он в никуда.
+
+            Перечень имён закрыт контрактом. Снять защиту молча нельзя: новое
+            послабление обязано сперва получить имя в спецификации.
     """
 
     response_class: ResponseClass
@@ -98,9 +107,17 @@ class SessionHealth:
     provisional: bool
     checked_at: datetime
     from_cache: bool
+    unsafe_marks: frozenset[str] = frozenset()
 
     @classmethod
-    def of(cls, verdict: Verdict, checked_at: datetime, *, from_cache: bool) -> SessionHealth:
+    def of(
+        cls,
+        verdict: Verdict,
+        checked_at: datetime,
+        *,
+        from_cache: bool,
+        unsafe_marks: frozenset[str] = frozenset(),
+    ) -> SessionHealth:
         """Собирает ответ из вердикта классификатора.
 
         Годной сессия считается РОВНО при классе ok. Прочие классы означают
@@ -112,6 +129,7 @@ class SessionHealth:
             verdict (Verdict): Вердикт классификатора.
             checked_at (datetime): Момент проверки.
             from_cache (bool): Отдан ли ответ из кэша.
+            unsafe_marks (frozenset[str]): Снятые вызывающим защиты.
 
         Returns:
             SessionHealth: Пригодность сессии.
@@ -123,6 +141,7 @@ class SessionHealth:
             provisional=verdict.provisional,
             checked_at=checked_at,
             from_cache=from_cache,
+            unsafe_marks=unsafe_marks,
         )
 
 

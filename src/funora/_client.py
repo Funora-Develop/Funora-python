@@ -432,6 +432,8 @@ class Client:
         transport: Fetcher | None = None,
         budget: Budget | None = None,
         proxies: tuple[Proxy, ...] = (),
+        state_path: Path | None = None,
+        unsafe_sends_without_ledger: bool = False,
     ) -> None:
         resolved_settings = settings or TransportSettings()
 
@@ -466,6 +468,8 @@ class Client:
             budget or identity.budget,
             experimental or frozenset(),
             identity,
+            state_path=state_path,
+            unsafe_sends_without_ledger=unsafe_sends_without_ledger,
         )
         self.orders = OrdersService(self)
         self.chats = ChatsService(self)

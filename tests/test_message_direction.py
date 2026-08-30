@@ -270,7 +270,9 @@ def test_our_own_message_does_not_warm_the_dialog(no_clock: list[float]) -> None
     )
 
 
-def test_the_handler_answers_without_declaring_a_cold_outreach(no_clock: list[float]) -> None:
+def test_the_handler_answers_without_declaring_a_cold_outreach(
+    no_clock: list[float], tmp_path: Path
+) -> None:
     """Проверяет то, ради чего всё и делалось: автоответ проходит.
 
     Обработчик отвечает покупателю прямо из цикла и НЕ объявляет обращение
@@ -282,6 +284,7 @@ def test_the_handler_answers_without_declaring_a_cold_outreach(no_clock: list[fl
 
     Аргументы:
         no_clock (list[float]): счётчик пауз вместо сна.
+        tmp_path (Path): временный каталог под файл состояния.
 
     Возвращает:
         None
@@ -290,7 +293,8 @@ def test_the_handler_answers_without_declaring_a_cold_outreach(no_clock: list[fl
     router = Router()
     outcome: list[Any] = []
 
-    with Client(transport=tape) as client:  # type: ignore[arg-type]
+    # Файл состояния обязателен: без долговечного реестра отправка отказывает.
+    with Client(transport=tape, state_path=tmp_path / "state.json") as client:  # type: ignore[arg-type]
 
         @router.on(EventType.MESSAGE_CREATED)
         def answer(event: Any) -> None:

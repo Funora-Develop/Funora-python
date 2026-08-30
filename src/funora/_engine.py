@@ -62,7 +62,7 @@ from ._identity import REGISTRY, Identity, identity_of
 from ._observed import Observed
 from ._order import OrderView, parse_order_page
 from ._orders import Completeness, OrdersPage, parse_orders_page
-from ._outbound import OutboundGovernor, OutboundRefusal
+from ._outbound import UNSAFE_SENDS_WITHOUT_LEDGER, OutboundGovernor, OutboundRefusal
 from ._own_lots import OwnLotsPage, parse_own_lots
 from ._poll import Deduplicator, Schedule
 from ._result import Defect, Severity
@@ -473,6 +473,12 @@ def _outbound_error(refusal: OutboundRefusal) -> FunoraError:
     использован неверно, исправлять надо вызывающий код»: продавец не сказал,
     что пишет первым.
 
+    ОТСУТСТВИЕ РЕЕСТРА - ТРЕТИЙ СЛУЧАЙ, и он не про квоту. Прежде он приходил
+    как исчерпанный бюджет, а это подсказка «подожди и повтори» - подсказка
+    ложная: ждать здесь бесполезно ни секунду, ни час. Настроить надо клиента,
+    и класс отказа обязан говорить об этом сам, иначе вызывающий напишет цикл
+    ожидания, который не кончится никогда.
+
     Args:
         refusal (OutboundRefusal): Отказ ограничителя.
 
@@ -483,6 +489,11 @@ def _outbound_error(refusal: OutboundRefusal) -> FunoraError:
     where += f", освободится через {refusal.retry_after_ms} мс)" if refusal.retry_after_ms else ")"
     if refusal.limit == "cold_outreach_not_declared":
         return UsageError(where)
+    if refusal.limit == "no_durable_ledger":
+        return ConfigurationError(
+            f"{where}. Передайте клиенту state_path - тот же файл, что и "
+            "наблюдению, - либо, если вы понимаете цену, unsafe_sends_without_ledger"
+        )
     exhausted: FunoraError = BudgetExhaustedError(where)
     return exhausted
 
@@ -553,9 +564,11 @@ class Engine:
         "_budget",
         "_health_changes",
         "_identity",
+        "_ledger",
         "_settings",
         "_state",
         "_stopped",
+        "_unsafe",
     )
 
     def __init__(
@@ -564,10 +577,36 @@ class Engine:
         budget: Budget,
         experimental: frozenset[Capability] = frozenset(),
         identity: Identity | None = None,
+        state_path: Path | None = None,
+        unsafe_sends_without_ledger: bool = False,
     ) -> None:
         self._settings = settings
         self._budget = budget
         self._state = _State(opted_in=experimental)
+
+        #: Файл, в котором реестр отправок переживает перезапуск.
+        #:
+        #: Спецификация требует его прямо: без долговечного реестра защита
+        #: снимается перезапуском процесса. Пределы часовые, а память
+        #: обнуляется, и тридцать сообщений в час превращаются в тридцать на
+        #: запуск. Бот под супервизором обходил бы ограничитель полностью.
+        self._ledger: StateFile | None = StateFile(state_path) if state_path else None
+
+        #: Снятые вызывающим защиты. Читаются состоянием здоровья.
+        #:
+        #: Отметка ставится по ФАКТУ, а не по просьбе: попросивший послабление и
+        #: передавший файл состояния защиту не снимал, и говорить о нём обратное
+        #: значило бы врать в отчёте о здоровье.
+        self._unsafe: set[str] = set()
+        if unsafe_sends_without_ledger and state_path is None:
+            self._unsafe.add(UNSAFE_SENDS_WITHOUT_LEDGER)
+
+        # Отправка без реестра ОТКАЗЫВАЕТ, и это не строгость ради строгости.
+        # Послабление есть, оно называется вслух и оставляет след в состоянии
+        # здоровья: снять защиту можно, снять её незаметно нельзя.
+        self._state.outbound.durable = self._ledger is not None or unsafe_sends_without_ledger
+        if self._ledger is not None:
+            self._state.outbound.restore(self._ledger.load().get("outbound") or {})
         #: Смены состояния доступа, ждущие выдачи партией.
         self._health_changes: list[tuple[Health, Health, str]] = []
 
@@ -703,9 +742,12 @@ class Engine:
                 provisional=False,
                 checked_at=checked_at,
                 from_cache=False,
+                unsafe_marks=frozenset(self._unsafe),
             )
         else:
-            health = SessionHealth.of(verdict, checked_at, from_cache=False)
+            health = SessionHealth.of(
+                verdict, checked_at, from_cache=False, unsafe_marks=frozenset(self._unsafe)
+            )
 
         self._state.health_cached = health
         self._state.health_checked_at = monotonic()
@@ -806,6 +848,10 @@ class Engine:
         # наблюдалась, и «не засчитаем, раз не подтвердилось» означало бы не
         # считать ровно те отправки, которые могли уйти.
         self._state.outbound.record(cleaned, now_ms=now_ms, now_s=monotonic())
+        # Реестр сохраняется СРАЗУ, а не в конце шага. Перезапуск между
+        # отправкой и концом шага иначе терял бы её из реестра - то есть ровно
+        # в том случае, ради которого реестр и заведён.
+        self._save_ledger(now_ms=now_ms)
 
         node_name = context.node_name.value
         data = {
@@ -1117,6 +1163,26 @@ class Engine:
             page = unverified(page)
         self._note_success(Capability.CHATS_LIST, page.completeness, page)
         return page
+
+    def _save_ledger(self, *, now_ms: int) -> None:
+        """Сохраняет реестр отправок в файл состояния.
+
+        Правкой, а не записью целиком: тот же файл держит курсоры и гашение
+        повторов, и запись целиком затёрла бы их - перезапуск ушёл бы в холодный
+        старт.
+
+        Args:
+            now_ms (int): Текущий момент по стенным часам. Нужен, чтобы выбросить
+                просроченные записи перед сохранением: реестр иначе растёт
+                столько же, сколько живёт аккаунт.
+
+        Returns:
+            None
+        """
+        if self._ledger is None:
+            return
+        self._state.outbound.forget_expired(now_ms=now_ms, now_s=monotonic())
+        self._ledger.update({"outbound": self._state.outbound.snapshot()})
 
     def read_thread(self, node_id: str) -> Generator[Request, Reply, Thread]:
         """Читает переписку по тому же порядку шагов.
@@ -1924,6 +1990,16 @@ class Engine:
         plan = schedule or Schedule()
         dedup = Deduplicator()
         state = StateFile(state_path) if state_path is not None else None
+        if state is not None and self._ledger is None:
+            # Файл наблюдения становится и реестром отправок. Иначе бот, честно
+            # передавший state_path, всё равно отправлял бы без долговечного
+            # реестра - и отказывал бы себе сам, не понимая почему.
+            self._ledger = state
+            self._state.outbound.durable = True
+            self._state.outbound.restore(state.load().get("outbound") or {})
+            # Реестр появился - значит защита больше не снята, и отметке в
+            # состоянии здоровья взяться неоткуда.
+            self._unsafe.discard(UNSAFE_SENDS_WITHOUT_LEDGER)
 
         known_orders: dict[str, str] | None = None
         known_chats: dict[str, str] | None = None
@@ -2162,6 +2238,9 @@ class Engine:
                             "threads": {node: sorted(ids) for node, ids in known_threads.items()},
                             "pending_threads": pending,
                         },
+                        # Реестр отправок пишется вместе с курсорами, а не
+                        # вместо них: файл один, и владельцев у него двое.
+                        "outbound": self._state.outbound.snapshot(),
                     }
                 )
 

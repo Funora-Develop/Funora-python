@@ -141,6 +141,7 @@ class _Tape:
 def test_a_command_from_another_thread_is_sent_by_the_watching_thread(
     no_clock: list[float],
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """Проверяет то, ради чего слой и написан.
 
@@ -172,7 +173,9 @@ def test_a_command_from_another_thread_is_sent_by_the_watching_thread(
 
     monkeypatch.setattr(ChatsService, "send_text", watched)
 
-    with Client(transport=tape) as client:  # type: ignore[arg-type]
+    # Файл состояния обязателен: без долговечного реестра отправка отказывает,
+    # и это требование контракта, а не строгость проверки.
+    with Client(transport=tape, state_path=tmp_path / "state.json") as client:  # type: ignore[arg-type]
         client.engine._state.outbound.note_incoming(
             NODE_ID, at_ms=int(datetime.now(UTC).timestamp() * 1000)
         )
@@ -288,7 +291,7 @@ def test_a_full_outbox_refuses_out_loud() -> None:
     assert again.duplicate is False, "отвергнутый ключ запомнен и больше не принимается"
 
 
-def test_the_refusal_reaches_the_thread_that_asked(no_clock: list[float]) -> None:
+def test_the_refusal_reaches_the_thread_that_asked(no_clock: list[float], tmp_path: Path) -> None:
     """Требует, чтобы отказ отправки дошёл до положившего задание.
 
     Отказ случается в потоке наблюдения, где его некому ловить. Не передав его
@@ -302,7 +305,7 @@ def test_the_refusal_reaches_the_thread_that_asked(no_clock: list[float]) -> Non
         None
     """
     tape = _Tape()
-    with Client(transport=tape) as client:  # type: ignore[arg-type]
+    with Client(transport=tape, state_path=tmp_path / "state.json") as client:  # type: ignore[arg-type]
         bot = Bot(client, Router())
         # Переписка НЕ согрета, признак холода не объявлен - ограничитель обязан
         # отвергнуть задание.
@@ -431,7 +434,7 @@ def test_draining_does_not_stretch_the_polling_interval(no_clock: list[float]) -
         )
 
 
-def test_a_confirmed_send_reaches_the_ticket(no_clock: list[float]) -> None:
+def test_a_confirmed_send_reaches_the_ticket(no_clock: list[float], tmp_path: Path) -> None:
     """Проверяет, что исход отправки доходит до положившего задание.
 
     Аргументы:
@@ -441,7 +444,7 @@ def test_a_confirmed_send_reaches_the_ticket(no_clock: list[float]) -> None:
         None
     """
     tape = _Tape()
-    with Client(transport=tape) as client:  # type: ignore[arg-type]
+    with Client(transport=tape, state_path=tmp_path / "state.json") as client:  # type: ignore[arg-type]
         client.engine._state.outbound.note_incoming(
             NODE_ID, at_ms=int(datetime.now(UTC).timestamp() * 1000)
         )
