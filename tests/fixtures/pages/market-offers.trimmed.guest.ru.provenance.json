@@ -1,0 +1,40 @@
+{
+  "captured_at": "2026-08-30T22:52:21.680810+00:00",
+  "captured_format": "structural-skeleton-v9",
+  "classification": "guest",
+  "classification_provisional": false,
+  "classification_reason": "public_page_no_session",
+  "content_length": 1374289,
+  "converted": false,
+  "derived": true,
+  "derived_by": ".venv\\Scripts\\python.exe tools/trim_skeleton.py observations/lots_n.guest.ru.skeleton.txt \"a.tc-item\" tests/fixtures/pages/market-offers.trimmed.guest.ru.skeleton.txt",
+  "derived_from": "lots_n.guest.ru",
+  "derived_note": "ОБРЕЗАННЫЙ СНИМОК, А НЕ НАБЛЮДЕНИЕ. Годится, чтобы проверять разбор, и НЕ годится, чтобы утверждать о площадке: числа остались за самим наблюдением и лежат в original_counts.",
+  "elapsed_ms": 1107,
+  "final_url": "https://funpay.com/lots/{n}/",
+  "format": "structural-skeleton-v9",
+  "http_status": 200,
+  "locale": "ru",
+  "note": "Структурный скелет: текст заменён подписями, значения строки запроса обезличены, имена параметров сохранены. Сырой HTML не сохраняется. Страница ПУБЛИЧНАЯ - снята без сессии и без секрета.",
+  "original_counts": {
+    "characters": 1374289,
+    "distinct_seller_links": 375,
+    "lazyload_hidden": 1217,
+    "offer_promo": 0,
+    "offer_promoted": 0,
+    "offline": 0,
+    "online": 0,
+    "rows": 1417,
+    "rows_with_currency_unit": 1417,
+    "rows_with_offer_id": 1417
+  },
+  "path": "/lots/{n}/",
+  "redirects": 0,
+  "trimmed_counts": {
+    "characters": 150835,
+    "row_shapes": 4,
+    "rows": 24
+  },
+  "what_was_kept": "По шесть строк каждой РАЗЛИЧНОЙ формы - набора классов и имён атрибутов. Форм четыре, сохранены все четыре: с признаком присутствия и без него, с ленивой загрузкой и без неё.",
+  "why_this_snapshot_exists": "Прежний снимок того же списка снят форматом v8, где строка запроса маскировалась целиком. Идентификатор предложения лежит именно в ней, и по снимку v8 его не наблюдать - формат необратим по построению. Этот снят форматом v9: имя параметра видно, значение по-прежнему нет."
+}
