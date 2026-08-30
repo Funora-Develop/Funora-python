@@ -1,0 +1,25 @@
+{
+  "captured_at": "2026-08-30T20:33:55+00:00",
+  "captured_format": "structural-skeleton-v8",
+  "classification": "ok",
+  "classification_provisional": false,
+  "classification_reason": "identity_confirmed",
+  "content_length": 35701,
+  "converted": false,
+  "elapsed_ms": 250,
+  "final_url": "https://funpay.com/lots/offerEdit?{q}",
+  "format": "structural-skeleton-v8",
+  "http_status": 200,
+  "locale": "ru",
+  "note": "Структурный скелет: текст заменён подписями, сегменты путей с идентификаторами обезличены. Сырой HTML не сохраняется.",
+  "path": "/lots/offerEdit?{q}",
+  "redirects": 0,
+  "values_still_masked": "Значения полей не раскрыты и не будут: в них цена, краткое и подробное описание лота и сообщение покупателю после оплаты.",
+  "what_it_unblocked": [
+    "адрес сохранения: POST /lots/offerSave",
+    "имена всех двадцати полей формы",
+    "признак включённости лота - флажок active с пометкой checked",
+    "поле form_created_at: десять цифр, метка времени сборки формы"
+  ],
+  "why_it_matters": "Форма правки предложения. Снята ЧТЕНИЕМ, без единой записи на площадке: прежде имена полей и имя метода в адресе были замаскированы, и добыть их предлагалось настоящим сохранением лота."
+}

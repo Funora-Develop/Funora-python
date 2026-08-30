@@ -1,0 +1,34 @@
+{
+  "captured_at": "2026-08-30T20:19:40+00:00",
+  "captured_format": "structural-skeleton-v8",
+  "classification": "ok",
+  "classification_provisional": false,
+  "classification_reason": "identity_confirmed",
+  "content_length": 91665,
+  "converted": false,
+  "counted": {
+    "avatar_editor_nodes": 0,
+    "continue_button_hidden": false,
+    "reviews_shown": 25,
+    "reviews_with_author": 0,
+    "reviews_with_order_link": 0,
+    "showcase_rows": 51,
+    "showcase_rows_per_section": [
+      20,
+      13,
+      9,
+      9
+    ],
+    "showcase_sections": 4
+  },
+  "elapsed_ms": 333,
+  "final_url": "https://funpay.com/users/{n}/",
+  "format": "structural-skeleton-v8",
+  "http_status": 200,
+  "locale": "ru",
+  "note": "Структурный скелет: текст заменён подписями, сегменты путей с идентификаторами обезличены. Сырой HTML не сохраняется.",
+  "note_foreign": "ЧУЖОЙ профиль, а не собственный. Разбор отзывов до сих пор проверялся только на своём, где есть узлы, которых у чужого нет вовсе: редактор аватара, имя автора отзыва, ссылка на заказ. Проверка на своём и объявляла наблюдёнными поля, которых у чужого нет.",
+  "path": "/users/{n}/",
+  "redirects": 0,
+  "why_it_is_public": "Страница видна любому посетителю без входа. В скелете текста нет: имена, тексты отзывов и суммы заменены подписями, идентификаторы обезличены."
+}

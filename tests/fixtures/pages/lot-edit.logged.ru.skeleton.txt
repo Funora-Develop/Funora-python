@@ -1,0 +1,654 @@
+<html lang="ru">
+  <head>
+    <meta charset="T5:adp#1"/>
+    <title>
+      T35:acps
+    </title>
+    <link href="https://funpay.com/{n1}/css/main.css" media="T3:a#1" rel="T10:a#1"/>
+    <script src="https://funpay.com/{n2}/js/app.bundle.js"></script>
+    <script src="https://funpay.com/{n2}/js/lots.min.js"></script>
+    <script src="https://funpay.com/{n2}/js/jquery-ui.min.js"></script>
+    <meta content="T35:adps#1" name="viewport"/>
+    <link href="https://funpay.com/lots/offerEdit?{q1}" hreflang="ru" rel="T9:a#2"/>
+    <link href="https://funpay.com/lots/offerEdit?{q1}" hreflang="uk" rel="T9:a#2"/>
+    <link href="https://funpay.com/en/lots/offerEdit?{q1}" hreflang="en" rel="T9:a#2"/>
+    <link href="https://funpay.com/en/lots/offerEdit?{q1}" hreflang="T9:ap#1" rel="T9:a#2"/>
+    <script type="T19:ap#1"></script>
+    <link as="T4:a#1" crossorigin href="/{n1}/fonts/{n3}" rel="T7:a#3" type="T10:adp#2"/>
+    <link as="T4:a#1" crossorigin href="/{n1}/fonts/{n4}" rel="T7:a#3" type="T10:adp#2"/>
+    <link href="/manifest.json" rel="T8:a#4"/>
+  </head>
+  <body class="with-corner-cd" data-app-data="{&quot;csrf-token&quot;: &quot;T16:ad&quot;, &quot;locale&quot;: &quot;T2:a&quot;, &quot;runnerCoordId&quot;: &quot;T35:adp&quot;, &quot;uploadOptions&quot;: {&quot;fileSizeMax&quot;: &quot;T7:d&quot;, &quot;fileSizeMaxStr&quot;: &quot;T4:cds&quot;}, &quot;userId&quot;: &quot;T8:d&quot;, &quot;webpush&quot;: {&quot;app&quot;: &quot;T11:adp&quot;}}">
+    <script></script>
+    <script type="T15:ap#3"></script>
+    <div class="wrapper">
+      <div class="wrapper-content">
+        <div class="corner-cd-container">
+          <div class="corner-cd">
+            <img alt src="https://sfunpay.com/{t}/{t}/{t}/{t}/{t}"/>
+          </div>
+        </div>
+        <header id="T6:a#1">
+          <div class="container">
+            <div id="T13:ap#2"></div>
+            <nav class="navbar navbar-default">
+              <div class="hide-navbar"></div>
+              <div class="container-fluid">
+                <div class="navbar-header">
+                  <button aria-expanded="T5:a#1" class="collapsed navbar-toggle navbar-toggle-logged" data-target="T7:ap#1" data-toggle="T8:a#1" type="T6:a#4">
+                    <span class="user-link-photo">
+                      <img alt src="https://sfunpay.com/{t}/{t}/{t}/{t}/{t}"/>
+                    </span>
+                    <span class="caret"></span>
+                  </button>
+                  <a class="navbar-xs-icon icon-chat" href="https://funpay.com/chat/">
+                    <svg viewBox="T9:ds#1">
+                      <circle cx="T2:d#1" cy="T2:d#1" r="T2:d#1"></circle>
+                      <polygon points="T19:dps#1"></polygon>
+                    </svg>
+                    <span></span>
+                  </a>
+                  <a class="navbar-brand" href="https://funpay.com/">
+                    <img alt="T6:a#1" class="logo-white" src="/img/layout/logo-funpay-white.svg"/>
+                    <img alt="T6:a#1" class="logo-color" src="/img/layout/logo-funpay.svg"/>
+                  </a>
+                  <form action="https://funpay.com/games/promoFilter" class="navbar-form navbar-left dropdown promo-games-filter" method="T4:a#1">
+                    <div class="form-group">
+                      <input autocomplete="T3:a#1" class="form-control dropdown-toggle" data-toggle="T8:a#2" name="query" placeholder="T18:cds#1" role="T9:a#1" type="T4:a#5"/>
+                      <div class="dropdown-menu dropdown-autocomplete hidden"></div>
+                    </div>
+                    <button class="btn btn-link" type="T6:a#6">
+                      <i class="fa fa-search"></i>
+                    </button>
+                  </form>
+                </div>
+                <div class="nav-container">
+                  <div class="collapse navbar-collapse no-transition" id="T6:a#3">
+                    <ul class="nav navbar-nav">
+                      <li class="visible-xs visible-sm">
+                        <a class="user-link-dropdown" href="https://funpay.com/users/{n5}/">
+                          <div class="user-link-name">
+                            T8:a
+                          </div>
+                          <div class="user-link-desc">
+                            T7:c
+                          </div>
+                        </a>
+                      </li>
+                      <li class="dropdown">
+                        <a aria-expanded="T5:a#1" aria-haspopup="T4:a#1" class="menu-item-info dropdown-toggle" data-toggle="T8:a#2" href="https://funpay.com/" role="T6:a#2">
+                          T6:c
+                          <span class="caret"></span>
+                        </a>
+                        <ul class="dropdown-menu">
+                          <li>
+                            <a class="menu-item-trade_info" href="https://funpay.com/trade/info">
+                              T7:c
+                            </a>
+                          </li>
+                          <li>
+                            <a class="menu-item-support" href="https://support.funpay.com/" target="T6:ap#1">
+                              T12:cs
+                            </a>
+                          </li>
+                          <li>
+                            <a class="menu-item-request" href="https://support.funpay.com/tickets/new" target="T6:ap#1">
+                              T16:cs
+                            </a>
+                          </li>
+                          <li>
+                            <a class="menu-item-requests" href="https://support.funpay.com/tickets" target="T6:ap#1">
+                              T11:cs
+                            </a>
+                          </li>
+                        </ul>
+                      </li>
+                      <li>
+                        <a class="menu-item-lootery" href="https://funpay.com/promo/lootery">
+                          T7:c
+                        </a>
+                      </li>
+                    </ul>
+                    <ul class="nav navbar-nav navbar-right logged">
+                      <li>
+                        <a class="menu-item-orders" href="https://funpay.com/orders/">
+                          T7:c
+                          <span class="badge badge-orders hidden">
+                            T1:d
+                          </span>
+                        </a>
+                      </li>
+                      <li>
+                        <a class="menu-item-trade" href="https://funpay.com/orders/trade">
+                          T7:c
+                          <span class="badge badge-trade">
+                            T2:d
+                          </span>
+                        </a>
+                      </li>
+                      <li>
+                        <a class="menu-item-chat" href="https://funpay.com/chat/">
+                          T9:c
+                          <span class="badge badge-chat hidden">
+                            T1:d
+                          </span>
+                        </a>
+                      </li>
+                      <li>
+                        <a class="menu-item-balance" href="https://funpay.com/account/balance">
+                          T7:c
+                          <span class="badge badge-balance">
+                            T4:dos
+                          </span>
+                        </a>
+                      </li>
+                      <li class="dropdown hidden-sm hidden-xs">
+                        <a aria-expanded="T5:a#1" aria-haspopup="T4:a#1" class="dropdown-toggle user-link" data-toggle="T8:a#2" href="{n6}" role="T6:a#2">
+                          <div class="user-link-photo">
+                            <img alt src="https://sfunpay.com/{t}/{t}/{t}/{t}/{t}"/>
+                          </div>
+                          <span class="caret"></span>
+                        </a>
+                        <ul class="dropdown-menu">
+                          <li>
+                            <a class="user-link-dropdown" href="https://funpay.com/users/{n5}/">
+                              <div class="user-link-name">
+                                T8:a
+                              </div>
+                              <div class="user-link-desc">
+                                T7:c
+                              </div>
+                            </a>
+                          </li>
+                          <li>
+                            <a class="menu-item-settings" href="https://funpay.com/account/settings">
+                              T9:c
+                            </a>
+                          </li>
+                          <li class="dropdown">
+                            <a class="dropdown-toggle menu-item-langs" data-toggle="T8:a#2" href="{n6}">
+                              T9:cp
+                              <i class="menu-icon menu-icon-lang-ru"></i>
+                              <span class="caret"></span>
+                            </a>
+                            <ul class="dropdown-menu">
+                              <li>
+                                <a class="menu-item-lang" href="https://funpay.com/lots/offerEdit?{q2}">
+                                  T7:a
+                                  <i class="menu-icon menu-icon-lang-en"></i>
+                                </a>
+                              </li>
+                            </ul>
+                          </li>
+                          <li class="dropdown">
+                            <a class="dropdown-toggle menu-item-currencies" data-toggle="T8:a#2" href="{n6}">
+                              T5:c
+                              <span class="caret"></span>
+                            </a>
+                            <ul class="dropdown-menu">
+                              <li>
+                                <a class="user-cy-switcher menu-item-currency" data-cy="T3:a#1" href="{n6}">
+                                  T7:c
+                                </a>
+                              </li>
+                              <li>
+                                <a class="user-cy-switcher menu-item-currency" data-cy="T3:a#2" href="{n6}">
+                                  T4:c
+                                </a>
+                              </li>
+                            </ul>
+                          </li>
+                          <li>
+                            <a class="menu-item-logout" href="https://funpay.com/account/logout?{q3}">
+                              T5:c
+                            </a>
+                          </li>
+                        </ul>
+                      </li>
+                      <li class="visible-xs visible-sm">
+                        <a class="menu-item-settings" href="https://funpay.com/account/settings">
+                          T9:c
+                        </a>
+                      </li>
+                      <li class="visible-xs visible-sm dropdown">
+                        <a class="dropdown-toggle menu-item-langs" data-toggle="T8:a#2" href="{n6}">
+                          T9:cp
+                          <i class="menu-icon menu-icon-lang-ru"></i>
+                          <span class="caret"></span>
+                        </a>
+                        <ul class="dropdown-menu">
+                          <li>
+                            <a class="menu-item-lang" href="https://funpay.com/lots/offerEdit?{q2}">
+                              T7:a
+                              <i class="menu-icon menu-icon-lang-en"></i>
+                            </a>
+                          </li>
+                        </ul>
+                      </li>
+                      <li class="visible-xs visible-sm dropdown">
+                        <a class="dropdown-toggle menu-item-currencies" data-toggle="T8:a#2" href="{n6}">
+                          T5:c
+                          <span class="caret"></span>
+                        </a>
+                        <ul class="dropdown-menu">
+                          <li>
+                            <a class="user-cy-switcher menu-item-currency" data-cy="T3:a#1" href="{n6}">
+                              T7:c
+                            </a>
+                          </li>
+                          <li>
+                            <a class="user-cy-switcher menu-item-currency" data-cy="T3:a#2" href="{n6}">
+                              T4:c
+                            </a>
+                          </li>
+                        </ul>
+                      </li>
+                      <li class="visible-xs visible-sm">
+                        <a class="menu-item-logout" href="https://funpay.com/account/logout?{q3}">
+                          T5:c
+                        </a>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </nav>
+            <div class="hidden" data-message="T1:d#1" id="T17:ap#4">
+              <audio class="loud">
+                <source src="/audio/{n7}" type="T10:ap#7"/>
+              </audio>
+              <audio class="quiet">
+                <source src="/audio/{n8}" type="T10:ap#7"/>
+              </audio>
+            </div>
+            <div class="hidden" data-chat="T8:a#1" data-orders="T8:ad#1" id="T13:ap#5"></div>
+          </div>
+        </header>
+        <section id="T12:ap#6">
+          <div class="search-fade"></div>
+          <div class="content-lots content-lots-offeredit" id="T7:a#7">
+            <div class="container">
+              <div class="row">
+                <div class="col-md-2 col-sm-3">
+                  <div class="back-link">
+                    <a class="js-back-link" href="https://funpay.com/lots/{n9}/trade">
+                      <i class="fa fa-chevron-left"></i>
+                      <span class="inside">
+                        T5:c
+                      </span>
+                    </a>
+                  </div>
+                </div>
+                <div class="col-md-10 col-sm-9">
+                  <div class="page-content">
+                    <h1 class="page-header page-header-no-hr">
+                      T26:cs
+                    </h1>
+                    <form action="https://funpay.com/lots/offerSave" class="form-offer-editor" data-offer="{&quot;amount&quot;: &quot;T1:d&quot;}" method="T4:a#1">
+                      <input name="csrf_token" type="T6:a#8" value="T16:ad#1"/>
+                      <input name="form_created_at" type="T6:a#8" value="T10:d#2"/>
+                      <input name="offer_id" type="T6:a#8" value="T8:d#3"/>
+                      <input name="node_id" type="T6:a#8" value="T4:d#4"/>
+                      <input name="location" type="T6:a#8" value/>
+                      <input name="deleted" type="T6:a#8" value/>
+                      <div class="lot-fields" data-fields="T169:adp#1">
+                        <div class="lot-fields-multilingual">
+                          <ul class="nav nav-tabs">
+                            <li class="js-locale-switcher active" data-locale="T2:a#1">
+                              <a href="{n6}">
+                                T9:cp
+                              </a>
+                            </li>
+                            <li class="js-locale-switcher" data-locale="T2:a#2">
+                              <a href="{n6}">
+                                T12:cp
+                              </a>
+                            </li>
+                          </ul>
+                          <div class="form-group lot-field bg-light-color modal-custom-bg-block modal-custom-bg-block-top" data-id="T7:a#1" data-locale="T2:a#1">
+                            <label class="control-label">
+                              T16:cs
+                            </label>
+                            <input class="form-control lot-field-input" name="fields[summary][ru]" type="T4:a#5" value="T90:acdops#5"/>
+                            <p class="help-block">
+                              T28:cs
+                            </p>
+                          </div>
+                          <div class="form-group lot-field bg-light-color modal-custom-bg-block hidden" data-id="T7:a#1" data-locale="T2:a#2">
+                            <label class="control-label">
+                              T17:as
+                            </label>
+                            <input class="form-control lot-field-input" name="fields[summary][en]" type="T4:a#5" value="T74:adps#6"/>
+                            <p class="help-block">
+                              T29:as
+                            </p>
+                          </div>
+                          <div class="form-group lot-field bg-light-color modal-custom-bg-block" data-id="T4:a#2" data-locale="T2:a#1">
+                            <label class="control-label">
+                              T18:cs
+                            </label>
+                            <textarea class="form-control lot-field-input" name="fields[desc][ru]" rows="T1:d#1">
+                              T1342:acdops
+                            </textarea>
+                            <p class="help-block">
+                              T18:cs
+                            </p>
+                          </div>
+                          <div class="form-group lot-field bg-light-color modal-custom-bg-block hidden" data-id="T4:a#2" data-locale="T2:a#2">
+                            <label class="control-label">
+                              T20:as
+                            </label>
+                            <textarea class="form-control lot-field-input" name="fields[desc][en]" rows="T1:d#1">
+                              T1027:adps
+                            </textarea>
+                            <p class="help-block">
+                              T8:a
+                            </p>
+                          </div>
+                          <div class="form-group lot-field bg-light-color modal-custom-bg-block" data-id="T11:ap#3" data-locale="T2:a#1">
+                            <label class="control-label">
+                              T33:cs
+                            </label>
+                            <textarea class="form-control lot-field-input" name="fields[payment_msg][ru]" rows="T1:d#1">
+                              T455:acdops
+                            </textarea>
+                            <p class="help-block">
+                              T56:cps
+                            </p>
+                          </div>
+                          <div class="form-group lot-field bg-light-color modal-custom-bg-block hidden" data-id="T11:ap#3" data-locale="T2:a#2">
+                            <label class="control-label">
+                              T34:as
+                            </label>
+                            <textarea class="form-control lot-field-input" name="fields[payment_msg][en]" rows="T1:d#1">
+                              T630:adps
+                            </textarea>
+                            <p class="help-block">
+                              T37:aps
+                            </p>
+                          </div>
+                        </div>
+                        <div class="form-group lot-field" data-id="T6:a#4">
+                          <label class="control-label">
+                            T8:c
+                          </label>
+                          <input class="lot-field-input" name="fields[images]" type="T6:a#8" value/>
+                          <div class="attachments-box">
+                            <ul class="attachments-list">
+                              <li class="attachments-item attachments-new">
+                                <i class="fas fa-camera"></i>
+                              </li>
+                            </ul>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="form-group has-feedback w-200px">
+                        <label class="control-label">
+                          T4:c
+                        </label>
+                        <input autocomplete="T3:a#1" class="form-control" inputmode="T7:a#1" name="price" type="T4:a#5" value="T5:dp#7"/>
+                        <span class="form-control-feedback">
+                          T1:o
+                        </span>
+                      </div>
+                      <div class="form-group js-calc-table">
+                        <label>
+                          T20:cs
+                        </label>
+                        <table class="table-buyers-prices">
+                          <tbody class="js-calc-table-body">
+                            <tr>
+                              <th>
+                                T19:acs
+                              </th>
+                              <td>
+                                T6:dops
+                              </td>
+                            </tr>
+                            <tr>
+                              <th>
+                                T19:acs
+                              </th>
+                              <td>
+                                T8:dps
+                              </td>
+                            </tr>
+                            <tr>
+                              <th>
+                                T19:acs
+                              </th>
+                              <td>
+                                T8:dops
+                              </td>
+                            </tr>
+                            <tr>
+                              <th>
+                                T18:acps
+                              </th>
+                              <td>
+                                T6:dops
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                      <div class="form-group">
+                        <div class="checkbox">
+                          <label>
+                            <input checked name="active" type="T8:a#9"/>
+                            <i></i>
+                            T8:c
+                          </label>
+                        </div>
+                        <input name="deactivate_after_sale" type="T6:a#8" value/>
+                        <div class="checkbox">
+                          <label>
+                            <input checked name="deactivate_after_sale" type="T8:a#9"/>
+                            <i></i>
+                            T28:cs
+                          </label>
+                        </div>
+                      </div>
+                      <div class="margin-top">
+                        <button class="btn btn-primary btn-block js-btn-save" type="T6:a#6">
+                          T9:c
+                        </button>
+                        <button class="btn btn-danger btn-block js-btn-delete" data-text-confirm="T20:cs#1" type="T6:a#6">
+                          T7:c
+                        </button>
+                        <button class="btn btn-default btn-block hidden js-btn-delete-cancel" type="T6:a#6">
+                          T17:cs
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+      <div class="wrapper-footer">
+        <div class="container">
+          <footer id="T6:a#8">
+            <div class="footer-block footer-block-strings">
+              <span>
+                T18:ados
+              </span>
+              <a href="https://funpay.com/pages/privacyPolicy">
+                T27:cs
+              </a>
+              <a href="https://funpay.com/pages/cookiePolicy">
+                T15:acs
+              </a>
+              <a href="https://funpay.com/contacts.html" rel="T8:a#5" target="T6:ap#1">
+                T8:c
+              </a>
+            </div>
+            <div class="footer-block footer-block-social">
+              <a class="btn btn-gray btn-round" href="https://telegram.me/{t}" rel="T8:a#5" target="T6:ap#1">
+                <svg height="T2:d#1" width="T2:d#1">
+                  <use href="/{n10}/img/layout/sprites.svg#social-logo-telegram"></use>
+                </svg>
+              </a>
+              <a class="btn btn-gray btn-round" href="https://www.youtube.com/{t}/{t}" rel="T8:a#5" target="T6:ap#1">
+                <i class="fab fa-youtube"></i>
+              </a>
+              <a class="btn btn-gray btn-round" href="https://vk.com/{t}" rel="T8:a#5" target="T6:ap#1">
+                <i class="fab fa-vk"></i>
+              </a>
+            </div>
+            <div class="footer-block footer-block-als">
+              <img alt src="/img/layout/als-logo.svg"/>
+              <div>
+                T11:c
+                <br/>
+                T1:c
+                <a href="https://www.artlebedev.ru/{t}/" target="T6:ap#1">
+                  T14:cs
+                  <br/>
+                  T8:c
+                </a>
+              </div>
+            </div>
+          </footer>
+        </div>
+      </div>
+    </div>
+    <div class="container">
+      <div class="banner-cookie-consent">
+        <div class="cc-text">
+          T296:acps
+          <a href="https://funpay.com/pages/cookiePolicy" target="T6:ap#1">
+            T16:acs
+          </a>
+          T1:p
+        </div>
+        <div class="cc-buttons">
+          <button class="btn btn-primary btn-block-mobile cc-accept-all" type="T6:a#4">
+            T11:cs
+          </button>
+          <button class="btn btn-gray btn-block-mobile cc-options" type="T6:a#4">
+            T9:c
+          </button>
+        </div>
+      </div>
+    </div>
+    <div aria-hidden="T4:a#1" class="modal fade modal-cookie-consent" role="T6:a#3" tabindex="T2:dp#1">
+      <div class="modal-dialog">
+        <button aria-label="T5:a#1" class="close" data-dismiss="T5:a#1" type="T6:a#4">
+          <i class="fas fa-times"></i>
+        </button>
+        <div class="modal-content">
+          <div class="modal-header">
+            <h4 class="h1 modal-title">
+              T23:acs
+            </h4>
+          </div>
+          <div class="modal-body">
+            <p>
+              T575:acps
+            </p>
+            <p>
+              T130:acps
+              <a href="https://funpay.com/pages/cookiePolicy" target="T6:ap#1">
+                T15:acs
+              </a>
+              T1:c
+              <a href="https://funpay.com/pages/privacyPolicy" target="T6:ap#1">
+                T27:cs
+              </a>
+              T77:cps
+              <a href="https://funpay.com/pages/dsar" target="T6:ap#1">
+                T55:cs
+              </a>
+              T1:p
+            </p>
+            <hr/>
+            <div class="checkbox">
+              <label>
+                <input checked disabled name="cc-option-essential" type="T8:a#9"/>
+                <i></i>
+                <strong>
+                  T25:acs
+                </strong>
+              </label>
+            </div>
+            <div class="checkbox-indent">
+              <p>
+                T213:acps
+              </p>
+              <div class="panel panel-default">
+                <div class="panel-heading">
+                  <h4 class="panel-title">
+                    <a data-toggle="T8:a#1" href="#cookie-details-essential" role="T6:a#2">
+                      T33:cps
+                    </a>
+                  </h4>
+                </div>
+                <div class="panel-collapse collapse" id="T24:ap#9">
+                  <div class="panel-body">
+                    <p>
+                      T1:o
+                      <strong>
+                        T9:a
+                      </strong>
+                      T348:acops
+                    </p>
+                    <p>
+                      T1:o
+                      <strong>
+                        T10:ap
+                      </strong>
+                      T211:acdops
+                    </p>
+                    <p>
+                      T1:o
+                      <strong>
+                        T6:a
+                      </strong>
+                      T5:cos
+                      <strong>
+                        T2:a
+                      </strong>
+                      T195:acdops
+                    </p>
+                    <p>
+                      T1:o
+                      <strong>
+                        T12:ap
+                      </strong>
+                      T142:acdops
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="checkbox">
+              <label>
+                <input name="cc-option-analytics" type="T8:a#9"/>
+                <i></i>
+                <strong>
+                  T38:acs
+                </strong>
+              </label>
+            </div>
+            <div class="checkbox-indent">
+              <p class="mb0">
+                T508:acps
+              </p>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-gray cc-save" data-dismiss="T5:a#1" type="T6:a#4">
+              T9:c
+            </button>
+            <button class="btn btn-primary cc-accept-all" data-dismiss="T5:a#1" type="T6:a#4">
+              T11:cs
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
