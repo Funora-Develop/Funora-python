@@ -24,8 +24,15 @@
 
 ## Status: `draft`
 
-There is no released package and nothing to install yet. Three read operations
-work; the contract is not stabilised and still changes.
+There is no released package and nothing to install yet. The contract is not
+stabilised and still changes.
+
+Fourteen operations work: thirteen reads and one write - sending text.
+
+**The guide lives in [docs/index.md](docs/index.md).** It builds into a site
+(`mkdocs serve`) and is checked by the same run as the code: examples are parsed
+by the interpreter, links are resolved, and every operation it mentions is looked
+up on a real client.
 
 ## What this is
 
@@ -56,15 +63,36 @@ async with AsyncClient(EnvSecretProvider()) as client:
         print(order.order_id, order.description_text)
 ```
 
-## What already reads
+## What already works
 
 | Operation | Returns |
 |---|---|
-| `client.orders.list()` | the order list as reduced records |
+| `client.orders.list()` | the sales list as reduced records |
+| `client.orders.get(order_id)` | one order in full |
 | `client.chats.list()` | the dialog list |
-| `client.chats.thread(id)` | a conversation with message origin resolved |
+| `client.chats.thread(node_id)` | a conversation with message origin resolved |
+| `client.chats.send_text(node_id, text)` | a send receipt carrying the outcome |
+| `client.lots.list_own(node_id)` | your own lots in a section, with offer ids |
+| `client.lots.showcase(user_id)` | a seller showcase, by section |
+| `client.reviews.get(user_id)` | reviews |
+| `client.account.get()` | the account identity |
+| `client.account.refresh()` | the same, re-read |
+| `client.account.health()` | whether the session is usable |
+| `client.account.balance()` | balance and transactions |
+| `client.account.capabilities()` | which of the declared capabilities are available |
+| `client.catalog.categories()` | the marketplace sections |
 
-Write operations are not implemented. This is a read-only SDK for now.
+There is exactly one write operation - sending text - and it has [its own guide
+chapter](docs/guide/sending.md): a send has three outcomes rather than two, and
+the third one, "unknown", is what the chapter is about.
+
+The public section listing is parsed too, but has no operation: the `Offer` model
+requires an id, a price and a category, and the page carries none of the three.
+
+Sending an image, marking read and four lot write operations are declared by the
+contract and not written: nobody has observed the requests the marketplace makes
+for them. Calling them raises `NotImplementedOperationError` - a refusal from
+Funora itself, not a built-in Python error.
 
 ## What the SDK cannot do, and why that is stated here
 

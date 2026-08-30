@@ -1,0 +1,114 @@
+# Сборка руководства.
+#
+# Руководство лежит рядом с кодом нарочно. Документация, живущая в отдельном
+# репозитории, расходится с кодом молча: правку вносят там, где правят код, а
+# вспоминают о ней там, где её нет.
+#
+# Здесь она в том же дереве и проверяется тем же прогоном: примеры разбираются
+# интерпретатором, ссылки разрешаются, обещанные операции ищутся на клиенте.
+# Обещание, которое перестало выполняться, роняет сборку.
+#
+# Локальный просмотр:
+#   .venv\Scripts\python.exe -m pip install -e ".[docs]"
+#   .venv\Scripts\python.exe -m mkdocs serve
+
+site_name: Funora для Python
+site_description: Руководство по неофициальному SDK для площадки FunPay
+site_url: https://funora-develop.github.io/Funora-python/
+repo_url: https://github.com/Funora-Develop/Funora-python
+repo_name: Funora-Develop/Funora-python
+edit_uri: edit/main/docs/
+copyright: Apache-2.0 &copy; Funora Contributors
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  language: ru
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - content.code.annotate
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: deep orange
+      toggle:
+        icon: material/weather-night
+        name: Тёмная тема
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: deep orange
+      toggle:
+        icon: material/weather-sunny
+        name: Светлая тема
+
+# Ссылки проверяет не сборщик сайта, а прогон.
+#
+# Разделы «Внутреннее устройство» ссылаются на исходники - ../src/funora/_client.py
+# и подобное. На GitHub такая ссылка работает, в собранном сайте её цели нет, и
+# сборщик считает её битой.
+#
+# Убирать ссылки, чтобы угодить сборщику, значило бы ухудшить документ ради
+# инструмента. Поэтому проверка перенесена туда, где она СИЛЬНЕЕ:
+# tests/test_docs.py разрешает каждую относительную ссылку по настоящему дереву
+# репозитория - и исходники в нём есть.
+validation:
+  links:
+    not_found: info
+    absolute_links: info
+    unrecognized_links: info
+  nav:
+    omitted_files: warn
+    not_found: warn
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+nav:
+  - Введение: index.md
+  - Начало работы:
+      - guide/install.md
+      - guide/secret.md
+      - guide/first-run.md
+  - Как читать ответы:
+      - guide/pages.md
+      - guide/observed.md
+      - guide/errors.md
+  - Операции:
+      - guide/orders.md
+      - guide/chats.md
+      - guide/sending.md
+      - guide/lots.md
+      - guide/account.md
+  - Долгая работа:
+      - guide/events.md
+      - guide/budget.md
+      - guide/async.md
+  - Внутреннее устройство:
+      - architecture.md
+      - observations.md
+      - observing.md
+      - protocol-questions.md
+      - limits.md
