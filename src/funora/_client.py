@@ -25,7 +25,7 @@ from ._account import BalancePage
 from ._budget import Budget
 from ._catalog import CatalogPage
 from ._chats import ChatsPage
-from ._engine import Deliver, Engine, Fetch, Pause, Reply, Request
+from ._engine import Deliver, Engine, Fetch, Pause, Reply, Request, Submit
 from ._host import host_of
 from ._identity import REGISTRY
 from ._observed import Observed
@@ -34,6 +34,7 @@ from ._orders import OrdersPage
 from ._poll import Schedule
 from ._proxies import DEFAULT_ACCOUNT, Proxy, ProxyPool
 from ._reviews import ReviewsPage
+from ._runner import SendResult
 from ._secret import Secret, SecretProvider
 from ._showcase import ShowcasePage
 from ._thread import Thread
@@ -143,6 +144,35 @@ class ChatsService:
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
         return self._client.run(self._client.engine.read_chats())
+
+    def send_text(self, node_id: str, text: str, *, declared_cold: bool = False) -> SendResult:
+        """Отправляет текстовое сообщение в переписку.
+
+        ИСКЛЮЧЕНИЕ ОЗНАЧАЕТ, ЧТО СООБЩЕНИЕ НЕ УШЛО. Всё, что случилось после
+        ухода запроса, возвращается исходом: у неоднозначного исхода есть своё
+        значение, и брошенное исключение прочиталось бы как неудача.
+
+        ИСХОДА ТРИ, и третий - честное незнание. Читать его надо признаком
+        is_confirmed, а не истинностью самой квитанции: у неё три значения, и
+        `if result` прочло бы неподтверждённое как успех.
+
+        Args:
+            node_id (str): Числовой идентификатор диалога.
+            text (str): Текст сообщения.
+            declared_cold (bool): Признание, что переписка холодная и вы пишете
+                первым. Без него холодное обращение отвергается: отсутствие
+                входящего в окне - положительный признак холода.
+
+        Returns:
+            SendResult: Исход, причина и прочитанное из ответа.
+
+        Raises:
+            FunoraError: Если отправка не состоялась - страница непригодна,
+                упёрлись в предел, отказала сеть до ухода запроса.
+        """
+        return self._client.run(
+            self._client.engine.send_text(node_id, text, declared_cold=declared_cold)
+        )
 
     def thread(self, node_id: str) -> Thread:
         """Читает переписку одного диалога.
@@ -639,6 +669,13 @@ class Client:
             elif isinstance(request, Fetch):
                 try:
                     reply = self._fetch(request.path)
+                except FunoraError as exc:
+                    failure = exc
+            elif isinstance(request, Submit):
+                # Отправка идёт мимо _fetch нарочно: у записи своё правило -
+                # переход в ответ на неё не повторяется.
+                try:
+                    reply = self._fetcher.submit(request.path, request.fields, request.headers)
                 except FunoraError as exc:
                     failure = exc
             elif isinstance(request, Deliver):

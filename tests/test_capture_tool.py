@@ -1627,3 +1627,28 @@ def test_the_subscription_refuses_without_the_dialogue_tag() -> None:
 
     assert out["sent"] == 0, "сообщение ушло без метки подписки"
     assert "data-tag" in out["refused"], out["refused"]
+
+
+def test_the_sending_probe_reports_which_subscription_it_used() -> None:
+    """Требует, чтобы ответ команды называл вид подписки.
+
+    Первая редакция говорила «отправка с пустой подпиской сделана» ВСЕГДА, даже
+    с довеском. Наблюдатель, читающий консоль, записал бы наблюдение не тем,
+    чем оно есть, - а различаются эти два наблюдения ровно подпиской.
+
+    Returns:
+        None
+    """
+    out = _in_browser(
+        """
+        funora.watch()
+        const empty = await funora.probeSend('раз')
+        const one = await funora.probeSend('два', {subscribe: true})
+        answer({empty, one})
+        """,
+        html=WITH_DIALOGUE,
+    )
+
+    assert "пуст" in out["empty"], out["empty"]
+    assert "пуст" not in out["one"], out["one"]
+    assert "узел" in out["one"], out["one"]

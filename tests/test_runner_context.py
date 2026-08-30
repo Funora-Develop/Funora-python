@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Final
 
@@ -199,18 +200,65 @@ def test_the_position_comes_from_the_dialogue_carrier_not_the_own_one() -> None:
     )
 
 
-def test_a_v8_thread_page_is_fit_for_sending_and_says_so() -> None:
-    """Требует, чтобы признак пригодности БЫВАЛ истинным.
+def _with_real_position(html: str) -> str:
+    """Подставляет НАСТОЯЩЕЕ число вместо подписи позиции.
 
-    До 29.08.2026 проверен был только отрицательный случай: на всех фикстурах
-    can_send выходил ложным, и по разным причинам. Признак, который не бывает
-    истинным ни разу, проверен наполовину - и половина эта та, что не ловит
-    ошибку «никогда не годится».
+    Скелет маскирует числа подписями, и позиция последнего сообщения на снимке
+    выглядит как «T10:d#1». В запрос же она уходит числом - так наблюдено.
+
+    Подстановка нужна затем, что иначе положительный случай отправки на
+    фикстуре недостижим вовсе, а проверен только отрицательный. Это тот же
+    затор, что уже трижды за проект: разбор, который нельзя проверить на
+    фикстуре, не проверен ничем.
+
+    Аргументы:
+        html (str): разметка снимка.
+
+    Возвращает:
+        str: разметка с числовой позицией у открытой строки.
+    """
+    at = html.index("contact-item active")
+    end = html.index(">", at)
+    row = html[at:end]
+    fixed = re.sub(r'data-node-msg="[^"]*"', 'data-node-msg="2010613313"', row, count=1)
+    assert fixed != row, "позиция не подставилась"
+    return html[:at] + fixed + html[end:]
+
+
+def test_a_masked_position_makes_the_page_unfit_and_says_why() -> None:
+    """Требует отвергнуть страницу, где позиция прочитана не числом.
+
+    В запрос позиция уходит ЧИСЛОМ - так наблюдено. Значение не из цифр
+    означает, что прочитано не то: на снимке там подпись скелета, на живой
+    странице - изменилась разметка.
+
+    Собрать запрос из этого нельзя, и молчать нельзя тоже: негодная позиция
+    ушла бы на площадку.
 
     Возвращает:
         None
     """
     context = parse_runner_context(_page(THREAD_V8))
+
+    assert context.can_send is False
+    assert "last_message_not_numeric" in {one.code for one in context.defects}
+
+    # Прочее при этом читается: страница исправна, замаскирован один атрибут.
+    assert context.node_name.is_observed
+    assert context.chat_tag.is_observed
+    assert context.csrf_token is not None
+
+
+def test_a_v8_thread_page_is_fit_for_sending_and_says_so() -> None:
+    """Требует, чтобы признак пригодности БЫВАЛ истинным.
+
+    Признак, который не бывает истинным ни разу, проверен наполовину - и
+    половина эта та, что не ловит ошибку «никогда не годится».
+
+    Возвращает:
+        None
+    """
+    context = parse_runner_context(_with_real_position(_page(THREAD_V8)))
 
     assert context.can_send is True, [one.code for one in context.defects]
     assert not context.defects, [one.code for one in context.defects]
@@ -228,6 +276,7 @@ def test_a_v8_thread_page_is_fit_for_sending_and_says_so() -> None:
         context.last_message,
     ):
         assert field.is_observed, field.reason
+    assert context.last_message.value.isdigit()
 
 
 def test_the_token_of_a_fit_page_never_leaks_into_its_repr() -> None:
@@ -239,7 +288,7 @@ def test_the_token_of_a_fit_page_never_leaks_into_its_repr() -> None:
     Возвращает:
         None
     """
-    context = parse_runner_context(_page(THREAD_V8))
+    context = parse_runner_context(_with_real_position(_page(THREAD_V8)))
     assert context.csrf_token is not None
     value = context.csrf_token.reveal()
 
