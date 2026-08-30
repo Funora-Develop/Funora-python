@@ -1,0 +1,131 @@
+"""Сопоставление заказа с собственным лотом.
+
+ЗАЧЕМ. Автовыдача обязана знать, ЧТО выдавать. Идентификатора предложения в
+заказе нет: ни строка списка продаж, ни страница заказа его не несут. Есть
+только описание - свободный текст, который продавец написал у лота, а площадка
+показала в заказе.
+
+Значит вывод, а не наблюдение, и уверенность у результата всегда выведенная.
+
+ПОЧЕМУ ЭТО ВСЁ ЖЕ ГОДИТСЯ. Круг кандидатов сужается СТРУКТУРНО, а не текстом: со
+страницы заказа приходит адрес раздела, и сравнивать приходится только с лотами
+этого раздела. Не «текст против текста по всей площадке», а «текст против текста
+внутри одного раздела, выбранного точно».
+
+ЧЕМ ЭТО ОТЛИЧАЕТСЯ ОТ ОБЫЧНОГО. Двусмысленность здесь - отказ, а не выбор.
+Готовое решение той же задачи берёт при нескольких совпадениях самое длинное;
+для выдачи товара это выбор наугад, и цена ошибки - чужой товар покупателю.
+"""
+
+from __future__ import annotations
+
+import unicodedata
+from dataclasses import dataclass
+from typing import Final
+
+from ._observed import Confidence, Observed
+
+__all__ = ["MatchOutcome", "match_offer", "normalized_for_match"]
+
+#: Причина, по которой лот не выбран: совпадений нет вовсе.
+NO_MATCH: Final[str] = "no_offer_matched"
+
+#: Причина: совпадений несколько, и они не вложены друг в друга.
+AMBIGUOUS: Final[str] = "offer_match_ambiguous"
+
+#: Причина: у заказа нет описания, сравнивать не с чем.
+NO_ORDER_TEXT: Final[str] = "order_description_not_observed"
+
+
+@dataclass(frozen=True, slots=True)
+class MatchOutcome:
+    """Чем кончилось сопоставление.
+
+    Attributes:
+        offer_id (Observed[str]): Идентификатор выбранного предложения.
+            Ненаблюдённый, если выбрать не удалось.
+        candidates (tuple[str, ...]): Идентификаторы всех подошедших
+            предложений. При отказе по двусмысленности их больше одного, и
+            перечень нужен человеку: по нему видно, какие именно лоты
+            неразличимы, и какой из них переименовать.
+    """
+
+    offer_id: Observed[str]
+    candidates: tuple[str, ...]
+
+
+def normalized_for_match(text: str) -> str:
+    """Приводит текст к виду, пригодному для сравнения.
+
+    Три действия, и каждое против своего вида расхождения. Совместимая
+    нормализация Unicode сводит разные записи одного знака к одной. Приведение
+    регистра снимает различие прописных и строчных. Схлопывание пробельных
+    последовательностей снимает разницу между одним пробелом, двумя и переводом
+    строки: площадка показывает текст в разметке, и переносы в нём случайны.
+
+    Аргументы:
+        text (str): Исходный текст.
+
+    Возвращает:
+        str: Текст, пригодный для сравнения.
+    """
+    return " ".join(unicodedata.normalize("NFKC", text).casefold().split())
+
+
+def match_offer(order_description: Observed[str], lots: dict[str, Observed[str]]) -> MatchOutcome:
+    """Ищет собственный лот, о котором идёт речь в заказе.
+
+    ИЩЕТСЯ ВХОЖДЕНИЕ ОПИСАНИЯ ЛОТА В ОПИСАНИЕ ЗАКАЗА, и только оно. Не
+    равенство: площадка дописывает к описанию заказа то, что выбрал покупатель.
+    Не обратное вхождение: описание заказа, оказавшееся внутри описания лота,
+    означало бы, что лот описан подробнее заказа, - а это признак не того лота.
+
+    ПУСТОЕ ОПИСАНИЕ ЛОТА НИКОГДА НЕ КАНДИДАТ. Пустая строка входит в любую, и
+    один лот с пустым описанием совпал бы разом со всеми заказами.
+
+    НЕСКОЛЬКО КАНДИДАТОВ - ОТКАЗ. Исключение ровно одно и оно проверяемо: если
+    все кандидаты вложены друг в друга одной цепочкой, берётся самый длинный.
+    Цепочка означает, что лоты описаны уточнением друг друга, и длиннейший
+    описывает точнее. Развилка - два лота, ни один из которых не уточняет
+    другого, - означает, что различить их нечем, и выбирать наугад нельзя.
+
+    Аргументы:
+        order_description (Observed[str]): Описание из строки списка продаж.
+        lots (dict[str, Observed[str]]): Описания собственных лотов по
+            идентификатору предложения.
+
+    Возвращает:
+        MatchOutcome: Выбранное предложение либо честная причина отказа.
+    """
+    if not order_description.is_observed or not order_description.value.strip():
+        return MatchOutcome(Observed.missing(NO_ORDER_TEXT), ())
+
+    haystack = normalized_for_match(order_description.value)
+
+    hits: list[tuple[str, str]] = []
+    for offer_id, description in lots.items():
+        if not description.is_observed:
+            continue
+        needle = normalized_for_match(description.value)
+        if not needle:
+            continue
+        if needle in haystack:
+            hits.append((offer_id, needle))
+
+    if not hits:
+        return MatchOutcome(Observed.missing(NO_MATCH), ())
+
+    if len(hits) == 1:
+        # Уверенность ВЫВЕДЕННАЯ, и другой у неё быть не может: правило
+        # опирается на текст, часть которого пишет не площадка.
+        return MatchOutcome(Observed.present(hits[0][0], Confidence.INFERRED), (hits[0][0],))
+
+    ordered = sorted(hits, key=lambda one: len(one[1]))
+    chained = all(ordered[index][1] in ordered[index + 1][1] for index in range(len(ordered) - 1))
+    if chained:
+        return MatchOutcome(
+            Observed.present(ordered[-1][0], Confidence.INFERRED),
+            tuple(one[0] for one in ordered),
+        )
+
+    return MatchOutcome(Observed.missing(AMBIGUOUS), tuple(sorted(one[0] for one in hits)))
