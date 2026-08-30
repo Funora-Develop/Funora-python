@@ -83,6 +83,7 @@ SOURCES: Final[frozenset[str]] = frozenset(
         "spec/protocol/response-classes.yaml",
         "spec/protocol/retry-policy.yaml",
         "spec/protocol/send-outcome.yaml",
+        "spec/protocol/reconciliation.yaml",
         "spec/runtime/budget.yaml",
         "spec/services/account.yaml",
         "spec/services/catalog.yaml",
@@ -502,6 +503,124 @@ def render_capabilities(spec: Path) -> str:
             f"    Capability.{_const(name)}: CapabilityState.{str(entry['initial']).upper()},\n"
         )
     out.append("}\n")
+
+    return "".join(out)
+
+
+def render_reconciliation(spec: Path) -> str:
+    """Порождает вердикты сверки и расписание чтений.
+
+    Args:
+        spec (Path): Корень рабочей копии Funora-spec.
+
+    Returns:
+        str: Содержимое модуля.
+
+    Raises:
+        SystemExit: Если порядок не объявлен нормативным, вердикт недостижим,
+            расписание не согласовано либо появился вердикт отрицания.
+    """
+    doc = _load(spec, "spec/protocol/reconciliation.yaml")
+    verdicts: dict[str, str] = doc["verdicts"]
+    pipeline = doc.get("pipeline", {})
+    steps = pipeline.get("steps") or []
+    schedule = doc.get("schedule") or {}
+
+    if pipeline.get("order_is_normative") is not True:
+        raise SystemExit(
+            "spec/protocol/reconciliation.yaml: порядок шагов обязан быть объявлен нормативным"
+        )
+
+    # Вердикта отрицания быть не должно. Отсутствие сообщения в истории -
+    # свидетельство отрицательное, и объявлять по нему «не отправлено» значит
+    # нарушить главное правило проекта в самом дорогом месте.
+    forbidden = {"not_delivered", "failed", "not_sent"}
+    named = set(verdicts) & forbidden
+    if named:
+        raise SystemExit(
+            f"spec/protocol/reconciliation.yaml: объявлены вердикты отрицания {sorted(named)}. "
+            "Отсутствие сообщения в истории - свидетельство отрицательное, и вердикт по "
+            "нему подтолкнул бы вызывающего отправить второй раз"
+        )
+
+    reached = {str(one.get("verdict_when_failed") or one.get("verdict")) for one in steps}
+    missing = set(verdicts) - reached
+    if missing:
+        raise SystemExit(
+            f"spec/protocol/reconciliation.yaml: вердикты {sorted(missing)} не достижимы "
+            "ни одним шагом"
+        )
+
+    reads = schedule.get("reads")
+    delays = schedule.get("delays_ms")
+    if not isinstance(reads, int) or reads < 1:
+        raise SystemExit("spec/protocol/reconciliation.yaml: schedule.reads не объявлен")
+    if not isinstance(delays, list) or len(delays) != reads:
+        raise SystemExit(
+            f"spec/protocol/reconciliation.yaml: пауз объявлено {len(delays or [])} при "
+            f"{reads} чтениях. Расхождение молчаливое: лишнюю паузу никто не выждет, "
+            "недостающую никто не заметит"
+        )
+    if any(not isinstance(one, int) or one <= 0 for one in delays):
+        raise SystemExit(
+            f"spec/protocol/reconciliation.yaml: паузы {delays} не все положительные целые. "
+            "Ноль означал бы чтение сразу после отправки - раньше, чем площадка успеет"
+        )
+    if list(delays) != sorted(delays):
+        raise SystemExit(
+            f"spec/protocol/reconciliation.yaml: паузы {delays} не возрастают. Растущая "
+            "пауза ловит и быстрый случай, и медленный; постоянная - только один из двух"
+        )
+
+    extra = (
+        "Сверка - ПРОЦЕДУРА НАБЛЮДЕНИЯ, а не петля управления. Она отвечает на\n"
+        "вопрос «что вышло из отправки» и ничего не предпринимает.\n"
+        "\n"
+        "СВЕРКА НИКОГДА НЕ ОТПРАВЛЯЕТ ПОВТОРНО. Решение принимает вызывающий, и\n"
+        "только он: у отправленного сообщения нет отмены, и автоматика,\n"
+        "решающая за человека, однажды напишет покупателю дважды.\n"
+        "\n"
+        "Вердикта отрицания здесь НЕТ. Отсутствие сообщения в истории -\n"
+        "свидетельство отрицательное, и объявлять по нему «не отправлено»\n"
+        "значило бы подтолкнуть вызывающего написать второй раз.\n"
+    )
+
+    out = [
+        HEADER.format(
+            title="Сверка после неоднозначного исхода записи.",
+            source="spec/protocol/reconciliation.yaml",
+            extra=extra,
+        ).replace(
+            "from typing import ClassVar, Final",
+            "from enum import StrEnum\nfrom typing import Final",
+        )
+    ]
+
+    out.append(
+        '__all__ = ["ReconcileVerdict", "RECONCILE_READS", "RECONCILE_DELAYS_MS"]\n\n\n'
+    )
+
+    out.append("class ReconcileVerdict(StrEnum):\n")
+    out.append('    """Чем окончилась сверка.\n\n')
+    for name, note in verdicts.items():
+        folded = textwrap.fill(
+            f"{name}: {' '.join(str(note).split())}",
+            width=88,
+            initial_indent="    ",
+            subsequent_indent="        ",
+        )
+        out.append(f"{folded}\n\n")
+    out.append('    """\n\n')
+    for name in verdicts:
+        out.append(f'    {name.upper()} = "{name}"\n')
+
+    out.append("\n\n#: Сколько раз перечитывать историю.\n")
+    out.append(f"RECONCILE_READS: Final[int] = {reads}\n")
+    out.append("\n#: Паузы перед каждым чтением, миллисекунды.\n")
+    out.append("#:\n")
+    out.append("#: Числа ВЫБРАНЫ, а не наблюдены: ни одной записанной отправки не\n")
+    out.append("#: пришлось сверять чтением - все подтверждались самим ответом канала.\n")
+    out.append(f"RECONCILE_DELAYS_MS: Final[tuple[int, ...]] = {tuple(delays)!r}\n")
 
     return "".join(out)
 
@@ -2661,6 +2780,7 @@ TARGETS: Final[dict[str, Callable[[Path], str]]] = {
     "capabilities.py": render_capabilities,
     "response_classes.py": render_response_classes,
     "send_outcome.py": render_send_outcome,
+    "reconciliation.py": render_reconciliation,
     "retry.py": render_retry,
     "budget.py": render_budget,
     "events.py": render_events,
