@@ -1134,6 +1134,35 @@ class Engine:
             ValidationError: Если идентификатор непригоден для подстановки.
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
+        thread, _ = yield from self._read_thread_observed(node_id)
+        return thread
+
+    def _read_thread_observed(self, node_id: str) -> Generator[Request, Reply, tuple[Thread, str]]:
+        """Читает переписку и заодно снимает адрес собственного профиля.
+
+        Адрес нужен, чтобы определить направление сообщения, а определить его
+        можно только по ТОЙ ЖЕ странице: он лежит в меню вошедшего, и другого
+        носителя, годного для всякой переписки, нет.
+
+        Метод внутренний, и публичный read_thread адрес выбрасывает. Отдавать
+        его наружу значило бы обещать вызывающему, что адрес всегда есть, - а
+        он есть не всегда: два узла меню могут разойтись, и тогда снимать
+        нечего.
+
+        Args:
+            node_id (str): Идентификатор диалога.
+
+        Yields:
+            Request: Просьбы о вводе-выводе.
+
+        Returns:
+            tuple[Thread, str]: Разобранная переписка и адрес собственного
+            профиля. Пустая строка означает, что адрес снять не удалось.
+
+        Raises:
+            ValidationError: Если идентификатор непригоден для подстановки.
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
         cleaned = node_id.strip()
         if not cleaned or not cleaned.isalnum():
             raise ValidationError(
@@ -1152,7 +1181,10 @@ class Engine:
         if not integrity_verified(observation):
             thread = unverified(thread)
         self._note_success(capability, thread.completeness, thread)
-        return thread
+        # Тот же приём и тот же узел, что у опоры сверки отправки. Второго
+        # правила для одного и того же адреса заводить незачем: разойдись они -
+        # и своё сообщение считалось бы чужим в одном месте и своим в другом.
+        return thread, take_anchor(observation.html).own_href
 
     def fetch_ok(self, capability: Capability, path: str) -> Generator[Request, Reply, Observation]:
         """Получает пригодный для разбора ответ по нормативному порядку шагов.
@@ -1400,7 +1432,7 @@ class Engine:
             node_id = pending.pop(0)
 
             try:
-                thread = yield from self.read_thread(node_id)
+                thread, own_href = yield from self._read_thread_observed(node_id)
             except AuthenticationError:
                 # Условие аккаунта, а не этой переписки. Спецификация требует
                 # закрываться: продолжать перебирать очередь значило бы стучать
@@ -1455,14 +1487,41 @@ class Engine:
                         rows_accepted=thread.rows_accepted,
                     )
                 )
-            events.extend(
-                diff_thread(
-                    known.get(node_id),
-                    thread,
-                    account_id=account_id,
-                    chat_id=node_id,
-                )
+            fresh = diff_thread(
+                known.get(node_id),
+                thread,
+                account_id=account_id,
+                chat_id=node_id,
+                own_href=own_href,
             )
+            events.extend(fresh)
+
+            # СОГРЕВАНИЕ ПЕРЕПИСКИ, и вот единственное место, откуда его можно
+            # позвать честно.
+            #
+            # Ограничитель исходящих считает переписку холодной, пока не увидит
+            # входящего сообщения. Пока звать его было неоткуда, холодной
+            # оставалась ВСЯКАЯ переписка: методы согревания были написаны,
+            # проверены поодиночке и не вызывались из рабочего кода ни разу.
+            #
+            # Цена молчания была не мелкой. Продавец, написавший автоответчик,
+            # получал cold_outreach_not_declared на каждый ответ покупателю,
+            # который сам ему только что написал: три обращения в сутки вместо
+            # тридцати сообщений в час. То есть ограничитель запрещал ровно тот
+            # случай, ради разрешения которого согревание и заводилось.
+            #
+            # Греет ТОЛЬКО входящее и только событием о новом сообщении - так
+            # объявлено в spec/runtime/budget.yaml, раздел warming. Событие об
+            # изменении диалога греть не вправе: счётчик непрочитанного двигает
+            # и НАША отправка, и ограничитель, гревшийся на нём, отменял бы сам
+            # себя. Направление unknown не греет тоже: тепло требует
+            # положительного свидетельства, а не отсутствия опровержения.
+            warmed_at = int(thread.observed_at.timestamp() * 1000)
+            for event in fresh:
+                if event.payload.get("direction") == "inbound":
+                    self._state.outbound.note_incoming(node_id, at_ms=warmed_at)
+                    break
+
             # Курсор переписки снимается с ЛЮБОГО чтения, в отличие от курсоров
             # списков. Разница не в небрежности, а в том, что означает событие.
             #
