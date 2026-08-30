@@ -780,6 +780,89 @@ def test_the_tag_probe_asks_three_times_in_one_go() -> None:
     )
 
 
+def test_a_form_that_navigates_is_recorded_at_all() -> None:
+    """ЗАКРЫВАЕТ ПРОБЕЛ, стоивший потерянного наблюдения.
+
+    Сборщик перехватывает fetch и XMLHttpRequest. Форма с обычной отправкой не
+    пользуется ни тем, ни другим: браузер уходит на новый адрес сам, и для
+    JavaScript этого запроса не существует вовсе.
+
+    Так потерялось сохранение лота: запись велась, кнопка нажата, страница ушла
+    - а в записи оказался один фоновый опрос канала.
+
+    Returns:
+        None
+    """
+    payload = _run_collector(
+        "(async () => {"
+        "  const form = {"
+        "    action: 'https://funpay.com/lots/offerSave',"
+        "    method: 'post',"
+        "  };"
+        "  globalThis.HTMLFormElement = function () {};"
+        "  Object.setPrototypeOf(form, globalThis.HTMLFormElement.prototype);"
+        "  globalThis.FormData = function () {"
+        "    this.entries = () => [['csrf_token', 'abcdef0123456789'],"
+        "      ['price', '1.015'], ['active', 'on'],"
+        "      ['fields[desc][ru]', 'Длинное описание лота']][Symbol.iterator]();"
+        "  };"
+        "  funora.watch();"
+        "  submitted(form);"
+        "  await funora.stop('проба');"
+        "  const last = sent[sent.length - 1];"
+        "  return JSON.parse(last.init.body).payload.records;"
+        "})()"
+    )
+
+    assert len(payload) == 1, f"отправка формы не записана: {payload}"
+    one = payload[0]
+    assert one["navigation"] is True
+    assert one["path"] == "/lots/offerSave", one["path"]
+    assert one["method"] == "POST"
+    assert sorted(one["request"]["fields"]) == [
+        "active",
+        "csrf_token",
+        "fields[desc][ru]",
+        "price",
+    ]
+
+    printed = json.dumps(payload, ensure_ascii=False)
+    assert "Длинное описание лота" not in printed, f"значение поля уехало: {printed}"
+    assert "abcdef0123456789" not in printed, "токен уехал в запись"
+    assert "1.015" not in printed, "цена уехала в запись"
+
+
+def test_a_form_pointing_at_another_host_is_not_recorded() -> None:
+    """Требует не записывать форму, уходящую на ЧУЖОЙ хост.
+
+    Правило то же, что у перехвата обращений: наблюдение ведётся о площадке, и
+    чужой адресат в записи означал бы, что мы записали чей-то посторонний
+    запрос - например, платёжной формы, встроенной в страницу.
+
+    Returns:
+        None
+    """
+    payload = _run_collector(
+        "(async () => {"
+        "  const form = { action: 'https://example.com/pay', method: 'post' };"
+        "  globalThis.HTMLFormElement = function () {};"
+        "  Object.setPrototypeOf(form, globalThis.HTMLFormElement.prototype);"
+        "  globalThis.FormData = function () {"
+        "    this.entries = () => [['card', '4111111111111111']][Symbol.iterator]();"
+        "  };"
+        "  funora.watch();"
+        "  submitted(form);"
+        "  return funora.status().recorded;"
+        "})()"
+    )
+
+    assert payload == 0, (
+        f"форма на чужой хост записана ({payload} записей). Наблюдение ведётся "
+        "о площадке, а чужой адресат означал бы, что мы записали посторонний "
+        "запрос - например, встроенной платёжной формы"
+    )
+
+
 def test_a_changed_token_is_noticed_without_being_shown() -> None:
     """Требует замечать смену защитного токена, не раскрывая его.
 
