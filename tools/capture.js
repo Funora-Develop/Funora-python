@@ -279,6 +279,42 @@
   // отрицательный ответ сузил бы круг поиска для того, кто читает запись.
   const CHECKED_FIELDS = ['tag', 'node', 'last_message', 'id']
 
+  //: Защитный токен, виденный в ПРЕДЫДУЩЕМ запросе.
+  //
+  // Хранится только ради одного вопроса: сменился он или нет. Значение наружу
+  // не уходит ни при каких условиях - в запись ложится булев признак.
+  //
+  // ЗАЧЕМ. Подпись значения говорит «шестнадцать знаков латиницы с цифрами», и
+  // две РАЗНЫЕ шестнадцатизначные строки по ней неотличимы. То есть по записи
+  // нельзя было понять, тот же токен ушёл во втором запросе или другой, - а от
+  // этого зависит, можно ли взять токен одним чтением страницы и держать всю
+  // сессию, или каждый опрос обязан перечитывать страницу.
+  //
+  // Признак живёт в памяти вкладки и обнуляется вместе с ней: сравнивать
+  // токены РАЗНЫХ сессий незачем и нельзя.
+  let tokenBefore = null
+
+  /**
+   * Говорит, сменился ли защитный токен с прошлого запроса.
+   *
+   * Значение запоминается, но не выдаётся: наружу идёт только «тот же» либо
+   * «иной». Первый запрос сессии сравнивать не с чем, и признака у него нет.
+   *
+   * @param {string} token Значение токена из уходящего запроса.
+   * @returns {string|null} same, changed либо null для первого запроса.
+   */
+  function tokenChange(token) {
+    const value = String(token || '')
+    if (!value) return null
+    if (tokenBefore === null) {
+      tokenBefore = value
+      return null
+    }
+    const verdict = tokenBefore === value ? 'same' : 'changed'
+    tokenBefore = value
+    return verdict
+  }
+
   //: Значения меток, снятые ПЕРЕД уходом запроса.
   //
   // Ключ - значение атрибута, значение - его имя. Таблица живёт от снятия до
@@ -378,13 +414,31 @@
    * @param {*} body Тело в любом виде: строка, FormData, URLSearchParams, объект.
    * @returns {object} Описание формы.
    */
+  /**
+   * Описывает одно поле формы, помечая смену защитного токена.
+   *
+   * Форма приходит тремя путями - FormData, URLSearchParams и строкой, - и
+   * помечать токен надо во всех: пропусти один, и запись о ротации зависела
+   * бы от того, каким способом страница собрала запрос.
+   *
+   * @param {string} key Имя поля.
+   * @param {string} value Значение поля.
+   * @returns {object|string} Подпись значения, при надобности с признаком.
+   */
+  function fieldShape(key, value) {
+    const shape = constantOf(key, value) || shapeOfNested(value, 0)
+    if (key !== 'csrf_token') return shape
+    const changed = tokenChange(value)
+    return changed === null ? shape : { signature: shape, since_previous: changed }
+  }
+
   function shapeOf(body) {
     if (body === null || body === undefined || body === '') return { kind: 'empty' }
 
     if (typeof FormData !== 'undefined' && body instanceof FormData) {
       const fields = {}
       for (const [key, value] of body.entries()) {
-        fields[key] = typeof value === 'string' ? shapeOfNested(value, 0) : 'file'
+        fields[key] = typeof value === 'string' ? fieldShape(key, value) : 'file'
       }
       return { kind: 'form', fields }
     }
@@ -392,7 +446,7 @@
     if (typeof URLSearchParams !== 'undefined' && body instanceof URLSearchParams) {
       const fields = {}
       for (const [key, value] of body.entries()) {
-        fields[key] = constantOf(key, value) || shapeOfNested(value, 0)
+        fields[key] = fieldShape(key, value)
       }
       return { kind: 'form', fields }
     }
@@ -409,7 +463,7 @@
       if (looksLikeAForm(text)) {
         const fields = {}
         for (const [key, value] of new URLSearchParams(text).entries()) {
-          fields[key] = constantOf(key, value) || shapeOfNested(value, 0)
+          fields[key] = fieldShape(key, value)
         }
         return { kind: 'form', fields }
       }
@@ -467,6 +521,16 @@
         const literal = constantOf(key, value[key])
         if (literal !== null) {
           out[key] = literal
+          continue
+        }
+        // Защитный токен: наружу идёт подпись и признак смены, но не
+        // значение. Признак отвечает на вопрос, которого подпись не берёт:
+        // две разные строки одной длины и состава по подписи одинаковы.
+        if (key === 'csrf_token') {
+          const changed = tokenChange(value[key])
+          out[key] = changed === null
+            ? shapeOfValue(value[key], level + 1)
+            : { signature: shapeOfValue(value[key], level + 1), since_previous: changed }
           continue
         }
         // Значение сверяется со страницей ПРЯМО ЗДЕСЬ, рядом с самим полем.
