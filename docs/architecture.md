@@ -753,9 +753,11 @@ from funora import Client, Router, EventType
 
 router = Router()
 
+
 @router.on(EventType.ORDER_CREATED)
 def on_order(event):
     print("новый заказ", event.entity_id)
+
 
 with Client(secret) as client:
     client.watch(router)
