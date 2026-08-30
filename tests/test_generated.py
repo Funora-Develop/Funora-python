@@ -19,11 +19,17 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Final
 
 import pytest
 
 from funora import capabilities as caps
 from funora import errors as mod
+
+#: Как звать пересборку. Одной строкой на весь файл: голая форма
+#: «python tools/codegen.py» у читателя без активированного окружения
+#: падает на импорте разборщика YAML.
+RUN_CODEGEN: Final[str] = r".venv\Scripts\python.exe tools/codegen.py"
 
 #: Корень репозитория, от которого ищется генератор.
 ROOT = Path(__file__).resolve().parent.parent
@@ -66,9 +72,7 @@ def test_generated_file_matches_spec() -> None:
 
     for name, body in codegen.generate(spec).items():
         current = (ROOT / "src" / "funora" / name).read_text(encoding="utf-8")
-        assert current == body, (
-            f"{name} отстал от спецификации. Перестройте: python tools/codegen.py"
-        )
+        assert current == body, f"{name} отстал от спецификации. Перестройте: " + RUN_CODEGEN
 
 
 def test_every_error_descends_from_root() -> None:
