@@ -253,6 +253,7 @@ def test_every_returned_field_is_described() -> None:
     """
     from funora._chats import ChatListEntry
     from funora._orders import OrderListEntry
+    from funora._own_lots import OwnLot
     from funora._runner import SendResult
     from funora._thread import Message
 
@@ -261,6 +262,7 @@ def test_every_returned_field_is_described() -> None:
         (ChatListEntry, "chat-list-entry"),
         (Message, "thread-message"),
         (SendResult, "send-result"),
+        (OwnLot, "own-lot"),
     )
     for cls, name in pairs:
         declared = set(_schema(name).get("properties", {}))
@@ -317,6 +319,11 @@ def test_unbuildable_models_say_so() -> None:
         # Чтение аккаунта, проверка сессии и профиль возможностей - с 0.14.0.
         "session-health",
         "capability-profile",
+        # Собственные лоты продавца - с 30.08.2026. Модель своя, а не Lot: та
+        # требует is_active обязательным, а признака показа лота в выдаче на
+        # странице нет ни одного.
+        "own-lot",
+        "own-lots-page",
         # Квитанция отправки - с 30.08.2026, первая модель ЗАПИСИ в проекте.
         #
         # Она заведена взамен Message, которая помечена неосуществимой и сама

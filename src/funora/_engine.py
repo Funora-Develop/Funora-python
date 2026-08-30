@@ -63,6 +63,7 @@ from ._observed import Observed
 from ._order import OrderView, parse_order_page
 from ._orders import Completeness, OrdersPage, parse_orders_page
 from ._outbound import OutboundGovernor, OutboundRefusal
+from ._own_lots import OwnLotsPage, parse_own_lots
 from ._poll import Deduplicator, Schedule
 from ._result import Defect, Severity
 from ._retry import RETRY_REASON_ATTR, plan_attempt
@@ -126,6 +127,7 @@ __all__ = [
     "ORDERS_PATH",
     "CHATS_PATH",
     "RUNNER_PATH",
+    "OWN_LOTS_PATH",
     "PROFILE_PATH",
     "ORDER_PATH",
     "BALANCE_PATH",
@@ -153,6 +155,10 @@ ORDER_PATH: Final[str] = "/orders/{order_id}/"
 
 #: Страница баланса. Несёт и балансы по валютам, и операции по счёту.
 BALANCE_PATH: Final[str] = "/account/balance"
+
+#: Страница собственных лотов раздела. Требует НОМЕРА РАЗДЕЛА: управление
+#: лотами живёт по одному адресу на раздел, а не по одному на аккаунт.
+OWN_LOTS_PATH: Final[str] = "/lots/{node_id}/trade"
 
 #: Канал обновлений. Тем же адресом площадка и опрашивается, и меняется.
 RUNNER_PATH: Final[str] = "/runner/"
@@ -413,6 +419,7 @@ IMPLEMENTED: Final[frozenset[Capability]] = frozenset(
         Capability.CATALOG_CATEGORIES,
         Capability.ACCOUNT_PROFILE,
         Capability.CHATS_SEND_TEXT,
+        Capability.LOTS_LIST_OWN,
     }
 )
 
@@ -435,6 +442,7 @@ POLLED: Final[frozenset[Capability]] = frozenset(
         Capability.LOTS_SHOWCASE,
         Capability.CATALOG_CATEGORIES,
         Capability.ACCOUNT_PROFILE,
+        Capability.LOTS_LIST_OWN,
     }
 )
 
@@ -890,6 +898,42 @@ class Engine:
             if verdict is not ReconcileVerdict.UNDETERMINED:
                 return verdict
         return verdict
+
+    def read_own_lots(self, node_id: str) -> Generator[Request, Reply, OwnLotsPage]:
+        """Читает собственные лоты продавца в одном разделе.
+
+        РАДИ ИДЕНТИФИКАТОРА ПРЕДЛОЖЕНИЯ. Витрина на профиле показывает те же
+        лоты и даже больше полей, но идентификатора не даёт: там он лежит в
+        строке запроса ссылки. Всем четырём операциям записи над лотами он нужен,
+        и взять его больше неоткуда.
+
+        Args:
+            node_id (str): Номер раздела. Управление лотами живёт по одному
+                адресу на раздел, а не по одному на аккаунт.
+
+        Yields:
+            Request: Просьбы о вводе-выводе.
+
+        Returns:
+            OwnLotsPage: Лоты раздела и доводы кнопки поднятия.
+
+        Raises:
+            ValidationError: Если номер раздела непригоден для подстановки.
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        cleaned = node_id.strip()
+        if not cleaned or not cleaned.isdigit():
+            raise ValidationError(
+                "номер раздела обязан состоять из цифр, получено "
+                f"{len(cleaned)} знаков иного вида. Проверка идёт до сети: "
+                "подставленный в адрес мусор отправил бы запрос неизвестно куда"
+            )
+
+        capability = Capability.LOTS_LIST_OWN
+        observation = yield from self.fetch_ok(capability, OWN_LOTS_PATH.format(node_id=cleaned))
+        page = parse_own_lots(observation.html, observed_at=datetime.now(UTC))
+        self._note_success(capability, page.completeness, None)
+        return page
 
     def read_catalog(self) -> Generator[Request, Reply, CatalogPage]:
         """Читает каталог с корня площадки.

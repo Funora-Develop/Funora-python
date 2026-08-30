@@ -74,6 +74,7 @@ SOURCES: Final[frozenset[str]] = frozenset(
         "spec/extraction/orders.yaml",
         "spec/extraction/reviews.yaml",
         "spec/extraction/session.yaml",
+        "spec/extraction/lots.yaml",
         "spec/extraction/showcase.yaml",
         # Два файла извлечения были вне поля зрения генератора: их селекторы и
         # имена атрибутов не попадали ни в порождённый словарь, ни под сверку

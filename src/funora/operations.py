@@ -242,10 +242,11 @@ OPERATIONS: Final[dict[str, Operation]] = {
         capability="lots.list_own",
         safety=Safety.SAFE,
         request_class="interactive",
-        returns="Lot[]",
+        returns="OwnLotsPage",
         errors=(
             "funora.auth.session_expired",
             "funora.protocol.changed",
+            "funora.protocol.unexpected_response",
             "funora.transport",
         ),
     ),

@@ -31,6 +31,7 @@ from ._identity import REGISTRY
 from ._observed import Observed
 from ._order import OrderView
 from ._orders import OrdersPage
+from ._own_lots import OwnLotsPage
 from ._poll import Schedule
 from ._proxies import DEFAULT_ACCOUNT, Proxy, ProxyPool
 from ._reviews import ReviewsPage
@@ -314,6 +315,30 @@ class LotsService:
 
     def __init__(self, client: Client) -> None:
         self._client = client
+
+    def list_own(self, node_id: str) -> OwnLotsPage:
+        """Читает собственные лоты продавца в одном разделе.
+
+        РАДИ ИДЕНТИФИКАТОРА ПРЕДЛОЖЕНИЯ. Витрина показывает те же лоты и даже
+        больше полей - количество и признак автовыдачи, - но идентификатора не
+        даёт: там он лежит в строке запроса ссылки.
+
+        ПРИЗНАКА ПОКАЗА ЛОТА В ВЫДАЧЕ ЗДЕСЬ НЕТ, и это не пробел разбора: его
+        нет на самой странице. Все строки структурно одинаковы, различающего
+        признака ни одного, а узел с говорящим именем .tc-visible-inside есть и
+        на публичной витрине - значит признаком видимости он быть не может.
+
+        Args:
+            node_id (str): Номер раздела. Управление лотами живёт по одному
+                адресу на раздел, а не по одному на аккаунт.
+
+        Returns:
+            OwnLotsPage: Лоты раздела и доводы кнопки поднятия.
+
+        Raises:
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        return self._client.run(self._client.engine.read_own_lots(node_id))
 
     def showcase(self, user_id: str) -> ShowcasePage:
         """Читает публичную витрину продавца.
