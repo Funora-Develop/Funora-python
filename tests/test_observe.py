@@ -358,7 +358,7 @@ def test_provenance_masks_path_and_url() -> None:
     blob = json.dumps(data, ensure_ascii=False)
     for secret in ("123456789", "98765", "777"):
         assert secret not in blob, f"идентификатор {secret} попал в описание"
-    assert data["path"] == "/chat/?{q}"
+    assert data["path"] == "/chat/?node={q}"
 
 
 def _secrets_dir(tmp_path: Path) -> Path:

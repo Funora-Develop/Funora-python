@@ -402,8 +402,8 @@ def test_dialogs_are_distinguishable_by_query() -> None:
         '<a href="/chat/?node=281916231">c</a>'
         "</body></html>"
     )
-    assert sk.count("/chat/?{q1}") == 2
-    assert sk.count("/chat/?{q2}") == 1
+    assert sk.count("/chat/?node={q1}") == 2
+    assert sk.count("/chat/?node={q2}") == 1
 
 
 def test_attribute_signature_keeps_its_shape_and_gains_a_number() -> None:
@@ -478,3 +478,95 @@ def test_text_nodes_are_not_numbered() -> None:
     sk = skeletonize("<html><body><p>одно и то же</p><p>одно и то же</p></body></html>")
     assert sk.count("T12:cs") == 2
     assert "#1" not in sk
+
+
+def test_a_query_parameter_name_survives_but_its_value_never_does() -> None:
+    """ЗАКРЫВАЕТ ЧЕТВЁРТОЕ расхождение того же рода.
+
+    Идентификатор ЧУЖОГО предложения лежит только в строке запроса ссылки, и
+    скелет заменял её одной подписью. Из-за этого market.offers - объявленная
+    операция - не собиралась вовсе, а причиной называли модель.
+
+    Имя выбирает площадка, значение - человек. Первое видно, второе никогда.
+
+    Returns:
+        None
+    """
+    sk = skeletonize(
+        '<html><body><a href="https://funpay.com/lots/offer?id=75289502">x</a></body></html>'
+    )
+    assert "?id=" in sk, "имя параметра скрыто - идентификатор предложения не наблюдать"
+    assert "75289502" not in sk, "значение параметра раскрыто"
+
+
+def test_a_query_value_is_numbered_so_rows_stay_comparable() -> None:
+    """Требует, чтобы одинаковые значения получали один номер.
+
+    Без нумерации пятьдесят диалогов страницы неразличимы - беда, ради которой
+    нумерация и заведена. Сохранение имени её не отменяет.
+
+    Returns:
+        None
+    """
+    sk = skeletonize(
+        "<html><body>"
+        '<a href="/lots/offer?id=111">a</a>'
+        '<a href="/lots/offer?id=222">b</a>'
+        '<a href="/lots/offer?id=111">c</a>'
+        "</body></html>"
+    )
+    assert sk.count("?id={q1}") == 2
+    assert sk.count("?id={q2}") == 1
+
+
+def test_several_parameters_keep_all_their_names() -> None:
+    """Требует, чтобы имена сохранялись у каждого параметра, а не у первого.
+
+    Returns:
+        None
+    """
+    sk = skeletonize(
+        '<html><body><a href="/lots/1908/trade?query=меч&sort=price">x</a></body></html>'
+    )
+    assert "query={q" in sk
+    assert "sort={q" in sk
+    assert "меч" not in sk, "значение параметра раскрыто"
+    assert "=price" not in sk, "значение параметра раскрыто"
+
+
+def test_a_parameter_without_a_value_keeps_only_its_name() -> None:
+    """Требует, чтобы у параметра-флажка не выдумывалось значения.
+
+    Returns:
+        None
+    """
+    sk = skeletonize('<html><body><a href="/lots/1908/trade?raise">x</a></body></html>')
+    assert "?raise" in sk
+    assert "?raise=" not in sk
+
+
+def test_a_parameter_name_of_an_unknown_shape_is_masked_whole() -> None:
+    """Требует маскировать имя, не похожее на словарь площадки.
+
+    Раз оно не похоже на имя, придуманное площадкой, оно может оказаться
+    данными - и тогда раскрывать его нельзя.
+
+    Returns:
+        None
+    """
+    sk = skeletonize('<html><body><a href="/x/y?Иванов Иван=1&9=2">z</a></body></html>')
+    assert "Иванов" not in sk
+    assert "{q" in sk
+
+
+def test_a_foreign_query_is_still_masked_whole() -> None:
+    """Требует, чтобы на чужом хосте строка запроса маскировалась целиком.
+
+    Там совпадение само по себе сведение о третьем лице.
+
+    Returns:
+        None
+    """
+    sk = skeletonize('<html><body><a href="https://vk.com/away.php?to=funora">x</a></body></html>')
+    assert "?{q}" in sk
+    assert "to=" not in sk

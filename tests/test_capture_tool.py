@@ -2152,3 +2152,31 @@ def test_the_sending_probe_reports_which_subscription_it_used() -> None:
     assert "пуст" in out["empty"], out["empty"]
     assert "пуст" not in out["one"], out["one"]
     assert "узел" in out["one"], out["one"]
+
+
+def test_the_query_name_rule_matches_between_the_two_languages() -> None:
+    """ЗАКРЫВАЕТ ЧЕТВЁРТОЕ расхождение двух описаний одного правила.
+
+    Браузерный сборщик записывал имена параметров с самого своего появления -
+    searchParams.keys(), - а снимок страницы их маскировал. То есть правило
+    было одно, описаний два, и они молча разошлись: записи запросов имена
+    несли, снимки нет.
+
+    Цена: идентификатор чужого предложения, лежащий ТОЛЬКО в строке запроса,
+    было не наблюдать со страницы вовсе.
+
+    Returns:
+        None
+    """
+    from funora._skeleton import DEFAULT_OWN_HOST, mask_path
+
+    theirs = _in_node("maskUrl('https://funpay.com/lots/offer?id=75289502&sort=price').query")
+    ours = mask_path("https://funpay.com/lots/offer?id=75289502&sort=price", DEFAULT_OWN_HOST, {})
+
+    for name in theirs:
+        assert f"{name}=" in ours, (
+            f"браузер записывает имя параметра {name!r}, а снимок его прячет. "
+            "Два описания одного правила разошлись - снимок страницы и запись "
+            "запроса скажут о площадке разное"
+        )
+    assert "75289502" not in ours, "значение параметра попало в снимок"
