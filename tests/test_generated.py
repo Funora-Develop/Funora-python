@@ -472,27 +472,64 @@ def test_every_operation_names_a_declared_capability() -> None:
         )
 
 
-def test_read_operations_are_declared_safe() -> None:
-    """Проверяет безопасность выполняемых сегодня операций.
+def test_everything_the_watch_loop_calls_is_declared_safe() -> None:
+    """Требует безопасности от всего, что повторяет цикл наблюдения.
 
-    Все три выполняемые операции - чтения, и объявлены безопасными. Проверка
-    ловит правку в спецификации, которая объявит чтение небезопасным: цикл
-    наблюдения повторяет чтения свободно, и небезопасное чтение он повторять бы
-    не стал - то есть наблюдение молча остановилось бы на первом же отказе сети.
+    Цикл повторяет свободно. Небезопасная операция, попавшая в его перечень,
+    повторилась бы при первом же неоднозначном отказе, а у отправки нет отмены:
+    повтор означал бы второе сообщение покупателю.
+
+    ПРОВЕРЯЕТСЯ НЕ «ВЫПОЛНЯЕМОЕ», А «ПОВТОРЯЕМОЕ», и разница появилась
+    30.08.2026. До неё всё выполняемое было чтением, и одно множество служило
+    заменой другому; первая же операция записи это равенство сломала. Проверка,
+    оставленная на прежнем множестве, потребовала бы объявить отправку
+    безопасной - то есть чинилась бы ложью.
 
     Returns:
         None
     """
-    from funora._engine import IMPLEMENTED
+    from funora._engine import POLLED
     from funora.operations import OPERATIONS, Safety
 
     by_capability = {op.capability: op for op in OPERATIONS.values()}
-    for capability in IMPLEMENTED:
+    for capability in POLLED:
         operation = by_capability.get(capability.value)
         assert operation is not None, (
-            f"возможность {capability.value} выполняется, а операции под неё в спецификации нет"
+            f"возможность {capability.value} повторяется циклом, а операции под неё "
+            "в спецификации нет"
         )
         assert operation.safety is Safety.SAFE, (
             f"операция {operation.name} объявлена {operation.safety}, а цикл "
             "наблюдения повторяет её как безопасную"
         )
+
+
+def test_no_write_operation_is_ever_polled() -> None:
+    """Требует, чтобы ни одна небезопасная операция не попала в цикл.
+
+    Проверка обратная предыдущей и нужна отдельно: та требует безопасности от
+    перечня, эта - чтобы перечень не пополнился записью. Одна ловит правку
+    спецификации, другая - правку кода.
+
+    Returns:
+        None
+    """
+    from funora._engine import IMPLEMENTED, POLLED
+    from funora.operations import OPERATIONS, Safety
+
+    by_capability = {op.capability: op for op in OPERATIONS.values()}
+    unsafe = {
+        one
+        for one in IMPLEMENTED
+        if (by_capability.get(one.value) or None) is not None
+        and by_capability[one.value].safety is not Safety.SAFE
+    }
+
+    assert unsafe, (
+        "небезопасных выполняемых операций нет вовсе - проверка ничего не стережёт. "
+        "Если запись убрали намеренно, уберите и проверку"
+    )
+    assert not (unsafe & POLLED), (
+        f"в перечень повторяемого циклом попали записи: "
+        f"{sorted(one.value for one in unsafe & POLLED)}. У отправки нет отмены"
+    )

@@ -29,6 +29,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Generator
 from contextlib import suppress
@@ -61,10 +62,19 @@ from ._identity import REGISTRY, Identity, identity_of
 from ._observed import Observed
 from ._order import OrderView, parse_order_page
 from ._orders import Completeness, OrdersPage, parse_orders_page
+from ._outbound import OutboundGovernor, OutboundRefusal
 from ._poll import Deduplicator, Schedule
 from ._result import Defect, Severity
 from ._retry import RETRY_REASON_ATTR, plan_attempt
 from ._reviews import ReviewsPage, parse_reviews_page
+from ._runner import (
+    Anchor,
+    SendResult,
+    classify_send_response,
+    parse_runner_context,
+    reconcile,
+    take_anchor,
+)
 from ._showcase import ShowcasePage, parse_showcase
 from ._state import StateFile
 from ._thread import Thread, parse_thread
@@ -90,11 +100,14 @@ from .errors import (
     ConfigurationError,
     FunoraError,
     NetworkError,
+    ProtocolChangedError,
     RateLimitedError,
     TransportError,
+    UsageError,
     ValidationError,
 )
 from .operations import OPERATIONS, Safety
+from .reconciliation import RECONCILE_DELAYS_MS, ReconcileVerdict
 from .response_classes import (
     HEALTH_BY_VERDICT,
     INITIAL_HEALTH,
@@ -105,12 +118,14 @@ from .retry import RETRY_POLICIES
 
 __all__ = [
     "Fetch",
+    "Submit",
     "Pause",
     "Deliver",
     "Request",
     "Engine",
     "ORDERS_PATH",
     "CHATS_PATH",
+    "RUNNER_PATH",
     "PROFILE_PATH",
     "ORDER_PATH",
     "BALANCE_PATH",
@@ -139,6 +154,23 @@ ORDER_PATH: Final[str] = "/orders/{order_id}/"
 #: Страница баланса. Несёт и балансы по валютам, и операции по счёту.
 BALANCE_PATH: Final[str] = "/account/balance"
 
+#: Канал обновлений. Тем же адресом площадка и опрашивается, и меняется.
+RUNNER_PATH: Final[str] = "/runner/"
+
+#: Заголовки обращения к каналу.
+#:
+#: Имена наблюдены на КАЖДОМ запросе канала. Заголовок x-requested-with
+#: пропустить нельзя, пока не наблюдено обратное: площадка вправе отвечать на
+#: запросы без него иначе.
+#:
+#: Значения не наблюдались - записи хранят имена, - но именно этот набор
+#: площадка ПРИНЯЛА: сборщик отправил им и опрос, и два сообщения.
+RUNNER_HEADERS: Final[dict[str, str]] = {
+    "Accept": "application/json, text/javascript, */*; q=0.01",
+    "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+    "X-Requested-With": "XMLHttpRequest",
+}
+
 #: Страница, по которой читается собственный аккаунт и проверяется сессия.
 #:
 #: Это адрес переписки, и выбран он не случайно. Собственный идентификатор лежит
@@ -166,6 +198,29 @@ class Fetch:
 
 
 @dataclass(frozen=True, slots=True)
+class Submit:
+    """Просьба отправить форму.
+
+    Отдельная просьба, а не признак у Fetch, и это не оформление. У записи своё
+    правило, которого у чтения нет: ПЕРЕХОД В ОТВЕТ НА ЗАПИСЬ НЕ ПОВТОРЯЕТСЯ.
+    Чтение по переходу повторить безвредно, запись - нет.
+
+    Признак у Fetch означал бы, что оба правила живут в одном месте и
+    различаются условием. Условие однажды упростят.
+
+    Attributes:
+        path (str): Путь обращения.
+        fields (dict[str, str]): Поля формы.
+        headers (dict[str, str]): Заголовки, кроме Cookie: секрет ставит
+            транспорт и только он.
+    """
+
+    path: str
+    fields: dict[str, str]
+    headers: dict[str, str]
+
+
+@dataclass(frozen=True, slots=True)
 class Pause:
     """Просьба подождать.
 
@@ -188,7 +243,7 @@ class Deliver:
 
 
 #: Любая из трёх просьб.
-Request = Fetch | Pause | Deliver
+Request = Fetch | Submit | Pause | Deliver
 
 #: Что ядро получает в ответ на просьбу. Наблюдение - на Fetch, результат
 #: раздачи - на Deliver, ничего - на Pause.
@@ -214,6 +269,12 @@ class _State:
             ломается. Но поля, приходящие текстом, возвращаются на этом языке,
             и вызывающий вправе знать, на каком.
     """
+
+    #: Ограничитель исходящих сообщений.
+    #:
+    #: Живёт в состоянии клиента, а не создаётся операцией: пределы часовые, и
+    #: ограничитель, рождающийся вместе с вызовом, не ограничивал бы ничего.
+    outbound: OutboundGovernor = field(default_factory=OutboundGovernor)
 
     #: Вердикт последней классификации.
     #:
@@ -351,6 +412,29 @@ IMPLEMENTED: Final[frozenset[Capability]] = frozenset(
         Capability.LOTS_SHOWCASE,
         Capability.CATALOG_CATEGORIES,
         Capability.ACCOUNT_PROFILE,
+        Capability.CHATS_SEND_TEXT,
+    }
+)
+
+#: Возможности, которые ЦИКЛ НАБЛЮДЕНИЯ волен звать сам и повторять свободно.
+#:
+#: Множество отдельное от IMPLEMENTED, и разошлись они не случайно. До
+#: 30.08.2026 всё выполняемое было чтением, и «выполняется» служило заменой
+#: «повторяется свободно». Первая же операция записи это равенство сломала.
+#:
+#: Записи здесь нет и быть не может. Цикл повторяет свободно, а у отправки нет
+#: отмены: повтор при неоднозначном исходе - второе сообщение покупателю.
+POLLED: Final[frozenset[Capability]] = frozenset(
+    {
+        Capability.ORDERS_LIST,
+        Capability.CHATS_LIST,
+        Capability.CHATS_HISTORY,
+        Capability.REVIEWS_GET,
+        Capability.ORDERS_GET,
+        Capability.ACCOUNT_BALANCE,
+        Capability.LOTS_SHOWCASE,
+        Capability.CATALOG_CATEGORIES,
+        Capability.ACCOUNT_PROFILE,
     }
 )
 
@@ -371,6 +455,28 @@ def _scoped(error: Exception) -> bool:
     """
     policy = RETRY_POLICIES.get(getattr(error, "stable_id", ""))
     return bool(policy and policy.account_scoped)
+
+
+def _outbound_error(refusal: OutboundRefusal) -> FunoraError:
+    """Превращает отказ ограничителя в ошибку нужного класса.
+
+    Новых классов не заводится. Исчерпанная квота - это ровно «бюджет исчерпан,
+    запрос не отправлялся». Холодное обращение без признака - ровно «SDK
+    использован неверно, исправлять надо вызывающий код»: продавец не сказал,
+    что пишет первым.
+
+    Args:
+        refusal (OutboundRefusal): Отказ ограничителя.
+
+    Returns:
+        FunoraError: Ошибка с названным пределом и сроком.
+    """
+    where = f"ограничитель исходящих: {refusal.detail} (предел {refusal.limit}"
+    where += f", освободится через {refusal.retry_after_ms} мс)" if refusal.retry_after_ms else ")"
+    if refusal.limit == "cold_outreach_not_declared":
+        return UsageError(where)
+    exhausted: FunoraError = BudgetExhaustedError(where)
+    return exhausted
 
 
 def _class_of(capability: Capability) -> RequestClass:
@@ -616,6 +722,174 @@ class Engine:
                 for one in Capability
             },
         )
+
+    def send_text(
+        self, node_id: str, text: str, *, declared_cold: bool = False
+    ) -> Generator[Request, Reply, SendResult]:
+        """Отправляет текстовое сообщение в переписку.
+
+        ИСКЛЮЧЕНИЕ ОЗНАЧАЕТ, ЧТО СООБЩЕНИЕ НЕ УШЛО. Всё, что случилось ПОСЛЕ
+        ухода запроса, возвращается исходом, а не бросается: иначе
+        неоднозначность выражать нечем, и вызывающий прочтёт её как неудачу.
+
+        Порядок шагов:
+
+        1. Чтение страницы диалога. Оттуда берётся всё нужное для запроса, и
+           оттуда же снимается опора сверки - лишнего обращения нет.
+        2. Ограничитель исходящих. Спрашивается ДО вёдер и до отправки.
+        3. Запись попытки - ВПЕРЕДИ запроса, а не после ответа.
+        4. Обращение к каналу с подпиской на узел этого диалога. Подписка нужна
+           не ради отправки, а ради ответа: канал подтверждает только
+           подписанное.
+        5. Установление исхода по нормативному порядку.
+
+        Args:
+            node_id (str): Числовой идентификатор диалога.
+            text (str): Текст сообщения.
+            declared_cold (bool): Признание, что переписка холодная и вы пишете
+                первым. Без него холодное обращение отвергается.
+
+        Yields:
+            Request: Просьбы о вводе-выводе.
+
+        Returns:
+            SendResult: Исход, причина и прочитанное из ответа.
+
+        Raises:
+            ValidationError: Если идентификатор либо текст непригодны.
+            BudgetExhaustedError: Если упёрлись в предел исходящих.
+            UsageError: Если холодное обращение не объявлено.
+            FunoraError: Если страница непригодна для отправки.
+        """
+        cleaned = node_id.strip()
+        if not cleaned or not cleaned.isalnum():
+            raise ValidationError(
+                "идентификатор диалога обязан состоять из букв и цифр, получено "
+                f"{len(cleaned)} знаков иного вида. Проверка идёт до сети"
+            )
+        if not text.strip():
+            raise ValidationError(
+                "текст сообщения пуст. Отправка пустого не наблюдалась, и что с ней "
+                "сделает площадка - неизвестно"
+            )
+
+        capability = Capability.CHATS_SEND_TEXT
+        observation = yield from self.fetch_ok(capability, THREAD_PATH.format(node_id=cleaned))
+
+        context = parse_runner_context(observation.html)
+        if not context.can_send:
+            raise ProtocolChangedError(
+                "страница диалога не годится для отправки: "
+                f"{[one.code for one in context.defects]}. Отправить, не прочитав "
+                "имени диалога, его метки и защитного токена, нельзя"
+            )
+        anchor = take_anchor(observation.html)
+
+        # Ограничитель спрашивается ПЕРВЫМ среди пределов. Ждать он не умеет и
+        # не должен: его пределы часовые.
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+        refusal = self._state.outbound.check(
+            cleaned, now_ms=now_ms, now_s=monotonic(), declared_cold=declared_cold
+        )
+        if refusal is not None:
+            raise _outbound_error(refusal)
+
+        # Попытка записывается ВПЕРЕДИ запроса. Форма отказа канала не
+        # наблюдалась, и «не засчитаем, раз не подтвердилось» означало бы не
+        # считать ровно те отправки, которые могли уйти.
+        self._state.outbound.record(cleaned, now_ms=now_ms, now_s=monotonic())
+
+        node_name = context.node_name.value
+        data = {
+            "node": node_name,
+            "last_message": int(context.last_message.value),
+            "content": text,
+        }
+        token = context.csrf_token
+        if token is None:  # pragma: no cover - can_send уже это проверил
+            raise ProtocolChangedError("защитного токена на странице нет")
+
+        yield from self.spend_budget(_class_of(capability), cost=1.0)
+        reply = yield Submit(
+            RUNNER_PATH,
+            {
+                # Подписка ровно на один узел - тот самый диалог. Канал
+                # подтверждает только подписанное, а полная подписка недостижима:
+                # метка закладок не наблюдалась.
+                "objects": json.dumps(
+                    [
+                        {
+                            "type": "chat_node",
+                            "id": node_name,
+                            "tag": context.chat_tag.value,
+                            "data": data,
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+                "request": json.dumps({"action": "chat_message", "data": data}, ensure_ascii=False),
+                "csrf_token": token.reveal(),
+            },
+            dict(RUNNER_HEADERS),
+        )
+        if not isinstance(reply, Observation):
+            raise TypeError(f"на просьбу Submit ожидалось наблюдение, получено {type(reply)}")
+
+        result = classify_send_response(reply.html, sent_to=node_name)
+
+        # СВЕРКА ДЕЛАЕТСЯ ТОЛЬКО ТАМ, ГДЕ ИСХОДА НЕ НАБЛЮДАЛИ. При подтверждённом
+        # ответ канала сам несёт новое сообщение, и читать историю незачем:
+        # стоимость чтения несимметрична, и на этом весь механизм и держится.
+        #
+        # Сверка НИЧЕГО НЕ ОТПРАВЛЯЕТ. Решение о повторной отправке принимает
+        # вызывающий: у отправленного сообщения нет отмены.
+        if not result.is_confirmed:
+            verdict = yield from self._reconcile_send(cleaned, anchor)
+            result = replace(result, reconciled=str(verdict))
+
+        self._note_success(
+            capability,
+            Completeness.COMPLETE if result.is_confirmed else Completeness.PARTIAL,
+            None,
+        )
+        return result
+
+    def _reconcile_send(
+        self, node_id: str, anchor: Anchor
+    ) -> Generator[Request, Reply, ReconcileVerdict]:
+        """Сверяется с историей переписки по объявленному расписанию.
+
+        Читает и только читает. Число чтений и паузы объявлены контрактом:
+        сообщение появляется в истории не мгновенно, и одно чтение сразу после
+        отправки объявило бы отсутствие раньше времени.
+
+        Первый определённый вердикт прекращает чтения. Неопределённый - нет:
+        он означает, что сверка ответа не дала, и следующее чтение вправе дать.
+
+        Args:
+            node_id (str): Идентификатор диалога.
+            anchor (Anchor): Опора, снятая до отправки.
+
+        Yields:
+            Request: Просьбы о вводе-выводе.
+
+        Returns:
+            ReconcileVerdict: Вердикт последней сверки.
+        """
+        verdict = ReconcileVerdict.UNDETERMINED
+        for delay_ms in RECONCILE_DELAYS_MS:
+            yield Pause(delay_ms)
+            try:
+                thread = yield from self.read_thread(node_id)
+            except FunoraError:
+                # Отказ чтения - не свидетельство об отправке. Сверка о ней и
+                # молчит: вердикт остаётся неопределённым.
+                continue
+            outcome = reconcile(thread, anchor)
+            verdict = outcome.verdict
+            if verdict is not ReconcileVerdict.UNDETERMINED:
+                return verdict
+        return verdict
 
     def read_catalog(self) -> Generator[Request, Reply, CatalogPage]:
         """Читает каталог с корня площадки.

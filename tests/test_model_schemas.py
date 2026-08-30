@@ -253,12 +253,14 @@ def test_every_returned_field_is_described() -> None:
     """
     from funora._chats import ChatListEntry
     from funora._orders import OrderListEntry
+    from funora._runner import SendResult
     from funora._thread import Message
 
     pairs = (
         (OrderListEntry, "order-list-entry"),
         (ChatListEntry, "chat-list-entry"),
         (Message, "thread-message"),
+        (SendResult, "send-result"),
     )
     for cls, name in pairs:
         declared = set(_schema(name).get("properties", {}))
@@ -315,6 +317,12 @@ def test_unbuildable_models_say_so() -> None:
         # Чтение аккаунта, проверка сессии и профиль возможностей - с 0.14.0.
         "session-health",
         "capability-profile",
+        # Квитанция отправки - с 30.08.2026, первая модель ЗАПИСИ в проекте.
+        #
+        # Она заведена взамен Message, которая помечена неосуществимой и сама
+        # говорит почему: два её обязательных поля из ответа канала не
+        # заполняются вовсе. В квитанции только заполнимое из наблюдённого.
+        "send-result",
     }
     for path in sorted((root / "spec" / "models").glob("*.schema.json")):
         name = path.name.removesuffix(".schema.json")

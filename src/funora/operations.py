@@ -190,7 +190,7 @@ OPERATIONS: Final[dict[str, Operation]] = {
         capability="chats.send_image",
         safety=Safety.UNSAFE,
         request_class="interactive",
-        returns="Message",
+        returns="SendResult",
         errors=(
             "funora.capability.unsupported",
             "funora.budget.exhausted",
@@ -202,7 +202,7 @@ OPERATIONS: Final[dict[str, Operation]] = {
         capability="chats.send_text",
         safety=Safety.UNSAFE,
         request_class="interactive",
-        returns="Message",
+        returns="SendResult",
         errors=(
             "funora.domain.not_found",
             "funora.budget.exhausted",

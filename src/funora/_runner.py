@@ -255,6 +255,26 @@ def parse_runner_context(html: str) -> RunnerContext:
     row, row_defects = _active_contact(tree, widget)
     defects += row_defects
 
+    last_message = _attribute(row, _LAST_MESSAGE, "last_message")
+    # Позиция уходит в запрос ЧИСЛОМ - так наблюдено. Значение не из цифр
+    # означает, что прочитано не то: на снимке там подпись скелета, на живой
+    # странице - разметка изменилась. Собрать запрос из этого нельзя, и молчать
+    # нельзя тоже: негодная позиция ушла бы на площадку.
+    numeric = last_message.is_observed and last_message.value.isdigit()
+    if last_message.is_observed and not numeric:
+        defects.append(
+            Defect(
+                severity=Severity.PAGE,
+                code="last_message_not_numeric",
+                detail=(
+                    f"позиция последнего сообщения ({_LAST_MESSAGE}) прочитана не "
+                    "числом. В запрос она уходит числом, и подставить туда иное "
+                    "значит отправить неизвестно что"
+                ),
+                field_name="last_message",
+            )
+        )
+
     return RunnerContext(
         csrf_token=settings.csrf_token,
         node_name=node_name,
@@ -263,12 +283,12 @@ def parse_runner_context(html: str) -> RunnerContext:
         bookmarks_tag=_attribute(widget, _BOOKMARKS_TAG, "bookmarks_tag"),
         orders_tag=_attribute(tree.css_first(_ORDERS_TAG_CARRIER), _ORDERS_TAG, "orders_tag"),
         own_user_id=_attribute(tree.css_first(_OWN_ID), "data-user", "own_user_id"),
-        last_message=_attribute(row, _LAST_MESSAGE, "last_message"),
+        last_message=last_message,
         can_send=(
             settings.csrf_token is not None
             and node_name.is_observed
             and chat_tag.is_observed
-            and _attribute(row, _LAST_MESSAGE, "last_message").is_observed
+            and numeric
         ),
         defects=tuple(defects),
     )
@@ -291,6 +311,10 @@ class SendResult:
             в канале число, и что это одно значение, не наблюдалось.
         node (Observed[str]): Имя диалога, подтверждённое площадкой.
         messages_in_answer (int): Сколько сообщений пришло в ответе.
+        reconciled (str): Чем окончилась сверка по истории. Значение
+            not_attempted означает, что сверка НЕ ДЕЛАЛАСЬ, и это не пробел: при
+            подтверждённом исходе читать историю незачем - ответ канала сам
+            несёт новое сообщение.
     """
 
     outcome: SendOutcome
@@ -298,6 +322,7 @@ class SendResult:
     channel_message_id: Observed[int]
     node: Observed[str]
     messages_in_answer: int
+    reconciled: str = "not_attempted"
 
     @property
     def is_confirmed(self) -> bool:
