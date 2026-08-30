@@ -15,13 +15,22 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 from .._client import Client
 from .._poll import Schedule
 from .._watch import Router
-from ..errors import FunoraError, HandlerError, UsageError
+from ..errors import (
+    ConfigurationError,
+    FunoraError,
+    HandlerError,
+    UsageError,
+    ValidationError,
+)
 from ._outbox import Outbox, SendCommand, SendTicket
+
+if TYPE_CHECKING:
+    from ._delivery import AutoDelivery, DeliveryDecision, DeliveryPlan
 
 __all__ = ["Bot", "MAX_SENDS_PER_IDLE"]
 
@@ -55,6 +64,16 @@ class Bot:
         *,
         max_sends_per_idle: int = MAX_SENDS_PER_IDLE,
     ) -> None:
+        # Ноль означал бы «не разбирать очередь никогда»: take(0) отдаёт
+        # пустой перечень, задания копятся, квитанции не закрываются, и
+        # положивший их ждёт вечно. Молча.
+        if max_sends_per_idle < 1:
+            raise ValidationError(
+                f"предел отправок за паузу {max_sends_per_idle} не годится: при "
+                "нём очередь не разбирается никогда, задания копятся, а "
+                "положивший их ждёт закрытия квитанции, которого не будет"
+            )
+
         self._client = client
         self._router = router
         self._outbox = Outbox()
@@ -206,6 +225,53 @@ class Bot:
                 continue
             self._sent += 1
             ticket.settle(result=result)
+
+    def deliveries(
+        self,
+        plan: DeliveryPlan,
+        on_hold: Callable[[DeliveryDecision], None] | None = None,
+    ) -> AutoDelivery:
+        """Собирает автовыдачу, связанную с файлом состояния клиента.
+
+        СОБИРАТЬ ЕЁ РУКАМИ НЕ НАДО, и это не вежливость. Реестр выданного
+        обязан переживать перезапуск: обнулившись, он выдаст товар второй раз
+        по заказу, который в списке продаж всё ещё оплачен. Связать его с
+        файлом состояния можно только через движок, который этот файл открыл.
+
+        Собранная руками автовыдача про файл не знает и знать не может, а
+        выглядит рабочей: первый прогон отдаёт товар, второй отдаёт его снова.
+
+        Args:
+            plan (DeliveryPlan): Что и кому выдавать.
+            on_hold (Callable[[DeliveryDecision], None] | None): Что делать с
+                заказом, который сам не выдаётся.
+
+        Returns:
+            AutoDelivery: Автовыдача с долговечным реестром.
+
+        Raises:
+            ConfigurationError: Если у клиента нет файла состояния. Реестр в
+                памяти здесь хуже отсутствия реестра: он выглядит защитой и ею
+                не является.
+        """
+        from ._delivery import AutoDelivery
+
+        engine = self._client.engine
+        if engine._ledger is None:
+            raise ConfigurationError(
+                "автовыдача без файла состояния невозможна: реестр выданного "
+                "обнулится при перезапуске, и товар уйдёт второй раз по заказу, "
+                "который в списке продаж всё ещё оплачен. Передайте клиенту "
+                "state_path"
+            )
+
+        return AutoDelivery(
+            plan,
+            engine.delivered,
+            lambda chat, text, key: self.send(chat, text, idempotency_key=key),
+            on_hold=on_hold,
+            persist=engine.save_delivery,
+        )
 
     def send_now(
         self,

@@ -17,6 +17,7 @@ import json
 import re
 from datetime import UTC, datetime
 from pathlib import Path
+from time import monotonic
 from typing import Any, Final
 
 import pytest
@@ -77,7 +78,11 @@ class _Tape:
         self.submitted: list[dict[str, str]] = []
 
     def fetch(self, path: str) -> Observation:
-        """Отдаёт страницу диалога.
+        """Отдаёт страницу по пути.
+
+        Раздача по путям нужна проверкам, которые вправду крутят цикл: он
+        читает список продаж и список диалогов, и страница диалога вместо них
+        разобралась бы неполно.
 
         Аргументы:
             path (str): запрошенный путь.
@@ -85,6 +90,16 @@ class _Tape:
         Возвращает:
             Observation: наблюдение.
         """
+        if path.startswith("/orders"):
+            return _observation(
+                (FIXTURES / "orders-trade.logged.ru.skeleton.txt").read_text(encoding="utf-8"),
+                url="https://funpay.com/orders/trade",
+            )
+        if path.startswith("/chat/") and "node=" not in path:
+            return _observation(
+                (FIXTURES / "chat.logged.ru.skeleton.txt").read_text(encoding="utf-8"),
+                url="https://funpay.com/chat/",
+            )
         return _observation(_thread_html(), url=f"https://funpay.com/chat/?node={NODE_ID}")
 
     def submit(self, path: str, fields: dict[str, str], headers: dict[str, str]) -> Observation:
@@ -254,6 +269,11 @@ def test_the_hourly_limit_is_not_reset_by_a_restart(tmp_path: Path) -> None:
     Проверка идёт не по числу записей, а по РЕШЕНИЮ ограничителя: записи можно
     хранить и не смотреть на них.
 
+    МОНОТОННАЯ МЕТКА БЕРЁТСЯ НАСТОЯЩАЯ, а не нулевая. Нулевая сравнивалась бы с
+    показанием часов машины, и на аптайме больше суток запись выглядела бы
+    просроченной: проверка падала бы не от поломки, а от того, что машину давно
+    не перезагружали.
+
     Аргументы:
         tmp_path (Path): временный каталог.
 
@@ -267,7 +287,7 @@ def test_the_hourly_limit_is_not_reset_by_a_restart(tmp_path: Path) -> None:
         now = _now_ms()
         governor.note_incoming(NODE_ID, at_ms=now)
         for index in range(OUTBOUND_MESSAGES_PER_HOUR):
-            governor.record(f"chat{index}", now_ms=now, now_s=0.0)
+            governor.record(f"chat{index}", now_ms=now, now_s=monotonic())
         first.engine._save_ledger(now_ms=now)
 
     with Client(transport=_Tape(), state_path=state) as second:  # type: ignore[arg-type]
@@ -335,3 +355,145 @@ def test_the_watch_loop_adopts_its_state_file_as_the_ledger(tmp_path: Path) -> N
             "цикл получил файл состояния и не сделал его реестром: отправка "
             "будет отказывать при живом файле"
         )
+
+
+def test_the_watch_loop_does_not_wipe_other_owners_of_the_file(tmp_path: Path) -> None:
+    """ЗАКРЫВАЕТ ДЕФЕКТ, найденный перепроверкой.
+
+    У файла состояния несколько владельцев: курсоры и гашение пишет цикл,
+    реестр отправок - отправка, реестр выдач - автовыдача. Цикл записывал файл
+    ЦЕЛИКОМ, и чужие ключи стирались на каждом шаге.
+
+    Стирались молча, при зелёном прогоне: реестр выдач исчезал, и товар уходил
+    второй раз по заказу, который в списке продаж всё ещё оплачен.
+
+    Аргументы:
+        tmp_path (Path): временный каталог.
+
+    Возвращает:
+        None
+    """
+    from funora._watch import Router
+
+    state = tmp_path / "state.json"
+    StateFile(state).save({"delivery": {"done": [{"order_id": "A1", "at_ms": 1}]}})
+
+    with Client(transport=_Tape(), state_path=state) as client:  # type: ignore[arg-type]
+        # Шаг делается НАСТОЯЩИЙ: сохранение состояния живёт в теле цикла, и
+        # при нуле проходов оно не выполнится ни разу - проверка проверяла бы
+        # ничего.
+        client.run(
+            client.engine.watch(Router(), max_iterations=1, state_path=state),
+            router=Router(),
+        )
+
+    stored = StateFile(state).load()
+    assert "delivery" in stored, (
+        f"ключ реестра выдач стёрт наблюдением: осталось {sorted(stored)}. "
+        "Товар уйдёт второй раз по уже выданному заказу"
+    )
+    assert stored["delivery"]["done"][0]["order_id"] == "A1"
+
+
+def test_the_adopted_file_restores_the_delivery_ledger_too(tmp_path: Path) -> None:
+    """Требует, чтобы усыновление файла циклом поднимало и реестр выдач.
+
+    Путей к файлу два: через Client(state_path=...) и через watch(state_path=...).
+    Проверять надо оба - выпади один, бот, передавший путь только наблюдению,
+    остался бы без памяти о выданном.
+
+    Аргументы:
+        tmp_path (Path): временный каталог.
+
+    Возвращает:
+        None
+    """
+    from funora._watch import Router
+
+    state = tmp_path / "state.json"
+    StateFile(state).save({"delivery": {"done": [{"order_id": "B7", "at_ms": 5}]}})
+
+    # Клиент БЕЗ state_path: файл достанется ему только от наблюдения.
+    with Client(transport=_Tape()) as client:  # type: ignore[arg-type]
+        assert len(client.engine.delivered) == 0
+        client.run(
+            client.engine.watch(Router(), max_iterations=0, state_path=state), router=Router()
+        )
+
+        assert client.engine.delivered.seen("B7") is True, (
+            "усыновлённый файл не поднял реестр выдач: бот, передавший путь "
+            "только наблюдению, выдаст товар второй раз"
+        )
+
+
+def test_the_adoption_merges_the_ledger_instead_of_replacing_it(tmp_path: Path) -> None:
+    """Требует, чтобы вход в цикл не обнулял накопленное в памяти.
+
+    Усыновление читает файл и восстанавливает реестр. Восстановление ЗАМЕЩАЕТ
+    содержимое, и потому накопленное до входа в цикл пропадало: квота
+    обнулялась посреди работы, без всякого перезапуска.
+
+    Аргументы:
+        tmp_path (Path): временный каталог.
+
+    Возвращает:
+        None
+    """
+    from funora._watch import Router
+
+    state = tmp_path / "state.json"
+    StateFile(state).save(
+        {"outbound": {"sent": [{"chat_id": "из_файла", "at_ms": 1}], "incoming": {}}}
+    )
+
+    with Client(transport=_Tape(), unsafe_sends_without_ledger=True) as client:  # type: ignore[arg-type]
+        governor = client.engine._state.outbound
+        governor.record("в_памяти", now_ms=_now_ms(), now_s=0.0)
+        assert len(governor.snapshot()["sent"]) == 1
+
+        client.run(
+            client.engine.watch(Router(), max_iterations=0, state_path=state), router=Router()
+        )
+
+        chats = {one["chat_id"] for one in client.engine._state.outbound.snapshot()["sent"]}
+
+    assert chats == {"из_файла", "в_памяти"}, (
+        f"после входа в цикл в реестре {sorted(chats)}: накопленное в памяти "
+        "потеряно, и квота обнулилась без перезапуска"
+    )
+
+
+def test_the_ledger_is_pruned_even_without_a_single_send(tmp_path: Path) -> None:
+    """ЗАКРЫВАЕТ ДЕФЕКТ, найденный перепроверкой.
+
+    Прополку реестра звала одна отправка. Бот, который наблюдает и не пишет -
+    а таких большинство, - не прополаывал его никогда: метки тепла копились в
+    файле, переживали своё окно и с каждым шагом уезжали на диск заново.
+
+    Аргументы:
+        tmp_path (Path): временный каталог.
+
+    Возвращает:
+        None
+    """
+    from funora._watch import Router
+    from funora.budget import COLD_OUTREACH_WINDOW_MS
+
+    state = tmp_path / "state.json"
+    stale = _now_ms() - COLD_OUTREACH_WINDOW_MS * 3
+    StateFile(state).save(
+        {"outbound": {"sent": [], "incoming": {"давний": stale, "свежий": _now_ms()}}}
+    )
+
+    with Client(transport=_Tape(), state_path=state) as client:  # type: ignore[arg-type]
+        client.run(
+            client.engine.watch(Router(), max_iterations=1, state_path=state),
+            router=Router(),
+        )
+
+    left = StateFile(state).load()["outbound"]["incoming"]
+    assert "давний" not in left, (
+        f"просроченная метка тепла осталась: {sorted(left)}. Реестр растёт "
+        "столько же, сколько живёт аккаунт, и уезжает на диск каждый шаг"
+    )
+    assert "свежий" in left, "прополка унесла и свежую метку"

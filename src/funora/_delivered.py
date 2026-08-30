@@ -120,10 +120,19 @@ class DeliveryLedger:
     def restore(self, payload: dict[str, Any]) -> None:
         """Восстанавливает состояние из файла.
 
-        Запись без обязательного поля ПРОПУСКАЕТСЯ, а не достраивается
-        умолчанием. Достроенная запись сказала бы «выдавали», не зная чего, - и
-        это худший исход из возможных: покупатель не получит товар, а реестр
-        будет уверен, что получил.
+        Запись, у которой обязательное поле отсутствует ЛИБО НЕПРИГОДНО,
+        пропускается. Проверять только наличие ключа было мало: значение
+        приводилось к строке молча, и запись с пустым либо чужеродным
+        идентификатором говорила «выдавали», не зная чего.
+
+        НИ ОДНА ПЛОХАЯ ЗАПИСЬ НЕ РУШИТ ОСТАЛЬНЫЕ. Прежде разбор шёл по месту -
+        сперва обнулял реестр, потом добавлял по одной, - и первая же битая
+        метка времени бросала голое исключение из середины: реестр оставался
+        наполовину восстановленным, а всё, что стояло дальше, пропадало.
+        Пропадало насовсем: по этим заказам товар выдали бы второй раз.
+
+        Собирается в стороне и подставляется целиком: либо восстановилось, либо
+        осталось как было.
 
         Аргументы:
             payload (dict[str, Any]): Прочитанное из файла состояния.
@@ -131,19 +140,41 @@ class DeliveryLedger:
         Возвращает:
             None
         """
-        self._done = {}
-        for one in payload.get("done", []):
+        raw = payload.get("done")
+        if not isinstance(raw, list):
+            # Ни списка, ни записей. Пустой реестр здесь честнее исключения:
+            # файл мог быть записан прежней редакцией, у которой раздела не
+            # было вовсе.
+            self._done = {}
+            return
+
+        restored: dict[str, Delivery] = {}
+        for one in raw:
             if not isinstance(one, dict):
                 continue
-            if "order_id" not in one or "at_ms" not in one:
+
+            order_id = one.get("order_id")
+            # Только строка и только непустая. Число, None и словарь дали бы
+            # ключ вида 'None' либо "{'a': 1}" - запись о заказе, которого нет.
+            if not isinstance(order_id, str) or not order_id.strip():
                 continue
-            record = Delivery(
-                order_id=str(one["order_id"]),
-                offer_id=str(one.get("offer_id", "")),
-                at_ms=int(one["at_ms"]),
-                outcome=str(one.get("outcome", "")),
+
+            at_ms = one.get("at_ms")
+            # Логическое исключается отдельно: в Python истина - это единица, и
+            # метка времени True прочиталась бы как первая миллисекунда эпохи.
+            if isinstance(at_ms, bool) or not isinstance(at_ms, int):
+                continue
+
+            offer_id = one.get("offer_id", "")
+            outcome = one.get("outcome", "")
+            restored[order_id] = Delivery(
+                order_id=order_id,
+                offer_id=offer_id if isinstance(offer_id, str) else "",
+                at_ms=at_ms,
+                outcome=outcome if isinstance(outcome, str) else "",
             )
-            self._done[record.order_id] = record
+
+        self._done = restored
 
     def __len__(self) -> int:
         """Возвращает число записей.

@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Final
 
 import pytest
@@ -425,6 +426,95 @@ def test_the_ledger_survives_a_restart() -> None:
     assert record is not None and record.offer_id == "L2"
 
 
+@pytest.mark.parametrize(
+    ("payload", "why"),
+    [
+        ({"done": [{"order_id": "B", "at_ms": None}]}, "метка None"),
+        ({"done": [{"order_id": "B", "at_ms": "позавчера"}]}, "метка строкой"),
+        ({"done": [{"order_id": "B", "at_ms": True}]}, "метка логическая"),
+        ({"done": [{"order_id": "B", "at_ms": 1.9}]}, "метка дробная"),
+        ({"done": [{"order_id": None, "at_ms": 1}]}, "заказ None"),
+        ({"done": [{"order_id": {"a": 1}, "at_ms": 1}]}, "заказ словарём"),
+        ({"done": [{"order_id": "  ", "at_ms": 1}]}, "заказ из пробелов"),
+        ({"done": None}, "перечень не список"),
+        ({}, "перечня нет вовсе"),
+    ],
+)
+def test_a_record_with_an_unusable_value_is_dropped_without_an_exception(
+    payload: dict[str, object], why: str
+) -> None:
+    """ЗАКРЫВАЕТ ДЕФЕКТ, найденный перепроверкой.
+
+    Прежде проверялось НАЛИЧИЕ ключа, а не пригодность значения: заказ None
+    давал ключ «None», словарь - строку со скобками, а битая метка времени
+    бросала голое исключение прямо из середины разбора.
+
+    Голое - значит не из семейства отказов Funora: вызывающий, ловящий
+    FunoraError по документации, получал бы необработанное исключение.
+
+    Аргументы:
+        payload (dict[str, object]): Прочитанное из файла.
+        why (str): Чем запись непригодна.
+
+    Возвращает:
+        None
+    """
+    ledger = DeliveryLedger()
+    ledger.restore(payload)
+    assert len(ledger) == 0, f"{why}: запись принята, хотя значение непригодно"
+
+
+def test_one_bad_record_does_not_destroy_the_others() -> None:
+    """Требует, чтобы плохая запись не уносила с собой хорошие.
+
+    Прежде разбор шёл по месту: сперва обнулял реестр, потом добавлял по одной.
+    Первая же битая метка бросала исключение из середины, и всё, что стояло
+    ДАЛЬШЕ, пропадало насовсем - по этим заказам товар выдали бы второй раз.
+
+    Возвращает:
+        None
+    """
+    ledger = DeliveryLedger()
+    ledger.restore(
+        {
+            "done": [
+                {"order_id": "A1", "at_ms": 1},
+                {"order_id": "A2", "at_ms": "позавчера"},
+                {"order_id": "A3", "at_ms": 3},
+            ]
+        }
+    )
+
+    assert ledger.seen("A1") is True
+    assert ledger.seen("A3") is True, (
+        "запись после битой потеряна: по этому заказу товар уйдёт второй раз"
+    )
+    assert ledger.seen("A2") is False
+
+
+def test_a_failed_restore_leaves_the_ledger_as_it_was() -> None:
+    """Требует, чтобы неудачное восстановление не рушило прежнее.
+
+    Либо восстановилось, либо осталось как было. Наполовину восстановленный
+    реестр - это забытые выдачи, а забытая выдача необратима.
+
+    Возвращает:
+        None
+    """
+    ledger = DeliveryLedger()
+    ledger.record(Delivery(order_id="СТАРАЯ", offer_id="L1", at_ms=1, outcome="ok"))
+
+    ledger.restore({"done": "вовсе не перечень"})
+    assert len(ledger) == 0, "мусорный перечень принят"
+
+    other = DeliveryLedger()
+    other.record(Delivery(order_id="СТАРАЯ", offer_id="L1", at_ms=1, outcome="ok"))
+    other.restore({"done": [{"order_id": "НОВАЯ", "at_ms": 2}]})
+    assert other.seen("НОВАЯ") and not other.seen("СТАРАЯ"), (
+        "восстановление обязано ЗАМЕЩАТЬ содержимое, а не дополнять его"
+    )
+
+
 def test_a_record_without_its_key_is_dropped_not_guessed() -> None:
     """Требует пропускать неполную запись, а не достраивать её умолчанием.
 
@@ -539,3 +629,152 @@ def test_normalization_is_shared_with_nothing_surprising() -> None:
         None
     """
     assert normalized_for_match("  Аккаунт\n\tSTEAM  ") == "аккаунт steam"
+
+
+def test_the_delivery_survives_a_restart(tmp_path: Path) -> None:
+    """ЗАКРЫВАЕТ ХУДШИЙ ДЕФЕКТ ДНЯ, найденный перепроверкой.
+
+    Реестр выданного объявлялся долговечным - в docstring модуля, в docstring
+    слоя бота и в руководстве. Он им НЕ БЫЛ: snapshot и restore не вызывались
+    из рабочего кода ни разу.
+
+    Прогон примера из руководства двумя процессами подряд выдавал один и тот же
+    заказ ДВАЖДЫ. Заказ при этом в списке продаж всё ещё оплачен, отменить
+    выдачу нечем, и узнать о ней неоткуда.
+
+    Аргументы:
+        tmp_path (Path): временный каталог под файл состояния.
+
+    Возвращает:
+        None
+    """
+    from funora._client import Client
+    from funora._watch import Router
+    from funora.bot import Bot
+
+    class _Silent:
+        """Транспорт, которого никто не зовёт: решение принимается без сети."""
+
+        def fetch(self, path: str) -> object:
+            """Не зовётся.
+
+            Возвращает:
+                object: ничего.
+            """
+            raise AssertionError("решение о выдаче не должно ходить в сеть")
+
+        def close(self) -> None:
+            """Закрывает подставной транспорт.
+
+            Возвращает:
+                None
+            """
+
+    state = tmp_path / "state.json"
+    plan = DeliveryPlan(goods={"L2": "товар"}, chat_of=lambda one: "chat")
+
+    def once() -> tuple[bool, int]:
+        """Один запуск процесса: решает по тому же заказу.
+
+        Возвращает:
+            tuple[bool, int]: Выдано ли и сколько записей в реестре при старте.
+        """
+        with Client(transport=_Silent(), state_path=state) as client:  # type: ignore[arg-type]
+            bot = Bot(client, Router())
+            was = len(client.engine.delivered)
+            delivery = bot.deliveries(plan)
+            decision = delivery.decide(_order(), LOTS, page_completeness=Completeness.COMPLETE)
+            if decision.will_deliver:
+                delivery.handle(_order(), LOTS, page_completeness=Completeness.COMPLETE)
+            return decision.will_deliver, was
+
+    first, before_first = once()
+    second, before_second = once()
+
+    assert first is True and before_first == 0, "первый запуск не выдал"
+    assert before_second == 1, (
+        f"после перезапуска в реестре {before_second} записей: он не сохранился, "
+        "и товар уйдёт второй раз"
+    )
+    assert second is False, "заказ выдан ВТОРОЙ раз после перезапуска"
+
+
+def test_auto_delivery_without_a_state_file_is_refused(tmp_path: Path) -> None:
+    """Требует отказать в автовыдаче без файла состояния.
+
+    Реестр в памяти здесь хуже отсутствия реестра: он выглядит защитой и ею не
+    является. Первый прогон отдаёт товар, второй отдаёт его снова, и оба
+    выглядят одинаково успешными.
+
+    Аргументы:
+        tmp_path (Path): временный каталог.
+
+    Возвращает:
+        None
+    """
+    from funora._client import Client
+    from funora._watch import Router
+    from funora.bot import Bot
+    from funora.errors import ConfigurationError
+
+    class _Silent:
+        """Транспорт, которого никто не зовёт."""
+
+        def close(self) -> None:
+            """Закрывает подставной транспорт.
+
+            Возвращает:
+                None
+            """
+
+    with Client(transport=_Silent()) as client:  # type: ignore[arg-type]
+        bot = Bot(client, Router())
+        with pytest.raises(ConfigurationError, match="перезапуск"):
+            bot.deliveries(DeliveryPlan(goods={}, chat_of=lambda one: "chat"))
+
+
+def test_the_ledger_is_saved_before_the_send(tmp_path: Path) -> None:
+    """Требует сохранять реестр НА ДИСК впереди отправки.
+
+    Запись в память впереди отправки уже проверена. Здесь второе: перезапуск
+    между постановкой в очередь и записью на диск выдал бы товар второй раз.
+
+    Аргументы:
+        tmp_path (Path): временный каталог.
+
+    Возвращает:
+        None
+    """
+    from funora._state import StateFile
+
+    state = tmp_path / "state.json"
+    ledger = DeliveryLedger()
+    seen: list[int] = []
+
+    def send(chat_id: str, text: str, key: str) -> SendTicket:
+        """Смотрит, что уже лежит на диске в момент отправки.
+
+        Возвращает:
+            SendTicket: Квитанция.
+        """
+        stored = StateFile(state).load().get("delivery", {})
+        seen.append(len(stored.get("done", [])))
+        return SendTicket(command=SendCommand(chat_id=chat_id, text=text, idempotency_key=key))
+
+    def persist() -> None:
+        """Кладёт реестр в файл состояния.
+
+        Возвращает:
+            None
+        """
+        StateFile(state).update({"delivery": ledger.snapshot()})
+
+    plan = DeliveryPlan(goods={"L2": "товар"}, chat_of=lambda one: "chat")
+    AutoDelivery(plan, ledger, send, persist=persist).handle(
+        _order(), LOTS, page_completeness=Completeness.COMPLETE
+    )
+
+    assert seen == [1], (
+        f"на диске в момент отправки было {seen} записей вместо одной: "
+        "перезапуск здесь выдал бы товар второй раз"
+    )

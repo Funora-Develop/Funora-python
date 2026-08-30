@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Generator
+from collections.abc import Awaitable, Callable, Generator
 from dataclasses import replace
 from pathlib import Path
 from time import monotonic
@@ -597,7 +597,7 @@ class AsyncClient:
         router: Router | None = None,
         concurrency: int = 1,
         on_handler_error: Callable[[HandlerError], None] | None = None,
-        on_idle: Callable[[int], None] | None = None,
+        on_idle: Callable[[int], object] | None = None,
     ) -> T:
         """Прокручивает ядро, выполняя то, о чём оно просит.
 
@@ -644,7 +644,16 @@ class AsyncClient:
                 spent = 0.0
                 if on_idle is not None:
                     started = monotonic()
-                    on_idle(request.ms)
+                    # Сопрограмму НАДО ДОЖДАТЬСЯ. Прежде она вызывалась и не
+                    # ожидалась: возвращённая сопрограмма выбрасывалась, тело
+                    # крючка не выполнялось ни разу, и Python сообщал об этом
+                    # предупреждением в поток ошибок - то есть никак.
+                    #
+                    # Обещание у двух фасадов одно, и держаться оно обязано в
+                    # обе стороны: обычная функция здесь работает так же.
+                    outcome = on_idle(request.ms)
+                    if isinstance(outcome, Awaitable):
+                        await outcome
                     spent = (monotonic() - started) * 1000
                 remaining = request.ms - spent
                 if remaining > 0:

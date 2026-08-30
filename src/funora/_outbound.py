@@ -369,10 +369,19 @@ class OutboundGovernor:
         self._sent = [
             one for one in self._sent if self._age_ms(one, now_ms=now_ms, now_s=now_s) < widest
         ]
+        # Метка ИЗ БУДУЩЕГО остаётся, а не выбрасывается как просроченная. Тот
+        # же возраст и то же правило, что у отправок: контракт требует этого
+        # прямо, в разделе clock_went_backwards.
+        #
+        # Разница с is_warm намеренная и записана в контракте отдельно. Там
+        # метка из будущего означает «переписка НЕ тёплая» - отказ временный, до
+        # того как часы догонят метку. Здесь выброс был бы ОКОНЧАТЕЛЬНЫМ:
+        # переведённые назад часы стирали бы тепло навсегда, и переписка,
+        # согретая покупателем, остывала бы от одной поправки времени.
         self._incoming = {
             chat: at
             for chat, at in self._incoming.items()
-            if 0 <= now_ms - at < COLD_OUTREACH_WINDOW_MS
+            if max(0, now_ms - at) < COLD_OUTREACH_WINDOW_MS
         }
 
     def snapshot(self) -> dict[str, Any]:

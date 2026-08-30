@@ -44,6 +44,7 @@ from ._budget import Budget
 from ._catalog import CatalogPage, parse_catalog
 from ._chats import ChatsPage, parse_chats_page
 from ._classify import DEFAULT_IDENTITY_CSS, ResponseClass, Verdict, classify
+from ._delivered import DeliveryLedger
 from ._diff import (
     UNREAD_STATUS,
     Delivery,
@@ -564,6 +565,7 @@ class Engine:
         "_budget",
         "_health_changes",
         "_identity",
+        "_delivered",
         "_ledger",
         "_settings",
         "_state",
@@ -605,8 +607,16 @@ class Engine:
         # Послабление есть, оно называется вслух и оставляет след в состоянии
         # здоровья: снять защиту можно, снять её незаметно нельзя.
         self._state.outbound.durable = self._ledger is not None or unsafe_sends_without_ledger
+
+        #: Что уже выдано по заказам. Живёт рядом с реестром отправок и в том же
+        #: файле: у автовыдачи та же беда, что у пределов отправки, - память
+        #: процесса обнуляется, а «этот заказ выдан» обязано жить, пока жив заказ.
+        self._delivered = DeliveryLedger()
+
         if self._ledger is not None:
-            self._state.outbound.restore(self._ledger.load().get("outbound") or {})
+            stored = self._ledger.load()
+            self._state.outbound.restore(stored.get("outbound") or {})
+            self._delivered.restore(stored.get("delivery") or {})
         #: Смены состояния доступа, ждущие выдачи партией.
         self._health_changes: list[tuple[Health, Health, str]] = []
 
@@ -1163,6 +1173,36 @@ class Engine:
             page = unverified(page)
         self._note_success(Capability.CHATS_LIST, page.completeness, page)
         return page
+
+    @property
+    def delivered(self) -> DeliveryLedger:
+        """Реестр выданного по заказам.
+
+        Живёт у движка, а не у автовыдачи, по той же причине, по какой у него
+        живёт реестр отправок: файл состояния один, и владеть им должен тот, кто
+        его открыл.
+
+        Returns:
+            DeliveryLedger: Реестр.
+        """
+        return self._delivered
+
+    def save_delivery(self) -> None:
+        """Сохраняет реестр выданного.
+
+        Зовётся ВПЕРЕДИ отправки товара, как и запись в сам реестр: «сохраним,
+        когда подтвердится» означает не сохранить ровно те выдачи, которые
+        могли уйти.
+
+        Без файла состояния не делает ничего и об этом не жалуется: отказывать
+        здесь нечему, отказывает отправка.
+
+        Returns:
+            None
+        """
+        if self._ledger is None:
+            return
+        self._ledger.update({"delivery": self._delivered.snapshot()})
 
     def _save_ledger(self, *, now_ms: int) -> None:
         """Сохраняет реестр отправок в файл состояния.
@@ -1994,12 +2034,35 @@ class Engine:
             # Файл наблюдения становится и реестром отправок. Иначе бот, честно
             # передавший state_path, всё равно отправлял бы без долговечного
             # реестра - и отказывал бы себе сам, не понимая почему.
+            #
+            # ЧИТАЕТСЯ ДО ОБЪЯВЛЕНИЯ. Прежде признак долговечности ставился
+            # раньше чтения, и падение чтения оставляло движок «долговечным» с
+            # пустым реестром: защита переставала защищать ровно там, где файл
+            # непригоден.
+            stored = state.load()
             self._ledger = state
             self._state.outbound.durable = True
-            self._state.outbound.restore(state.load().get("outbound") or {})
-            # Реестр появился - значит защита больше не снята, и отметке в
-            # состоянии здоровья взяться неоткуда.
-            self._unsafe.discard(UNSAFE_SENDS_WITHOUT_LEDGER)
+
+            # СЛИЯНИЕ, а не замещение. Прочитанное с диска добавляется к тому,
+            # что уже накоплено в памяти, - иначе вход в цикл обнулял бы квоту
+            # БЕЗ перезапуска, то есть ровно то, что реестр обязан
+            # предотвращать.
+            merged = self._state.outbound.snapshot()
+            fresh = stored.get("outbound") or {}
+            merged["sent"] = [*fresh.get("sent", []), *merged.get("sent", [])]
+            merged["incoming"] = {**fresh.get("incoming", {}), **merged.get("incoming", {})}
+            self._state.outbound.restore(merged)
+            self._delivered.restore(stored.get("delivery") or {})
+
+            # ОТМЕТКА НЕ СНИМАЕТСЯ. Прежде усыновление файла её стирало, и
+            # состояние здоровья переставало помнить, что часть отправок уже
+            # ушла без долговечного реестра.
+            #
+            # Отметка говорит о СЕАНСЕ, а не о нынешнем мгновении: контракт
+            # называет её единственным способом узнать со стороны, что защита
+            # снималась. Снятая задним числом, она отвечает на другой вопрос.
+            if UNSAFE_SENDS_WITHOUT_LEDGER in self._unsafe:
+                _log.info("реестр появился, но отметка о прежних отправках без него остаётся")
 
         known_orders: dict[str, str] | None = None
         known_chats: dict[str, str] | None = None
@@ -2219,11 +2282,19 @@ class Engine:
                 )
 
             if state is not None:
+                self._state.outbound.forget_expired(
+                    now_ms=int(orders.observed_at.timestamp() * 1000), now_s=monotonic()
+                )
                 # Сохранение идёт после обработчиков, вместе с фиксацией
                 # доставленного. Сохрани мы раньше - перезапуск между записью и
                 # обработчиком потерял бы событие: файл говорил бы, что оно
                 # доставлено, а обработчик его не видел.
-                state.save(
+                #
+                # ПРАВКА, А НЕ ЗАПИСЬ ЦЕЛИКОМ. У файла несколько владельцев:
+                # курсоры и гашение здесь, реестр отправок в send_text, реестр
+                # выдач у автовыдачи. Запись целиком стирала бы чужие ключи на
+                # каждом шаге - и стирала молча, при зелёном прогоне.
+                state.update(
                     {
                         "dedup": dedup.snapshot(now),
                         # Номера попыток переживают перезапуск вместе с гашением.
@@ -2239,7 +2310,12 @@ class Engine:
                             "pending_threads": pending,
                         },
                         # Реестр отправок пишется вместе с курсорами, а не
-                        # вместо них: файл один, и владельцев у него двое.
+                        # вместо них: файл один, и владельцев у него несколько.
+                        #
+                        # Прополка идёт ЗДЕСЬ, а не только при отправке. Прежде
+                        # её звала одна send_text, и бот, который наблюдает и не
+                        # пишет, не прополаывал реестр никогда: метки тепла
+                        # копились в файле и переживали своё окно.
                         "outbound": self._state.outbound.snapshot(),
                     }
                 )
