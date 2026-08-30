@@ -249,6 +249,20 @@ OPERATIONS: Final[dict[str, Operation]] = {
             "funora.transport",
         ),
     ),
+    "lots.form": Operation(
+        name="lots.form",
+        capability="lots.form",
+        safety=Safety.SAFE,
+        request_class="automation",
+        returns="LotForm",
+        errors=(
+            "funora.capability.unsupported",
+            "funora.domain.not_found",
+            "funora.auth.session_expired",
+            "funora.protocol.changed",
+            "funora.transport",
+        ),
+    ),
     "lots.list_own": Operation(
         name="lots.list_own",
         capability="lots.list_own",
@@ -292,7 +306,7 @@ OPERATIONS: Final[dict[str, Operation]] = {
         capability="lots.update_price",
         safety=Safety.IDEMPOTENT,
         request_class="automation",
-        returns="Lot",
+        returns="LotForm",
         errors=(
             "funora.capability.unsupported",
             "funora.domain.precondition_failed",

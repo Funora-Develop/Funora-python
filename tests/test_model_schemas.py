@@ -252,6 +252,7 @@ def test_every_returned_field_is_described() -> None:
         None
     """
     from funora._chats import ChatListEntry
+    from funora._lot_form import LotForm
     from funora._orders import OrderListEntry
     from funora._own_lots import OwnLot
     from funora._runner import SendResult
@@ -263,6 +264,7 @@ def test_every_returned_field_is_described() -> None:
         (Message, "thread-message"),
         (SendResult, "send-result"),
         (OwnLot, "own-lot"),
+        (LotForm, "lot-form"),
     )
     for cls, name in pairs:
         declared = set(_schema(name).get("properties", {}))
@@ -291,6 +293,10 @@ def test_unbuildable_models_say_so() -> None:
         "observed",
         "defect",
         "money",
+        # Собирается с 31.08.2026: funora._lot_form.LotForm. Объявлена тогда же
+        # и тогда же написана - в один заход, чтобы схема не успела побыть
+        # намерением.
+        "lot-form",
         "order-list-entry",
         "chat-list-entry",
         "thread-message",

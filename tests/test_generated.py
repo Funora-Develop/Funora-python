@@ -415,6 +415,12 @@ def test_implemented_capabilities_are_the_ones_actually_called() -> None:
     )
     called = set(re.findall(r"fetch_ok\(\s*(Capability\.[A-Z_]+)", source))
     called |= set(re.findall(r"capability = (Capability\.[A-Z_]+)", source))
+    # Явная проверка возможности - тоже вызов, и у операций ЗАПИСИ он
+    # единственный. Отправка текста читает страницу диалога под возможностью
+    # отправки, и одна проверка закрывает обе стороны; у правки цены страницы
+    # две - форма под lots.form, сохранение под lots.update_price, - и вторая
+    # спрашивается только так.
+    called |= set(re.findall(r"check_capability\(\s*(Capability\.[A-Z_]+)", source))
 
     declared = {f"Capability.{item.name}" for item in IMPLEMENTED}
     assert declared <= called, (

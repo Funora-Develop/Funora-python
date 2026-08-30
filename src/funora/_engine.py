@@ -431,6 +431,16 @@ IMPLEMENTED: Final[frozenset[Capability]] = frozenset(
         Capability.ACCOUNT_PROFILE,
         Capability.CHATS_SEND_TEXT,
         Capability.LOTS_LIST_OWN,
+        # Обе добавлены 31.08.2026, и добавлены с опозданием: операции написаны
+        # днём раньше, а перечень остался прежним. Перечней «что мы умеем» стало
+        # два - фасад и этот, - и они разошлись молча.
+        #
+        # Цена расхождения видна снаружи. Вызывающий, спросивший
+        # capability(LOTS_UPDATE_PRICE), получал отказ «операции под неё нет» -
+        # при работающем client.lots.update_price. Профиль возможностей правку
+        # цены не показывал вовсе.
+        Capability.LOTS_FORM,
+        Capability.LOTS_UPDATE_PRICE,
     }
 )
 
@@ -1043,11 +1053,20 @@ class Engine:
         node = _digits(node_id, "раздела")
         offer = _digits(offer_id, "предложения")
 
+        # ВОЗМОЖНОСТЬ СВОЯ, а не занятая у списка. Страница другая -
+        # /lots/offerEdit против /lots/{node}/trade, - и отвечать на них площадка
+        # вправе по-разному. Пока чтение шло под возможностью списка, отказ на
+        # одной странице выставлял бы состояние другой, а успех на списке
+        # объявлял бы форму доступной, ни разу её не спросив.
         observation = yield from self.fetch_ok(
-            Capability.LOTS_LIST_OWN,
+            Capability.LOTS_FORM,
             LOT_EDIT_PATH.format(node_id=node, offer_id=offer),
         )
-        return parse_lot_form(observation.html, observed_at=datetime.now(UTC))
+        form = parse_lot_form(observation.html, observed_at=datetime.now(UTC))
+        # Страница НЕ передаётся: у формы нет счётчиков строк по устройству -
+        # это одна сущность, а не перечень. Ветка с None для того и заведена.
+        self._note_success(Capability.LOTS_FORM, form.completeness, None)
+        return form
 
     def update_price(
         self, node_id: str, offer_id: str, price: str, *, expected_revision: str
@@ -1093,6 +1112,21 @@ class Engine:
         #
         # Отказ РАНЬШЕ чтения формы: настройка клиента от страницы не зависит,
         # и ходить за ней ради заведомого отказа значит тратить чужой запрос.
+        # ВОЗМОЖНОСТЬ ЗАПИСИ СПРАШИВАЕТСЯ ОТДЕЛЬНО ОТ ВОЗМОЖНОСТИ ЧТЕНИЯ.
+        #
+        # Чтение формы идёт под lots.form и спрашивает её само. Прежде на этом
+        # всё и кончалось: правка цены не спрашивала СВОЕЙ возможности нигде, и
+        # объявленная недоступной площадкой правка всё равно уходила запросом.
+        #
+        # У отправки текста этой дыры нет случайно: там страница диалога
+        # читается под возможностью ОТПРАВКИ, и одна проверка закрывает обе
+        # стороны. Здесь страницы две, и проверок нужно две.
+        check_capability(
+            Capability.LOTS_UPDATE_PRICE,
+            state=self._state.capabilities[Capability.LOTS_UPDATE_PRICE],
+            opted_in=Capability.LOTS_UPDATE_PRICE in self._state.opted_in,
+        )
+
         contract = OPERATIONS["lots.update_price"]
         if contract.audit_fail_closed and not self._price_audit.durable:
             raise ConfigurationError(
@@ -1170,6 +1204,12 @@ class Engine:
                 f"{expected!r}. Что случилось с лотом - неизвестно, и объявлять "
                 "успех по чужому адресу нельзя"
             )
+
+        # Состояние возможности выставляется по ПОЛОЖИТЕЛЬНОМУ свидетельству:
+        # сохранение состоялось и привело туда, куда наблюдалось. Ставится оно
+        # здесь, а не после перечитывания, - перечитывание относится к
+        # lots.form и своё состояние выставляет само.
+        self._state.capabilities[Capability.LOTS_UPDATE_PRICE] = CapabilityState.SUPPORTED
 
         return (yield from self.read_lot_form(node_id, offer_id))
 

@@ -308,6 +308,8 @@ OPERATION_METHOD: dict[str, tuple[str, str]] = {
     "chats.history": ("ChatsService", "thread"),
     "chats.send_text": ("ChatsService", "send_text"),
     "lots.list_own": ("LotsService", "list_own"),
+    "lots.form": ("LotsService", "form"),
+    "lots.update_price": ("LotsService", "update_price"),
     "account.balance": ("AccountService", "balance"),
     "account.get": ("AccountService", "get"),
     "account.refresh": ("AccountService", "refresh"),
@@ -491,3 +493,120 @@ def test_every_declared_operation_is_implemented_or_registered() -> None:
         f"перечислены в реестре как неисполненные, а метод есть: {stale}. "
         "Запись, пережившая реализацию, отговаривает звать то, что работает"
     )
+
+
+def test_no_facade_method_lacks_a_declared_operation() -> None:
+    """Требует, чтобы у каждого метода службы была объявленная операция.
+
+    ВОРОТА СМОТРЕЛИ ТОЛЬКО В ОДНУ СТОРОНУ. Проверялось, что объявленная
+    операция либо написана, либо записана в реестр неисполненного. Обратное -
+    что написанное объявлено - не проверял никто.
+
+    Поймано на lots.form: метод жил в обоих фасадах, был описан в руководстве и
+    возвращал модель, а контракт о нём не знал. Автор второго SDK, читающий
+    spec/services как перечень того, что бывает, такой операции не написал бы
+    никогда - и разошлись бы реализации молча.
+
+    Отсюда правило: имя вида «служба.метод» обязано быть либо объявленной
+    операцией, либо стоять в таблице соответствия рядом с той, которую оно
+    выполняет.
+
+    Returns:
+        None
+    """
+    from funora import _client
+    from funora.operations import OPERATIONS
+
+    services = {
+        name.removesuffix("Service").lower(): getattr(_client, name)
+        for name in dir(_client)
+        if name.endswith("Service") and isinstance(getattr(_client, name), type)
+    }
+    assert services, "у клиента не нашлось ни одной службы"
+
+    orphans = _orphan_methods(
+        {
+            name: [one for one in dir(cls) if not one.startswith("_")]
+            for name, cls in services.items()
+        },
+        declared=set(OPERATIONS),
+        mapped=OPERATION_METHOD,
+    )
+
+    assert not orphans, (
+        f"методы фасада без объявленной операции: {sorted(orphans)}. Либо "
+        "объявите операцию в spec/services, либо укажите в OPERATION_METHOD, "
+        "какую объявленную операцию метод выполняет. Метод, которого нет в "
+        "контракте, второй SDK не напишет никогда"
+    )
+
+
+def _orphan_methods(
+    methods: dict[str, list[str]],
+    *,
+    declared: set[str],
+    mapped: dict[str, tuple[str, str]],
+) -> list[str]:
+    """Находит методы фасада, за которыми нет объявленной операции.
+
+    Вынесено отдельной функцией НАРОЧНО. Проверка, которая только утверждает
+    «список пуст», ничего не доказывает: обнули список - и она пройдёт. Мутация
+    это и показала.
+
+    Здесь же логика проверяется на подставном фасаде, где сирота заведомо есть.
+
+    Аргументы:
+        methods (dict[str, list[str]]): имена методов по службам.
+        declared (set[str]): объявленные контрактом операции.
+        mapped (dict[str, tuple[str, str]]): таблица непрямых соответствий.
+
+    Возвращает:
+        list[str]: имена вида «служба.метод», за которыми операции нет.
+    """
+    # Имя операции не всегда складывается из имени службы и метода: контракт
+    # называет проверку сессии session.health, а выполняет её служба аккаунта.
+    indirect = {(cls.removesuffix("Service").lower(), method) for cls, method in mapped.values()}
+    return sorted(
+        f"{service}.{method}"
+        for service, names in methods.items()
+        for method in names
+        if f"{service}.{method}" not in declared and (service, method) not in indirect
+    )
+
+
+def test_the_orphan_search_finds_an_orphan() -> None:
+    """Требует, чтобы поиск сирот вправду что-то находил.
+
+    Ворота выше утверждают, что сирот нет. Само по себе это утверждение пусто:
+    верни поиск всегда пустой список - и ворота пройдут на любом фасаде. Ровно
+    это показала мутация.
+
+    Здесь поиск проверяется на подставном фасаде: одна служба, два метода, из
+    них один объявлен операцией, второй нет.
+
+    Returns:
+        None
+    """
+    found = _orphan_methods(
+        {"lots": ["list_own", "выдуманный"]},
+        declared={"lots.list_own"},
+        mapped={},
+    )
+    assert found == ["lots.выдуманный"], f"поиск сирот вернул {found}"
+
+
+def test_the_orphan_search_honours_the_indirect_table() -> None:
+    """Требует, чтобы непрямое соответствие снимало сироту.
+
+    Контракт называет проверку сессии session.health, а выполняет её метод
+    health службы аккаунта. Без чтения таблицы он числился бы сиротой вечно.
+
+    Returns:
+        None
+    """
+    found = _orphan_methods(
+        {"account": ["health"]},
+        declared={"session.health"},
+        mapped={"session.health": ("AccountService", "health")},
+    )
+    assert found == []
