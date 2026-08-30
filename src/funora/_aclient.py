@@ -22,6 +22,7 @@ import logging
 from collections.abc import Callable, Generator
 from dataclasses import replace
 from pathlib import Path
+from time import monotonic
 from typing import TYPE_CHECKING, TypeVar
 
 from ._account import BalancePage
@@ -596,6 +597,7 @@ class AsyncClient:
         router: Router | None = None,
         concurrency: int = 1,
         on_handler_error: Callable[[HandlerError], None] | None = None,
+        on_idle: Callable[[int], None] | None = None,
     ) -> T:
         """Прокручивает ядро, выполняя то, о чём оно просит.
 
@@ -609,6 +611,17 @@ class AsyncClient:
                 сопрограммам, которые просят раздать события.
             concurrency (int): Сколько ключей упорядочивания раздавать
                 одновременно.
+            on_handler_error (Callable[[HandlerError], None] | None): Что делать
+                с отказом обработчика. Причина отказа живёт только здесь.
+            on_idle (Callable[[int], None] | None): Что делать в паузе между
+                опросами. Вызывается ДО сна и получает длительность паузы в
+                миллисекундах; потраченное вычитается из сна.
+
+                Крючок объявлен и у синхронного клиента, и обещание у обоих
+                одно. Обещание это держится не само собой: watch однажды уже
+                принимал on_handler_error и не передавал его дальше - у
+                синхронного клиента отказ обработчика доходил до вызывающего, у
+                асинхронного пропадал молча.
 
         Returns:
             T: То, чем ядро завершилось.
@@ -628,8 +641,14 @@ class AsyncClient:
             reply = None
 
             if isinstance(request, Pause):
-                if request.ms > 0:
-                    await asyncio.sleep(request.ms / 1000)
+                spent = 0.0
+                if on_idle is not None:
+                    started = monotonic()
+                    on_idle(request.ms)
+                    spent = (monotonic() - started) * 1000
+                remaining = request.ms - spent
+                if remaining > 0:
+                    await asyncio.sleep(remaining / 1000)
             elif isinstance(request, Fetch):
                 try:
                     reply = await self._fetch(request.path)
