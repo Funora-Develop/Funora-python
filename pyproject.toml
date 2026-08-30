@@ -35,6 +35,9 @@ funora-observe = "funora.observe:main"
 # PyYAML нужен генератору из tools/codegen.py, а не самому пакету: читать
 # спецификацию приходится при сборке, но не во время работы SDK.
 dev = ["pytest>=8", "pytest-asyncio>=0.24", "mypy>=1.11", "ruff>=0.6", "PyYAML>=6"]
+# Руководство лежит в том же дереве, что и код, и собирается тем же
+# окружением: документация в отдельном репозитории расходится с кодом молча.
+docs = ["mkdocs>=1.6", "mkdocs-material>=9.5"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/funora"]

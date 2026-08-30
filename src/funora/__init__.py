@@ -19,8 +19,10 @@
 
 from __future__ import annotations
 
+from ._account import BalancePage, Transaction
 from ._aclient import AsyncChatsService, AsyncClient, AsyncOrdersService
 from ._budget import Budget, Reservation
+from ._catalog import CatalogGame, CatalogPage
 from ._chats import ChatListEntry, ChatsPage, parse_chats_page
 from ._classify import (
     DEFAULT_CONTENT_MARKERS,
@@ -42,8 +44,10 @@ from ._diff import (
 )
 from ._gate import check_capability
 from ._host import host_of, is_safe_hop, same_host
+from ._market import MarketOffer, MarketPage
 from ._money import Money
 from ._observed import Confidence, Observed, Presence
+from ._order import OrderParam, OrderView
 from ._orders import (
     Completeness,
     Defect,
@@ -52,9 +56,12 @@ from ._orders import (
     Severity,
     parse_orders_page,
 )
+from ._own_lots import OwnLot, OwnLotsPage
 from ._poll import Deduplicator, Schedule
 from ._proxies import Proxy
 from ._retry import Attempt, Safety, plan_attempt, policy_for
+from ._reviews import Review, ReviewsPage
+from ._runner import SendResult
 from ._secret import (
     CallableSecretProvider,
     EnvSecretProvider,
@@ -63,12 +70,14 @@ from ._secret import (
     SecretNotFoundError,
     SecretProvider,
 )
+from ._showcase import ShowcasePage, ShowcaseSection
 from ._skeleton import SkeletonError, skeletonize
 from ._state import StateFile
 from ._thread import Message, Origin, Thread, parse_thread
 from ._transport import AsyncFetcher, Fetcher, Observation, TransportSettings
 from ._verdicts import error_for
 from ._watch import Router, StepResult, adispatch, dispatch
+from ._whoami import Account, CapabilityProfile, SessionHealth
 from .capabilities import CAPABILITY_INITIAL, Capability, CapabilityState
 from .errors import ERROR_BY_ABI_CODE, ERROR_BY_STABLE_ID, FunoraError
 from .events import EventType
@@ -136,14 +145,34 @@ __all__ = [
     "STATUS_BY_CELL_CLASS",
     "ROW_MARKER_BY_STATUS",
     "PRESENCE_BY_CLASS",
-    "OrderStatus",
-    "STATUS_BY_CELL_CLASS",
-    "ROW_MARKER_BY_STATUS",
-    "PRESENCE_BY_CLASS",
     "OrderListEntry",
     "Completeness",
     "Defect",
     "Severity",
+    # То, что возвращают операции, и то, чем это перебирается.
+    #
+    # Прежде половина этих имён жила в приватных модулях, а операции ими уже
+    # возвращали. Вызывающий, которому нужна аннотация типа, лез в модуль с
+    # подчёркиванием - то есть в место, о котором пакет прямо говорит «менять
+    # буду молча».
+    "OrderView",
+    "OrderParam",
+    "SendResult",
+    "Account",
+    "SessionHealth",
+    "CapabilityProfile",
+    "BalancePage",
+    "Transaction",
+    "ReviewsPage",
+    "Review",
+    "OwnLotsPage",
+    "OwnLot",
+    "ShowcasePage",
+    "ShowcaseSection",
+    "CatalogPage",
+    "CatalogGame",
+    "MarketPage",
+    "MarketOffer",
     # список диалогов
     "parse_chats_page",
     "ChatsPage",
