@@ -28,6 +28,7 @@ from .._delivered import Delivery, DeliveryLedger
 from ._delivery import HOLD_FOR_OPERATOR, AutoDelivery, DeliveryDecision, DeliveryPlan
 from ._outbox import MAX_PENDING, Outbox, SendCommand, SendTicket
 from ._runtime import MAX_SENDS_PER_IDLE, Bot
+from ._spool import MAX_SPOOLED, Spool, SpoolEntry, SpoolOutcome
 
 __all__ = [
     "Bot",
@@ -36,6 +37,11 @@ __all__ = [
     "SendTicket",
     "MAX_PENDING",
     "MAX_SENDS_PER_IDLE",
+    # очередь между процессами
+    "Spool",
+    "SpoolEntry",
+    "SpoolOutcome",
+    "MAX_SPOOLED",
     # автовыдача
     "AutoDelivery",
     "DeliveryPlan",

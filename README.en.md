@@ -101,7 +101,13 @@ On top of that there is a bot layer, `funora.bot`. It provides an outbox you can
 post to **from any thread** - a Telegram handler, say - while the actual sending
 is done by the same thread that runs the watch loop. Calling directly from
 another thread corrupts the outbound governor's count silently, so it is refused
-out loud. The whole picture is in the [bot chapter](docs/guide/bot.md).
+out loud.
+
+There is a second queue too - **a directory of files** - for a Telegram bot
+started as a SEPARATE command: an in-memory queue is out of its reach entirely.
+A command claimed by a process that then died is never sent again: its fate is
+unknown, and a person decides about it. The whole picture is in the [bot
+chapter](docs/guide/bot.md).
 
 The public section listing is parsed too, but has no operation: the `Offer` model
 requires an id, a price and a category, and the page carries none of the three.
