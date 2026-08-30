@@ -121,7 +121,23 @@ def match_offer(order_description: Observed[str], lots: dict[str, Observed[str]]
         return MatchOutcome(Observed.present(hits[0][0], Confidence.INFERRED), (hits[0][0],))
 
     ordered = sorted(hits, key=lambda one: len(one[1]))
-    chained = all(ordered[index][1] in ordered[index + 1][1] for index in range(len(ordered) - 1))
+
+    # Вложенность требуется СТРОГАЯ: каждое следующее описание длиннее
+    # предыдущего и содержит его.
+    #
+    # Строгость здесь не педантизм, и стоила она дорого. Правило без неё
+    # считало цепочкой два лота с ОДИНАКОВЫМ описанием: строка входит сама в
+    # себя, условие выполнялось, и выбирался тот, что оказался последним после
+    # сортировки, - то есть наугад.
+    #
+    # Два лота с одинаковым описанием - это ровно тот случай, ради которого
+    # отказ и придуман: различить их нечем. Покупателю ушёл бы чужой товар, и
+    # ни в отказе, ни в журнале следа бы не осталось.
+    chained = all(
+        len(ordered[index][1]) < len(ordered[index + 1][1])
+        and ordered[index][1] in ordered[index + 1][1]
+        for index in range(len(ordered) - 1)
+    )
     if chained:
         return MatchOutcome(
             Observed.present(ordered[-1][0], Confidence.INFERRED),

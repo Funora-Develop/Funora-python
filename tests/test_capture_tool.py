@@ -770,6 +770,43 @@ def test_the_token_is_refused_on_a_guest_page() -> None:
     assert "войдите" in said["ответ"].lower(), f"отказ не сказал, что делать: {said['ответ']!r}"
 
 
+def test_the_guest_page_really_carries_a_token_but_no_logged_in_menu() -> None:
+    """Показывает, ПОЧЕМУ защита порядка вообще нужна, и на снимках.
+
+    Проверка не о сборщике, а о площадке, и без неё защита держится на моём
+    слове. Обе половины важны:
+
+    носитель настроек body[data-app-data] есть и у ГОСТЯ - значит токен там
+    лежит, и «нет токена» гостевую страницу не отсеет;
+
+    ссылки на собственный профиль у гостя нет ни одной, а у вошедшего их две -
+    значит отсеять можно по ней.
+
+    Returns:
+        None
+    """
+    from selectolax.parser import HTMLParser
+
+    pages = ROOT / "tests" / "fixtures" / "pages"
+
+    guest = HTMLParser((pages / "orders-trade.guest.ru.skeleton.txt").read_text(encoding="utf-8"))
+    assert len(guest.css("body[data-app-data]")) == 1, (
+        "у гостевой страницы нет носителя настроек: тогда защита порядка не "
+        "нужна вовсе, и проверять надо было бы другое"
+    )
+    assert len(guest.css("a.user-link-dropdown")) == 0, (
+        "у гостя нашлась ссылка на собственный профиль: признак вошедшего "
+        "выбран неверно, и захват токена после выхода пройдёт молча"
+    )
+
+    for name in ("orders-trade.logged.ru", "chat.logged.ru", "root.logged.ru"):
+        page = HTMLParser((pages / f"{name}.skeleton.txt").read_text(encoding="utf-8"))
+        assert page.css("a.user-link-dropdown"), (
+            f"на снимке вошедшего {name} нет признака вошедшего: захват токена "
+            "будет отказывать там, где отказывать не должен"
+        )
+
+
 def test_the_dead_session_probe_forgets_the_token_right_after() -> None:
     """Требует стирать запомненный токен сразу, пригодился он или нет.
 

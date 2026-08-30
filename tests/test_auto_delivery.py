@@ -238,6 +238,73 @@ def test_a_chain_of_nested_lots_takes_the_longest() -> None:
     assert decision.candidates == ("L1", "L2")
 
 
+def test_two_lots_with_the_same_description_are_never_chosen_between() -> None:
+    """ЗАКРЫВАЕТ НАСТОЯЩИЙ ДЕФЕКТ, найденный перепроверкой.
+
+    Правило вложенной цепочки проверяло вхождение и не проверяло ДЛИНУ. Строка
+    входит сама в себя, поэтому два лота с ОДИНАКОВЫМ описанием считались
+    цепочкой, и выбирался тот, что оказался последним после сортировки, - то
+    есть наугад.
+
+    Это ровно тот случай, ради которого отказ и придуман: различить их нечем.
+    Покупателю ушёл бы чужой товар, и следа не осталось бы ни в отказе, ни в
+    журнале.
+
+    Возвращает:
+        None
+    """
+    same = (_lot("L1", "Аккаунт Steam"), _lot("L2", "Аккаунт Steam"))
+    outcome = match_offer(
+        Observed.present("Аккаунт Steam"),
+        {one.offer_id.value: one.description_text for one in same},
+    )
+
+    assert not outcome.offer_id.is_observed, (
+        f"выбран лот {outcome.offer_id.or_none()} из двух с одинаковым описанием: "
+        "это выбор наугад, и покупателю уйдёт чужой товар"
+    )
+    assert outcome.offer_id.reason == "offer_match_ambiguous"
+    assert outcome.candidates == ("L1", "L2")
+
+
+def test_two_lots_of_equal_length_are_ambiguous_too() -> None:
+    """Требует отказа и на разных описаниях одинаковой длины.
+
+    Сортировка по длине ставит их рядом в произвольном порядке. Правило,
+    смотрящее только на вхождение, здесь не сработает случайно - а правило,
+    смотрящее и на длину, отказывает по существу.
+
+    Возвращает:
+        None
+    """
+    outcome = match_offer(
+        Observed.present("abc cba"),
+        {"L1": Observed.present("abc"), "L2": Observed.present("cba")},
+    )
+    assert outcome.offer_id.reason == "offer_match_ambiguous"
+
+
+def test_a_real_chain_still_picks_the_most_precise() -> None:
+    """Требует, чтобы починка не сломала настоящую цепочку.
+
+    Три описания, каждое строго длиннее и содержит предыдущее: развилки нет, и
+    длиннейшее описывает точнее.
+
+    Возвращает:
+        None
+    """
+    outcome = match_offer(
+        Observed.present("Аккаунт Steam с играми на сто часов"),
+        {
+            "L1": Observed.present("Аккаунт"),
+            "L2": Observed.present("Аккаунт Steam"),
+            "L3": Observed.present("Аккаунт Steam с играми"),
+        },
+    )
+    assert outcome.offer_id.is_observed
+    assert outcome.offer_id.value == "L3"
+
+
 def test_an_order_without_a_description_is_not_matched() -> None:
     """Требует отказа, когда описания заказа нет вовсе.
 
