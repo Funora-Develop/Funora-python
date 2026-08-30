@@ -767,9 +767,7 @@ def test_the_token_is_refused_on_a_guest_page() -> None:
 
     assert said["запомнено"] is None, "гостевой токен запомнен: опыт выйдет не тот"
     assert "ОТКАЗ" in said["ответ"], said["ответ"]
-    assert "войдите" in said["ответ"].lower(), (
-        f"отказ не сказал, что делать: {said['ответ']!r}"
-    )
+    assert "войдите" in said["ответ"].lower(), f"отказ не сказал, что делать: {said['ответ']!r}"
 
 
 def test_the_dead_session_probe_forgets_the_token_right_after() -> None:
