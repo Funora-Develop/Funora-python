@@ -39,7 +39,15 @@ from .budget import (
     OUTBOUND_WINDOW_MS,
 )
 
-__all__ = ["OutboundGovernor", "OutboundRefusal", "Sending"]
+#: Отметка о снятой защите: отправка разрешена без долговечного реестра.
+#:
+#: Имя объявлено контрактом в spec/runtime/budget.yaml, раздел durability, и
+#: читается состоянием здоровья клиента. Отметка, которую никто не читает, - это
+#: след, никуда не ведущий, и такой уже был у понижения нижнего предела опроса.
+UNSAFE_SENDS_WITHOUT_LEDGER: Final[str] = "unsafe_sends_without_ledger"
+
+
+__all__ = ["OutboundGovernor", "OutboundRefusal", "Sending", "UNSAFE_SENDS_WITHOUT_LEDGER"]
 
 #: Имена пределов в объявленном порядке проверки.
 #:
