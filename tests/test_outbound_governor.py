@@ -363,3 +363,34 @@ def test_only_the_declared_event_kinds_warm_a_dialogue() -> None:
         fresh = OutboundGovernor()
         assert fresh.note_event(kind, "он", at_ms=WALL) is True, kind
         assert fresh.is_warm("он", now_ms=WALL + 1000) is True, kind
+
+
+def test_pruning_keeps_a_warmth_stamped_in_the_future() -> None:
+    """Требует, чтобы прополка НЕ уносила метку тепла из будущего.
+
+    Контракт разводит два случая, и разводит намеренно.
+
+    is_warm при метке из будущего отвечает «переписка не тёплая» - отказ
+    ВРЕМЕННЫЙ, до того как часы догонят метку.
+
+    Прополка выбрасывала бы её ОКОНЧАТЕЛЬНО: одна поправка системных часов
+    назад стирала бы тепло навсегда, и переписка, согретая покупателем,
+    остывала бы без всякой на то причины.
+
+    Возвращает:
+        None
+    """
+    governor = OutboundGovernor(durable=True)
+    now = 1700000000000
+    ahead = now + 3600000
+
+    governor.note_incoming("будущая", at_ms=ahead)
+    governor.forget_expired(now_ms=now, now_s=1.0)
+
+    assert "будущая" in governor.snapshot()["incoming"], (
+        "метка из будущего выброшена как просроченная: часы, переведённые "
+        "назад, стёрли тепло навсегда"
+    )
+    assert governor.is_warm("будущая", now_ms=ahead + 1) is True, (
+        "часы догнали метку, а переписка так и не потеплела"
+    )

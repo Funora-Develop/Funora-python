@@ -291,6 +291,37 @@ def test_a_full_outbox_refuses_out_loud() -> None:
     assert again.duplicate is False, "отвергнутый ключ запомнен и больше не принимается"
 
 
+@pytest.mark.parametrize("limit", [0, -1, -100])
+def test_a_limit_that_removes_the_limit_is_refused(limit: int) -> None:
+    """ЗАКРЫВАЕТ ДЕФЕКТ, найденный перепроверкой.
+
+    Ноль и отрицательное у очереди стандартной библиотеки означают БЕЗ ПРЕДЕЛА
+    - ровно наоборот тому, что читается в имени. Предел, объявленный
+    обязательным, снимался значением, которое выглядит как «не принимать
+    ничего».
+
+    У предела отправок за паузу беда зеркальная: ноль означал «не разбирать
+    очередь никогда», задания копились, и положивший их ждал закрытия
+    квитанции, которого не будет.
+
+    Аргументы:
+        limit (int): негодное значение предела.
+
+    Возвращает:
+        None
+    """
+    from funora.errors import ValidationError
+
+    with pytest.raises(ValidationError, match="не годится"):
+        Outbox(max_pending=limit)
+
+    with (
+        Client(transport=_Tape()) as client,  # type: ignore[arg-type]
+        pytest.raises(ValidationError, match="не годится"),
+    ):
+        Bot(client, Router(), max_sends_per_idle=limit)
+
+
 def test_the_refusal_reaches_the_thread_that_asked(no_clock: list[float], tmp_path: Path) -> None:
     """Требует, чтобы отказ отправки дошёл до положившего задание.
 
@@ -498,3 +529,129 @@ def no_clock(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     monkeypatch.setattr(client_module, "monotonic", fake_monotonic)
     monkeypatch.setattr(engine_module, "monotonic", fake_monotonic)
     return slept
+
+
+def test_send_now_goes_through_from_the_watching_thread(
+    no_clock: list[float], tmp_path: Path
+) -> None:
+    """Требует, чтобы send_now ПРОХОДИЛ из потока наблюдения.
+
+    Проверялась только отрицательная ветка - отказ чужому потоку. Защита,
+    отвергающая всех, её проходит: обработчик, отвечающий покупателю, молча
+    перестал бы работать, а набор остался бы зелёным.
+
+    Аргументы:
+        no_clock (list[float]): счётчик пауз вместо сна.
+        tmp_path (Path): временный каталог под файл состояния.
+
+    Возвращает:
+        None
+    """
+    tape = _Tape()
+    outcome: list[object] = []
+
+    with Client(  # type: ignore[arg-type]
+        transport=tape, state_path=tmp_path / "state.json"
+    ) as client:
+        client.engine._state.outbound.note_incoming(
+            NODE_ID, at_ms=int(datetime.now(UTC).timestamp() * 1000)
+        )
+        bot = Bot(client, Router())
+
+        def on_idle(pause_ms: int) -> None:
+            """Отправляет из потока наблюдения, минуя очередь.
+
+            Аргументы:
+                pause_ms (int): длительность паузы.
+
+            Возвращает:
+                None
+            """
+            if not outcome:
+                outcome.append(bot.send_now(NODE_ID, "из потока наблюдения"))
+
+        bot.outbox.claim()
+        client.run(
+            client.engine.watch(Router(), max_iterations=1),
+            router=Router(),
+            on_idle=on_idle,
+        )
+
+    assert outcome, "send_now не выполнился из потока наблюдения"
+    assert tape.submitted, "отправка не дошла до канала"
+    request = json.loads(tape.submitted[0]["request"])
+    assert request["data"]["content"] == "из потока наблюдения"
+
+
+def test_the_async_idle_hook_is_awaited() -> None:
+    """ЗАКРЫВАЕТ ДЕФЕКТ, найденный перепроверкой.
+
+    Асинхронный клиент звал крючок паузы БЕЗ ожидания: возвращённая сопрограмма
+    выбрасывалась, тело не выполнялось ни разу, и Python сообщал об этом
+    предупреждением в поток ошибок - то есть никак.
+
+    Обещание у двух фасадов одно, и держаться оно обязано в обе стороны.
+
+    Возвращает:
+        None
+    """
+    import asyncio
+
+    from funora._aclient import AsyncClient
+
+    done: list[int] = []
+
+    async def go() -> None:
+        """Крутит асинхронное наблюдение с сопрограммой в крючке.
+
+        Возвращает:
+            None
+        """
+
+        async def hook(pause_ms: int) -> None:
+            """Асинхронный крючок паузы.
+
+            Аргументы:
+                pause_ms (int): длительность паузы.
+
+            Возвращает:
+                None
+            """
+            await asyncio.sleep(0)
+            done.append(pause_ms)
+
+        client = AsyncClient(transport=_AsyncTape())  # type: ignore[arg-type]
+        await client.run(
+            client.engine.watch(Router(), max_iterations=1),
+            router=Router(),
+            on_idle=hook,
+        )
+
+    asyncio.run(go())
+
+    assert done, (
+        "тело асинхронного крючка не выполнилось ни разу: сопрограмму создали "
+        "и выбросили, не дождавшись"
+    )
+
+
+class _AsyncTape(_Tape):
+    """Тот же подставной транспорт, но с асинхронными вызовами."""
+
+    async def fetch(self, path: str) -> Observation:  # type: ignore[override]
+        """Отдаёт страницу по пути.
+
+        Аргументы:
+            path (str): запрошенный путь.
+
+        Возвращает:
+            Observation: наблюдение.
+        """
+        return _Tape.fetch(self, path)
+
+    async def close(self) -> None:  # type: ignore[override]
+        """Закрывает подставной транспорт.
+
+        Возвращает:
+            None
+        """

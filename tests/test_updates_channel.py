@@ -133,6 +133,50 @@ def test_the_tags_are_collected_for_the_next_poll() -> None:
     )
 
 
+def test_the_tags_of_silent_objects_are_carried_forward() -> None:
+    """ЗАКРЫВАЕТ ДЕФЕКТ, найденный перепроверкой.
+
+    Ответ несёт только ИЗМЕНИВШИЕСЯ объекты: у молчавшего диалога метки в
+    ответе нет вовсе. Метки, собранные лишь из последнего ответа, теряли всех
+    молчавших, и следующий опрос подставлял им «я ничего не видел» - площадка
+    отдавала их целиком заново.
+
+    То есть канал переставал быть дешевле страниц ровно тогда, когда нужен:
+    при десяти диалогах и одном говорящем девять приезжали бы полностью каждый
+    раз.
+
+    Возвращает:
+        None
+    """
+    first = parse_updates_answer(
+        _answer(
+            [
+                {"type": "chat_node", "id": str(one), "tag": f"t{one}a", "data": {}}
+                for one in (1, 2, 3)
+            ]
+        )
+    )
+    tags = first.tags()
+    assert len(tags) == 3
+
+    # Второй опрос: заговорил только первый диалог.
+    second = parse_updates_answer(
+        _answer([{"type": "chat_node", "id": "1", "tag": "t1b", "data": {}}])
+    )
+    tags = second.tags(tags)
+
+    assert len(tags) == 3, f"молчавшие потеряли метки: {tags}"
+    assert tags[("chat_node", "1")] == "t1b", "новая метка не вытеснила прежнюю"
+    assert tags[("chat_node", "2")] == "t2a"
+
+    portions = build_subscription([("chat_node", str(one)) for one in (1, 2, 3)], tags)
+    unseen = [one["id"] for one in portions[0] if one["tag"] == UNSEEN_TAG]
+    assert not unseen, (
+        f"диалоги {unseen} уйдут с выдуманной меткой и приедут целиком заново - "
+        "канал перестал быть дешевле страниц"
+    )
+
+
 def test_the_tag_is_keyed_by_object_not_by_kind() -> None:
     """Требует ключевать метку парой из вида и идентификатора.
 

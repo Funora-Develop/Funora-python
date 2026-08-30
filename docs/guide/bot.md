@@ -246,28 +246,33 @@ def answer(event) -> None:
 
 ```python
 from funora import Client, EnvSecretProvider, Router
-from funora.bot import AutoDelivery, Bot, DeliveryLedger, DeliveryPlan
+from funora.bot import Bot, DeliveryPlan
 
-with Client(EnvSecretProvider(), state_path="funora-state.json") as client:
+with Client(EnvSecretProvider(), state_path="funora-state.json") as client:  # (1)!
     bot = Bot(client, Router())
 
     plan = DeliveryPlan(
-        goods={"12345678": "Ваш ключ: ABCD-EFGH-IJKL"},  # (1)!
-        chat_of=lambda order_id: client.orders.get(order_id).chat_node_id.value,  # (2)!
+        goods={"12345678": "Ваш ключ: ABCD-EFGH-IJKL"},  # (2)!
+        chat_of=lambda order_id: client.orders.get(order_id).chat_node_id.value,  # (3)!
     )
-    delivery = AutoDelivery(
+    delivery = bot.deliveries(  # (4)!
         plan,
-        DeliveryLedger(),
-        lambda chat, text, key: bot.send(chat, text, idempotency_key=key),
-        on_hold=lambda decision: print("руками:", decision.order_id, decision.reason),  # (3)!
+        on_hold=lambda decision: print("руками:", decision.order_id, decision.reason),  # (5)!
     )
 ```
 
-1. Ключ - **идентификатор предложения**, а не название лота. Взять его можно из
+1. `state_path` **обязателен**. Без него автовыдача отказывает: реестр
+   выданного обнулился бы при перезапуске, и товар ушёл бы второй раз по
+   заказу, который в списке продаж всё ещё оплачен.
+2. Ключ - **идентификатор предложения**, а не название лота. Взять его можно из
    `client.lots.list_own(node_id)`: там он лежит атрибутом строки.
-2. Узел диалога есть только на странице заказа, и функцией это сделано нарочно:
+3. Узел диалога есть только на странице заказа, и функцией это сделано нарочно:
    запрос стоит делать лишь тогда, когда всё остальное уже сошлось.
-3. Заказы, которые сами не выдаются, уходят сюда. Без этого они видны только в
+4. **Собирайте через `bot.deliveries()`, а не руками.** Связать реестр с файлом
+   состояния можно только через движок, который этот файл открыл; собранная
+   руками автовыдача про файл не знает и выглядит рабочей - первый прогон
+   отдаёт товар, второй отдаёт его снова.
+5. Заказы, которые сами не выдаются, уходят сюда. Без этого они видны только в
    журнале, а журнал читают после происшествия.
 
 ### Пять условий выдачи
@@ -319,8 +324,12 @@ with Client(EnvSecretProvider(), state_path="funora-state.json") as client:
 
 Курсор заказов защитой от повторной выдачи **не является**: он снимается только
 с полного чтения, а события порождаются и по неполному. Поэтому реестр
-отдельный, и запись в него идёт **впереди** отправки: «запишем, когда
-подтвердится» означает не записать ровно те выдачи, которые могли уйти.
+отдельный, и запись в него идёт **впереди** отправки - и в память, и на диск:
+«запишем, когда подтвердится» означает не записать ровно те выдачи, которые
+могли уйти.
+
+Лежит он в том же файле состояния, что курсоры и реестр отправок. Владельцев у
+файла несколько, и каждый правит свой ключ, не трогая чужих.
 
 ## Чего у этого бота не будет
 

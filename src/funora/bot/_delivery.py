@@ -97,9 +97,17 @@ class AutoDelivery:
         on_hold (Callable[[DeliveryDecision], None] | None): Что делать с
             заказом, который сам не выдаётся. Без него такой заказ виден только
             в журнале.
+        persist (Callable[[], None] | None): Как сохранить реестр на диск.
+
+            Без него реестр живёт в памяти процесса, и каждый перезапуск
+            обнуляет память о выданном: заказ, который в списке продаж всё ещё
+            оплачен, выдаётся второй раз.
+
+            Собирать автовыдачу руками поэтому не стоит - есть Bot.deliveries(),
+            который связывает всё правильно по построению.
     """
 
-    __slots__ = ("_plan", "_ledger", "_send", "_on_hold", "_decisions")
+    __slots__ = ("_plan", "_ledger", "_send", "_on_hold", "_persist", "_decisions")
 
     def __init__(
         self,
@@ -107,11 +115,13 @@ class AutoDelivery:
         ledger: DeliveryLedger,
         send: Callable[[str, str, str], SendTicket],
         on_hold: Callable[[DeliveryDecision], None] | None = None,
+        persist: Callable[[], None] | None = None,
     ) -> None:
         self._plan = plan
         self._ledger = ledger
         self._send = send
         self._on_hold = on_hold
+        self._persist = persist
         self._decisions: list[DeliveryDecision] = []
 
     @property
@@ -249,6 +259,12 @@ class AutoDelivery:
                 outcome="queued",
             )
         )
+        # Сохранение НА ДИСК тоже впереди отправки, и по тому же доводу:
+        # перезапуск между постановкой в очередь и записью выдал бы товар
+        # второй раз.
+        if self._persist is not None:
+            self._persist()
+
         return self._send(
             self._plan.chat_of(decision.order_id),
             self._plan.goods[decision.offer_id],
