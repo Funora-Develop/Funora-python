@@ -121,6 +121,66 @@ def test_writes_skeleton_and_provenance(tmp_path: Path) -> None:
     assert files == ["orders_trade.ru.provenance.json", "orders_trade.ru.skeleton.txt"]
 
 
+def test_a_different_snapshot_is_never_overwritten(tmp_path: Path) -> None:
+    """Требует НЕ затирать чужой снимок, лежащий под тем же именем.
+
+    Имя строится по пути с обезличенными сегментами, и потому у РАЗНЫХ страниц
+    оно совпадает: /users/111/ и /users/222/ обе дают users_n.
+
+    Снимок невосполним. Он снят в конкретную минуту, при конкретном состоянии
+    аккаунта, и второй раз таким же не будет: заказы закрываются, диалоги
+    уходят вниз, лоты правятся. Затирание молча уничтожало бы свидетельство, на
+    котором стоят правила извлечения.
+
+    Args:
+        tmp_path (Path): Временный каталог pytest.
+
+    Returns:
+        None
+    """
+    target = tmp_path / "orders_trade.ru.skeleton.txt"
+    target.write_text("<html>совсем другой снимок</html>", encoding="utf-8")
+
+    code = observe_mod.observe(path="/orders/trade", out_dir=tmp_path, provider=_provider())
+
+    assert code == 1, "снимок затёрт: наблюдение уничтожено молча"
+    assert target.read_text(encoding="utf-8") == "<html>совсем другой снимок</html>"
+
+
+def test_the_same_snapshot_is_rewritten_without_complaint(tmp_path: Path) -> None:
+    """Требует, чтобы повторная съёмка ТОЙ ЖЕ страницы проходила.
+
+    Защита, отвергающая всякую повторную съёмку, сделала бы инструмент
+    одноразовым: пересниять страницу после правки формата скелета - обычное
+    дело.
+
+    Args:
+        tmp_path (Path): Временный каталог pytest.
+
+    Returns:
+        None
+    """
+    assert observe_mod.observe(path="/orders/trade", out_dir=tmp_path, provider=_provider()) == 0
+    assert observe_mod.observe(path="/orders/trade", out_dir=tmp_path, provider=_provider()) == 0
+
+
+def test_two_different_pages_collide_by_name(tmp_path: Path) -> None:
+    """Закрепляет САМУ причину, ради которой защита заведена.
+
+    Проверка не о защите, а о площадке и об имени: у двух разных профилей имя
+    файла одно. Исчезни это свойство - защита стала бы лишней, и об этом надо
+    узнать из падения проверки, а не из чтения кода.
+
+    Args:
+        tmp_path (Path): Временный каталог pytest.
+
+    Returns:
+        None
+    """
+    assert observe_mod._stem_for("/users/111/") == observe_mod._stem_for("/users/222/")
+    assert observe_mod._stem_for("/users/111/") == "users_n"
+
+
 def test_raw_html_never_written(tmp_path: Path) -> None:
     """Проверяет, что ни в одном записанном файле нет исходных данных.
 

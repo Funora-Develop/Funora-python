@@ -697,6 +697,48 @@ def test_the_tag_probe_asks_three_times_in_one_go() -> None:
     )
 
 
+def test_a_changed_token_is_noticed_without_being_shown() -> None:
+    """Требует замечать смену защитного токена, не раскрывая его.
+
+    ЗАЧЕМ ЭТО ВООБЩЕ НУЖНО. Подпись значения говорит «шестнадцать знаков
+    латиницы с цифрами», и две РАЗНЫЕ шестнадцатизначные строки по ней
+    неотличимы. По записи нельзя было понять, тот же токен ушёл во втором
+    запросе или другой.
+
+    А от этого зависит главное решение о скорости: можно ли взять токен одним
+    стартовым чтением страницы и держать всю сессию, или каждый опрос обязан
+    перечитывать страницу.
+
+    Returns:
+        None
+    """
+    records = _run_collector(
+        "(async () => {"
+        "  funora.watch();"
+        "  const go = (t) => fetch('https://funpay.com/runner/', {method: 'POST',"
+        "    body: 'objects=%5B%5D&request=false&csrf_token=' + t});"
+        "  await go('ПЕРВЫЙТОКЕН00001');"
+        "  await go('ПЕРВЫЙТОКЕН00001');"
+        "  await go('ВТОРОЙТОКЕН00002');"
+        "  await funora.stop('проба');"
+        "  const last = sent[sent.length - 1];"
+        "  return JSON.parse(last.init.body).payload.records"
+        "    .map((one) => one.request.fields.csrf_token);"
+        "})()"
+    )
+
+    printed = json.dumps(records, ensure_ascii=False)
+    for leak in ("ПЕРВЫЙТОКЕН", "ВТОРОЙТОКЕН"):
+        assert leak not in printed, f"значение токена уехало в запись: {printed}"
+
+    assert len(records) == 3, records
+
+    # У первого сравнивать не с чем: подпись без признака, то есть строка.
+    assert isinstance(records[0], str), f"у первого запроса взялся признак: {records[0]}"
+    assert records[1]["since_previous"] == "same", records[1]
+    assert records[2]["since_previous"] == "changed", records[2]
+
+
 def test_the_held_token_is_never_shown_to_the_human() -> None:
     """Требует, чтобы запомненный токен не выходил наружу ни разу.
 
