@@ -36,6 +36,12 @@ _SIGNATURE: Final[re.Pattern[str]] = re.compile(r"^T\d+:[adcpso]+(#\d+)?$")
 #: Обезличенный кусок адреса: {n7}, {q12}, {t}.
 _PLACEHOLDER: Final[re.Pattern[str]] = re.compile(r"^\{[a-z]\d*\}$")
 
+#: Имя параметра запроса, сохраняемое дословно форматом v9.
+#:
+#: Форма та же, что у имени поля формы, и это не совпадение: правило одно -
+#: имя выбирает площадка, значение человек. Второго описания не заводится.
+_FIELD_NAME: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z_][A-Za-z0-9_.\[\]-]{0,64}$")
+
 #: Атрибуты, значения которых сборщик хранит дословно НАМЕРЕННО: они говорят о
 #: разметке, а не о человеке. Их дословность - условие разбора: по классу
 #: находят узел, по имени поля собирают запрос.
@@ -64,10 +70,36 @@ def _is_masked_url(value: str) -> bool:
     if not value.startswith(_PUBLIC_HOSTS):
         return False
     tail = value.split("?", 1)
-    if len(tail) == 2 and not _PLACEHOLDER.match(tail[1]):
+    if len(tail) == 2 and not _is_masked_query(tail[1]):
         return False
     # Сегмент из одних цифр - неподставленный идентификатор.
     return not any(part.isdigit() for part in tail[0].split("/"))
+
+
+def _is_masked_query(value: str) -> bool:
+    """Строка запроса безопасна, если обезличено каждое ЗНАЧЕНИЕ.
+
+    Формат v9 сохраняет ИМЯ параметра и маскирует значение: было «{q7}», стало
+    «id={q7}». Без этой проверки всякий новый снимок попадал бы в список к
+    чтению глазами на каждой ссылке подряд, а проверка, шумящая всегда,
+    перестаёт читаться.
+
+    Аргументы:
+        value (str): строка запроса без ведущего знака вопроса.
+
+    Возвращает:
+        bool: True, если ни одно значение не осталось раскрытым.
+    """
+    for pair in value.split("&"):
+        name, sign, hidden = pair.partition("=")
+        if not sign:
+            # Параметр-флажок: имя без значения. Раскрывать было нечего.
+            if not _FIELD_NAME.match(name) and not _PLACEHOLDER.match(name):
+                return False
+            continue
+        if not _FIELD_NAME.match(name) or not _PLACEHOLDER.match(hidden):
+            return False
+    return True
 
 
 def _is_masked_json(value: str) -> bool:
