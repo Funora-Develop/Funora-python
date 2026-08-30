@@ -697,6 +697,100 @@ def test_the_tag_probe_asks_three_times_in_one_go() -> None:
     )
 
 
+def test_the_held_token_is_never_shown_to_the_human() -> None:
+    """Требует, чтобы запомненный токен не выходил наружу ни разу.
+
+    ЭТО ПРАВИЛО НАПИСАНО ПО ПРОИСШЕСТВИЮ. Прежде наблюдение канала при истёкшей
+    сессии требовало от человека скопировать защитный токен со страницы. Человек,
+    отправленный искать токен, пошёл в инструменты разработчика - а там рядом
+    лежат ключ сессии и прочие куки, и один снимок экрана отдал аккаунт целиком.
+
+    Отсюда правило: человек не переносит руками ничего, что похоже на секрет. Не
+    потому, что не справится, а потому, что путь к значению ведёт мимо настоящих
+    секретов.
+
+    Returns:
+        None
+    """
+    said = _run_collector(
+        "(async () => {"
+        "  const store = {};"
+        "  globalThis.localStorage = {"
+        "    getItem: (k) => (k in store ? store[k] : null),"
+        "    setItem: (k, v) => { store[k] = String(v) },"
+        "    removeItem: (k) => { delete store[k] },"
+        "  };"
+        "  globalThis.document.querySelector = (one) => (one === 'body[data-app-data]'"
+        "    ? {getAttribute: () => JSON.stringify({'csrf-token': 'СЕКРЕТНЫЙТОКЕН'})}"
+        "    : null);"
+        "  return {ответ: funora.holdToken(), в_хранилище: store['funora.held-token']};"
+        "})()"
+    )
+
+    assert "СЕКРЕТНЫЙТОКЕН" not in said["ответ"], f"токен показан человеку: {said['ответ']!r}"
+    assert said["в_хранилище"] == "СЕКРЕТНЫЙТОКЕН", "токен не запомнен - опыт не выйдет"
+
+
+def test_the_dead_session_probe_forgets_the_token_right_after() -> None:
+    """Требует стирать запомненный токен сразу, пригодился он или нет.
+
+    Лежать ему во вкладке незачем: опыт делается один раз.
+
+    Returns:
+        None
+    """
+    said = _run_collector(
+        "(async () => {"
+        "  const store = {'funora.held-token': 'СЕКРЕТНЫЙТОКЕН'};"
+        "  globalThis.localStorage = {"
+        "    getItem: (k) => (k in store ? store[k] : null),"
+        "    setItem: (k, v) => { store[k] = String(v) },"
+        "    removeItem: (k) => { delete store[k] },"
+        "  };"
+        "  globalThis.fetch = async () => ({ok: false, status: 403, redirected: true,"
+        "    text: async () => 'нужен вход', clone(){ return this }, headers: {forEach(){}}});"
+        "  const answer = await funora.probeDead();"
+        "  return {ответ: answer, осталось: store['funora.held-token'] || null};"
+        "})()"
+    )
+
+    assert said["осталось"] is None, "токен остался лежать во вкладке после опыта"
+
+    printed = json.dumps(said["ответ"], ensure_ascii=False)
+    assert "СЕКРЕТНЫЙТОКЕН" not in printed, f"токен уехал в сводку: {printed}"
+    assert "нужен вход" not in printed, (
+        f"тело ответа уехало в сводку: {printed}. Наружу идут код, признаки и "
+        "имена полей - но не содержимое"
+    )
+    assert said["ответ"]["код"] == 403
+    assert said["ответ"]["перенаправлен"] is True
+    assert said["ответ"]["разобрано_как_json"] is False
+
+
+def test_the_dead_session_probe_refuses_without_a_held_token() -> None:
+    """Требует внятного отказа, когда токен не запомнили заранее.
+
+    Порядок здесь легко перепутать: holdToken зовётся ДО выхода, probeDead -
+    после. Молчаливый отказ отправил бы человека выходить и входить второй раз.
+
+    Returns:
+        None
+    """
+    said = _run_collector(
+        "(async () => {"
+        "  const store = {};"
+        "  globalThis.localStorage = {"
+        "    getItem: () => null, setItem: () => {}, removeItem: () => {},"
+        "  };"
+        "  try { await funora.probeDead(); return 'отказа не было' }"
+        "  catch (e) { return String(e.message) }"
+        "})()"
+    )
+
+    assert "holdToken" in said, f"отказ не назвал, что делать: {said!r}"
+    assert "ДО выхода" in said
+
+
 def test_the_collector_stamps_its_build_into_what_it_sends() -> None:
     """Требует, чтобы браузерная часть ВПРАВДУ клала отпечаток сборки.
 

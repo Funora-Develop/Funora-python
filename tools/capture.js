@@ -13,6 +13,8 @@
  *   funora.probeTag()   - опрос канала с ВЫДУМАННОЙ меткой: отвечает на
  *                         вопрос, нужна ли для подписки настоящая;
  *   funora.listen([..]) - опрос канала с произвольной подпиской;
+ *   funora.holdToken()  - запомнить защитный токен ДО выхода из аккаунта,
+ *                         не показывая его; после выхода - probeDead();
  *   funora.probeSend('текст') - ОТПРАВЛЯЕТ настоящее сообщение с пустой
  *                       подпиской. Единственная команда, которая меняет
  *                       что-то на площадке. Отменить нельзя;
@@ -1105,6 +1107,113 @@
     },
 
     /**
+     * Запоминает защитный токен страницы, НЕ показывая его.
+     *
+     * ЗАЧЕМ. Единственное оставшееся наблюдение канала - что он отвечает при
+     * истёкшей сессии. Чтобы его снять, надо выйти из аккаунта, а выход
+     * перезагружает страницу: сборщик вместе с ней исчезает, и токен взять
+     * потом уже неоткуда.
+     *
+     * Прежде это решалось так: «скопируйте токен со страницы». Решение
+     * оказалось негодным, и негодным опасно. Человек, отправленный искать
+     * токен, идёт в инструменты разработчика - а там рядом лежат ключ сессии и
+     * прочие куки, и один снимок экрана отдаёт аккаунт целиком.
+     *
+     * ПРАВИЛО, КОТОРОЕ ИЗ ЭТОГО СЛЕДУЕТ: человек не переносит руками ничего,
+     * что похоже на секрет. Не потому, что не справится, а потому, что путь к
+     * значению ведёт мимо настоящих секретов.
+     *
+     * Токен кладётся в хранилище ТОЙ ЖЕ вкладки и того же источника, где он и
+     * так живёт: наружу он не уходит, в консоль не печатается, и стирается
+     * сразу после того, как пригодился.
+     *
+     * @returns {string} Подтверждение без значения.
+     */
+    holdToken() {
+      const carrier = document.querySelector('body[data-app-data]')
+      if (carrier === null) return 'на странице нет носителя настроек body[data-app-data]'
+      let token = ''
+      try {
+        token = String((JSON.parse(carrier.getAttribute('data-app-data')) || {})['csrf-token'] || '')
+      } catch {
+        return 'настройки страницы не разбираются как JSON'
+      }
+      if (!token) return 'в настройках страницы нет защитного токена'
+
+      try {
+        window.localStorage.setItem('funora.held-token', token)
+      } catch {
+        return 'хранилище вкладки недоступно: токен не запомнен'
+      }
+      return 'токен запомнен во вкладке. Значение не показано и показано не будет. Теперь выйдите из аккаунта, вставьте сборщик заново и вызовите funora.probeDead()'
+    },
+
+    /**
+     * Опрашивает канал ПОСЛЕ выхода из аккаунта, запомненным токеном.
+     *
+     * Отвечает на последний невыясненный вопрос о канале: что он делает при
+     * истёкшей сессии. Ради этого случая в SDK написаны политика повторов и
+     * распознавание состояния сессии, а видел его ноль раз.
+     *
+     * Токен берётся из хранилища и СТИРАЕТСЯ сразу, пригодился он или нет:
+     * лежать ему там незачем.
+     *
+     * @returns {Promise<object>} Код ответа и форма тела, без содержимого.
+     */
+    probeDead() {
+      let token = ''
+      try {
+        token = String(window.localStorage.getItem('funora.held-token') || '')
+        window.localStorage.removeItem('funora.held-token')
+      } catch {
+        return Promise.reject(new Error('хранилище вкладки недоступно'))
+      }
+      if (!token) {
+        return Promise.reject(
+          new Error('запомненного токена нет: вызовите funora.holdToken() ДО выхода из аккаунта')
+        )
+      }
+
+      const form = new URLSearchParams()
+      form.set('objects', '[]')
+      form.set('request', 'false')
+      form.set('csrf_token', token)
+
+      return window
+        .fetch('/runner/', {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json, text/javascript, */*; q=0.01',
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'X-Requested-With': 'XMLHttpRequest',
+          },
+          body: form.toString(),
+        })
+        .then((response) =>
+          response.text().then((body) => {
+            let parsed = null
+            try {
+              parsed = JSON.parse(body)
+            } catch {
+              parsed = null
+            }
+            return {
+              код: response.status,
+              // Перенаправление важнее прочего: по нему видно, гонит ли
+              // площадка на вход или отвечает по существу.
+              перенаправлен: response.redirected === true,
+              разобрано_как_json: parsed !== null,
+              // Только ИМЕНА полей верхнего уровня. Значения не выносятся:
+              // правило то же, что у сводки опроса с выдуманной меткой.
+              поля: parsed && typeof parsed === 'object' ? Object.keys(parsed) : [],
+              длина_тела: body.length,
+              дальше: 'funora.stop("runner-dead-session")',
+            }
+          })
+        )
+    },
+
+    /**
      * Собирает со страницы всё нужное для обращения к каналу.
      *
      * Места взяты из наблюдения, а не из догадки: имя диалога сверено с
@@ -1297,7 +1406,7 @@
   }
   console.log(
     `%cfunora%c собран, сборка ${BUILD}. Команды: funora.page("имя"), `
-      + 'funora.currency("метка"), funora.watch(), funora.probe(), funora.probeTag(), funora.listen([...]), funora.stop("имя")\n  ВНИМАНИЕ: funora.probeSend("текст") ОТПРАВЛЯЕТ настоящее сообщение',
+      + 'funora.currency("метка"), funora.watch(), funora.probe(), funora.probeTag(), funora.listen([...]), funora.holdToken(), funora.stop("имя")\n  ВНИМАНИЕ: funora.probeSend("текст") ОТПРАВЛЯЕТ настоящее сообщение',
     'font-weight:bold',
     '',
   )
