@@ -75,6 +75,13 @@ from ._skeleton import SkeletonError, skeletonize
 from ._state import StateFile
 from ._thread import Message, Origin, Thread, parse_thread
 from ._transport import AsyncFetcher, Fetcher, Observation, TransportSettings
+from ._updates import (
+    MAX_SUBSCRIPTION,
+    ChannelObject,
+    UpdatesAnswer,
+    build_subscription,
+    parse_updates_answer,
+)
 from ._verdicts import error_for
 from ._watch import Router, StepResult, adispatch, dispatch
 from ._whoami import Account, CapabilityProfile, SessionHealth
@@ -173,6 +180,12 @@ __all__ = [
     "CatalogGame",
     "MarketPage",
     "MarketOffer",
+    # канал обновлений
+    "UpdatesAnswer",
+    "ChannelObject",
+    "parse_updates_answer",
+    "build_subscription",
+    "MAX_SUBSCRIPTION",
     # список диалогов
     "parse_chats_page",
     "ChatsPage",
