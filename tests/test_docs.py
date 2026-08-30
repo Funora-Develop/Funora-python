@@ -459,6 +459,35 @@ def test_async_facade_mirrors_the_sync_one() -> None:
     other_surface = {n for n in vars(AsyncClient) if not n.startswith("_")}
     assert surface == other_surface, f"клиенты разошлись: {surface ^ other_surface}"
 
+    # Совпадения имён и типов НЕ ДОСТАТОЧНО, и это выяснилось дорогой ценой.
+    # AsyncClient.watch принимал on_handler_error и не передавал его дальше: у
+    # синхронного клиента отказ обработчика доходил до вызывающего, у
+    # асинхронного пропадал молча. Обе подписи при этом совпадали до знака, и
+    # проверка выше была довольна.
+    #
+    # Поэтому сверяются и ИМЕНА АРГУМЕНТОВ, и то, что каждый из них поминается
+    # в теле. Второе грубо, но ловит ровно эту болезнь: принять и выбросить.
+    import inspect
+
+    for name in sorted(surface):
+        plain_method = getattr(Client, name)
+        other_method = getattr(AsyncClient, name)
+        if isinstance(plain_method, property) or not callable(plain_method):
+            continue
+
+        here = set(inspect.signature(plain_method).parameters)
+        there = set(inspect.signature(other_method).parameters)
+        assert here <= there, f"у асинхронного {name} нет аргументов {sorted(here - there)}"
+
+        body = inspect.getsource(other_method)
+        head = body[: body.index('"""')] if '"""' in body else body
+        tail = body[body.index('"""', body.index('"""') + 3) :] if '"""' in body else body
+        forgotten = [one for one in here if one not in {"self"} and one not in tail and one in head]
+        assert not forgotten, (
+            f"асинхронный {name} принимает {forgotten} и не поминает их в теле: "
+            "аргумент принят и выброшен, а подпись обещает обратное"
+        )
+
 
 def test_documented_subscriptions_are_producible() -> None:
     """Проверяет, что примеры не подписываются на непорождаемое событие.

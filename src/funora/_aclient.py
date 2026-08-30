@@ -586,6 +586,7 @@ class AsyncClient:
             ),
             router=router,
             concurrency=concurrency,
+            on_handler_error=on_handler_error,
         )
 
     async def run(

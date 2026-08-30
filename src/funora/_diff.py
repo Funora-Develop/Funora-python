@@ -42,7 +42,7 @@ from ._canonical import canonical_normalize
 from ._chats import ChatsPage
 from ._observed import Observed
 from ._orders import OrdersPage
-from ._thread import Thread
+from ._thread import Message, Thread
 from .errors import ConfigurationError, ValidationError
 from .events import (
     FINGERPRINT_DIGEST_BYTES,
@@ -599,12 +599,53 @@ def chats_cursor(page: ChatsPage) -> dict[str, str]:
     return cursor
 
 
+def direction_of(message: Message, own_href: str) -> str:
+    """Определяет, кто написал сообщение по отношению к владельцу сессии.
+
+    СТРУКТУРНО, сравнением адресов профилей, а не по имени. Имя меняется, и
+    совпадение имён подделывается собеседником, назвавшимся как продавец;
+    адрес профиля подделать нельзя, не заведя аккаунт с тем же номером.
+
+    Оба адреса нормализуются: площадка отдаёт их и с завершающей косой чертой,
+    и без неё, и сравнение как есть объявило бы разными один и тот же профиль.
+
+    Аргументы:
+        message (Message): Сообщение переписки.
+        own_href (str): Адрес собственного профиля. Пустая строка означает, что
+            снять его со страницы не удалось.
+
+    Возвращает:
+        str: inbound, outbound либо unknown.
+    """
+    if not own_href or not message.author_href.is_observed:
+        # Сравнивать нечего. Незнание объявляется значением, а не пустотой, - и
+        # греть переписку оно не вправе: тепло требует положительного
+        # свидетельства, а не отсутствия опровержения.
+        return "unknown"
+    if _normalized_href(message.author_href.value) == _normalized_href(own_href):
+        return "outbound"
+    return "inbound"
+
+
+def _normalized_href(href: str) -> str:
+    """Приводит адрес профиля к сравнимому виду.
+
+    Аргументы:
+        href (str): Адрес.
+
+    Возвращает:
+        str: Адрес без завершающей косой черты и краевых пробелов.
+    """
+    return href.strip().rstrip("/")
+
+
 def diff_thread(
     known: frozenset[str] | None,
     thread: Thread,
     *,
     account_id: str,
     chat_id: str,
+    own_href: str = "",
 ) -> tuple[Event, ...]:
     """Порождает события по переписке и курсору.
 
@@ -614,6 +655,13 @@ def diff_thread(
         thread (Thread): Прочитанная переписка.
         account_id (str): Идентификатор аккаунта.
         chat_id (str): Идентификатор диалога.
+        own_href (str): Адрес собственного профиля, снятый с той же страницы.
+            Пустая строка означает, что снять не удалось, и тогда направление у
+            всех сообщений выходит unknown.
+
+            Умолчание пустое НАРОЧНО, а не для удобства: функция публичная, и
+            вызывающий, у которого адреса нет, обязан получить честное незнание,
+            а не молчаливое «это писал не я».
 
     Returns:
         tuple[Event, ...]: События о новых сообщениях.
@@ -652,6 +700,10 @@ def diff_thread(
                         if message.external_links.is_observed
                         else None
                     ),
+                    # Направление. Без него получатель отвечает на собственный
+                    # ответ, а ограничитель исходящих считает холодной ту
+                    # переписку, где собеседник только что написал сам.
+                    "direction": direction_of(message, own_href),
                 },
             )
         )
