@@ -89,6 +89,14 @@ def _texts_a_reader_copies() -> dict[str, str]:
     found: dict[str, str] = {"вывод плана наблюдений": _rendered_plan()}
     for path in sorted((ROOT / "tools").glob("*.py")):
         found[f"tools/{path.name}"] = path.read_text(encoding="utf-8")
+
+    # И набор проверок тоже. Сообщение упавшей проверки читают ровно тогда, когда
+    # ищут, что делать дальше, - и голая команда там стоит дороже, чем в прозе.
+    # Одна такая нашлась сразу: «Перестройте: python tools/codegen.py».
+    for path in sorted((ROOT / "tests").glob("*.py")):
+        if path.name == Path(__file__).name:
+            continue
+        found[f"tests/{path.name}"] = path.read_text(encoding="utf-8")
     for path in sorted((ROOT / "src" / "funora").glob("*.py")):
         head = path.read_text(encoding="utf-8")[:2000]
         if "Файл порождён из спецификации" in head:

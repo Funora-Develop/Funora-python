@@ -34,6 +34,13 @@ __all__ = [
     "COUNTS_RETRIES",
     "COUNTS_REDIRECTS",
     "MIN_HEALTH_INTERVAL_MS",
+    "OUTBOUND_MESSAGES_PER_HOUR",
+    "OUTBOUND_UNIQUE_RECIPIENTS_PER_HOUR",
+    "OUTBOUND_MIN_INTERVAL_PER_CHAT_MS",
+    "OUTBOUND_WINDOW_MS",
+    "OUTBOUND_WARMING_EVENTS",
+    "COLD_OUTREACH_QUOTA_PER_HOUR",
+    "COLD_OUTREACH_WINDOW_MS",
     "MAX_QUEUE_DEPTH_PER_KEY",
     "MAX_CONCURRENT_HANDLERS",
     "HANDLER_TIMEOUT_MS",
@@ -91,6 +98,25 @@ BUCKETS: Final[dict[str, BucketLimits]] = {
 }
 
 #: Сколько ждать освобождения бюджета, прежде чем отказать.
+
+#: Ограничитель исходящих сообщений. Не ведро токенов.
+#:
+#: Три предела из четырёх ведром невыразимы: множество различных
+#: адресатов, пауза на отдельную переписку и условная квота. Ведро
+#: отвечает «сколько ждать», а здесь ждать нельзя - пределы часовые
+#: при пределе ожидания в пять секунд.
+OUTBOUND_MESSAGES_PER_HOUR: Final[int] = 30
+OUTBOUND_UNIQUE_RECIPIENTS_PER_HOUR: Final[int] = 15
+OUTBOUND_MIN_INTERVAL_PER_CHAT_MS: Final[int] = 30000
+OUTBOUND_WINDOW_MS: Final[int] = 3600000
+COLD_OUTREACH_QUOTA_PER_HOUR: Final[int] = 3
+COLD_OUTREACH_WINDOW_MS: Final[int] = 86400000
+
+#: События, которые ГРЕЮТ переписку. Только входящие.
+#:
+#: Счётчик непрочитанного сюда не входит нарочно: он меняется и от
+#: НАШЕЙ отправки, и ограничитель на нём отменял бы сам себя.
+OUTBOUND_WARMING_EVENTS: Final[tuple[str, ...]] = ("message.created",)
 MAX_WAIT_MS: Final[int] = 5000
 
 #: Сколько попыток занять бюджет делается всего.

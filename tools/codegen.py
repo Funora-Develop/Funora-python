@@ -1012,6 +1012,120 @@ def render_retry(spec: Path) -> str:
     return "".join(out)
 
 
+#: Ключи ограничителя, которые кодогенератор ЧИТАЕТ.
+_GOVERNOR_READ: Final[frozenset[str]] = frozenset(
+    {
+        "messages_per_hour",
+        "unique_recipients_per_hour",
+        "min_interval_per_chat_ms",
+        "window_ms",
+        "cold_outreach",
+        "warming",
+    }
+)
+
+#: Ключи ограничителя, объявленные и намеренно не порождаемые.
+#:
+#: Это правила, а не числа: их исполняет код, написанный руками, и порождать из
+#: них нечего. Но молча пропасть они не должны - потому и перечислены.
+_GOVERNOR_PROSE: Final[frozenset[str]] = frozenset(
+    {"scope", "on_refusal", "durability", "conformance"}
+)
+
+
+def _render_outbound_governor(doc: dict[str, Any], out: list[str]) -> None:
+    """Порождает числа ограничителя исходящих сообщений.
+
+    ДО 29.08.2026 РАЗДЕЛ НЕ ЧИТАЛ НИКТО. Слова outbound в этом файле не было
+    вовсе, и реестр неисполненного проверял это мутацией дважды: раздел удалялся
+    целиком - проверки молчали; числа выворачивались наизнанку - молчали снова.
+
+    Args:
+        doc (dict[str, Any]): Разобранный spec/runtime/budget.yaml.
+        out (list[str]): Куда дописывать строки модуля.
+
+    Raises:
+        SystemExit: Если раздел неполон либо несёт ключ, которого никто не
+            читает и который не назван прозаическим.
+    """
+    governor = doc.get("outbound_governor")
+    if not isinstance(governor, dict):
+        raise SystemExit(
+            "spec/runtime/budget.yaml: раздел outbound_governor не объявлен. "
+            "Операции отправки объявлены с governor: outbound_message, и без "
+            "раздела они обещали бы защиту, которой нет"
+        )
+
+    unknown = set(governor) - _GOVERNOR_READ - _GOVERNOR_PROSE
+    if unknown:
+        raise SystemExit(
+            f"spec/runtime/budget.yaml: у ограничителя объявлены ключи, которых "
+            f"кодогенератор не читает: {sorted(unknown)}. Молча пропасть они не "
+            "должны - объявленное либо порождается, либо называется здесь среди "
+            "прозаических"
+        )
+
+    missing = _GOVERNOR_READ - set(governor)
+    if missing:
+        raise SystemExit(
+            f"spec/runtime/budget.yaml: у ограничителя нет ключей {sorted(missing)}. "
+            "Механизм без них не исполним: неполный ограничитель хуже "
+            "отсутствующего, он выглядит защитой"
+        )
+
+    cold = governor["cold_outreach"]
+    warming = governor["warming"]
+
+    numbers = (
+        ("OUTBOUND_MESSAGES_PER_HOUR", governor["messages_per_hour"]),
+        ("OUTBOUND_UNIQUE_RECIPIENTS_PER_HOUR", governor["unique_recipients_per_hour"]),
+        ("OUTBOUND_MIN_INTERVAL_PER_CHAT_MS", governor["min_interval_per_chat_ms"]),
+        ("OUTBOUND_WINDOW_MS", governor["window_ms"]),
+        ("COLD_OUTREACH_QUOTA_PER_HOUR", cold["quota_per_hour"]),
+        ("COLD_OUTREACH_WINDOW_MS", cold["window_ms"]),
+    )
+    for name, value in numbers:
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise SystemExit(
+                f"spec/runtime/budget.yaml: у ограничителя значение {name} равно "
+                f"{value!r}. Ожидается положительное целое: ноль либо отрицательное "
+                "выключает предел, не объявляя этого"
+            )
+
+    events = warming.get("events")
+    if not isinstance(events, list) or not events:
+        raise SystemExit(
+            "spec/runtime/budget.yaml: warming.events пуст либо не перечень. Тогда "
+            "греть переписку нечему, и всякое обращение считалось бы холодным"
+        )
+
+    out.append("\n#: Ограничитель исходящих сообщений. Не ведро токенов.\n")
+    out.append("#:\n")
+    out.append("#: Три предела из четырёх ведром невыразимы: множество различных\n")
+    out.append("#: адресатов, пауза на отдельную переписку и условная квота. Ведро\n")
+    out.append("#: отвечает «сколько ждать», а здесь ждать нельзя - пределы часовые\n")
+    out.append("#: при пределе ожидания в пять секунд.\n")
+    for name, value in numbers:
+        out.append(f"{name}: Final[int] = {value}\n")
+
+    out.append("\n#: События, которые ГРЕЮТ переписку. Только входящие.\n")
+    out.append("#:\n")
+    out.append("#: Счётчик непрочитанного сюда не входит нарочно: он меняется и от\n")
+    out.append("#: НАШЕЙ отправки, и ограничитель на нём отменял бы сам себя.\n")
+    # Короткий кортеж пишется ОДНОЙ строкой: форматтер всё равно схлопнет его, и
+    # порождённое разошлось бы с проверкой «файл отстал от спецификации». Расхождение
+    # это молчаливое ровно до сборки, где обе проверки идут подряд.
+    joined = ", ".join(f'"{one}"' for one in events)
+    single = f"OUTBOUND_WARMING_EVENTS: Final[tuple[str, ...]] = ({joined},)\n"
+    if len(events) == 1 and len(single) <= 100:
+        out.append(single)
+    else:
+        out.append("OUTBOUND_WARMING_EVENTS: Final[tuple[str, ...]] = (\n")
+        for one in events:
+            out.append(f'    "{one}",\n')
+        out.append(")\n")
+
+
 def render_budget(spec: Path) -> str:
     """Порождает числа бюджета запросов.
 
@@ -1062,6 +1176,13 @@ def render_budget(spec: Path) -> str:
         "COUNTS_RETRIES",
         "COUNTS_REDIRECTS",
         "MIN_HEALTH_INTERVAL_MS",
+        "OUTBOUND_MESSAGES_PER_HOUR",
+        "OUTBOUND_UNIQUE_RECIPIENTS_PER_HOUR",
+        "OUTBOUND_MIN_INTERVAL_PER_CHAT_MS",
+        "OUTBOUND_WINDOW_MS",
+        "OUTBOUND_WARMING_EVENTS",
+        "COLD_OUTREACH_QUOTA_PER_HOUR",
+        "COLD_OUTREACH_WINDOW_MS",
         "MAX_QUEUE_DEPTH_PER_KEY",
         "MAX_CONCURRENT_HANDLERS",
         "HANDLER_TIMEOUT_MS",
@@ -1152,6 +1273,8 @@ def render_budget(spec: Path) -> str:
                 f"больше ёмкости {entry['capacity']}. Тогда залп не ограничивает "
                 "ничего: запас кончится раньше права на него"
             )
+
+    _render_outbound_governor(doc, out)
 
     out.append(f"MAX_WAIT_MS: Final[int] = {doc['exhausted']['max_wait_ms']}\n")
 
