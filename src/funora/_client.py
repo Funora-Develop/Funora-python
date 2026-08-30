@@ -18,7 +18,7 @@ import logging
 from collections.abc import Callable, Generator
 from dataclasses import replace
 from pathlib import Path
-from time import sleep
+from time import monotonic, sleep
 from typing import TYPE_CHECKING, Final, TypeVar
 
 from ._account import BalancePage
@@ -656,6 +656,7 @@ class Client:
         *,
         router: Router | None = None,
         on_handler_error: Callable[[HandlerError], None] | None = None,
+        on_idle: Callable[[int], None] | None = None,
     ) -> T:
         """Прокручивает ядро, выполняя то, о чём оно просит.
 
@@ -671,6 +672,20 @@ class Client:
                 с отказом обработчика. Ядру отказы не видны: оно читает у итога
                 раздачи delivered, advance, fatal и длину failed. Причина
                 отказа живёт только здесь.
+            on_idle (Callable[[int], None] | None): Что делать в паузе между
+                опросами. Вызывается ДО сна и получает длительность паузы в
+                миллисекундах.
+
+                Крючок нужен затем, чтобы работу, которую просит посторонний
+                поток, выполнял ТОТ ЖЕ поток, что ведёт наблюдение. Клиент не
+                защищён ни одной блокировкой: у бюджета и у ограничителя
+                исходящих проверка с последующей записью не атомарна, и второй
+                поток, зовущий отправку, недосчитывает предел - то есть
+                превышает настоящий предел площадки.
+
+                Пауза при этом НЕ УДЛИНЯЕТСЯ: потраченное вычитается из сна.
+                Иначе разбор очереди сдвигал бы темп опроса, и чем больше
+                работы, тем реже наблюдение - ровно наоборот тому, что нужно.
 
         Returns:
             T: То, чем ядро завершилось.
@@ -689,8 +704,14 @@ class Client:
             reply = None
 
             if isinstance(request, Pause):
-                if request.ms > 0:
-                    sleep(request.ms / 1000)
+                spent = 0.0
+                if on_idle is not None:
+                    started = monotonic()
+                    on_idle(request.ms)
+                    spent = (monotonic() - started) * 1000
+                remaining = request.ms - spent
+                if remaining > 0:
+                    sleep(remaining / 1000)
             elif isinstance(request, Fetch):
                 try:
                     reply = self._fetch(request.path)
