@@ -100,6 +100,7 @@ from .errors import (
     BudgetError,
     BudgetExhaustedError,
     ConfigurationError,
+    CursorIncompatibleError,
     FunoraError,
     NetworkError,
     ProtocolChangedError,
@@ -567,6 +568,7 @@ class Engine:
         "_identity",
         "_delivered",
         "_ledger",
+        "_stored_account",
         "_settings",
         "_state",
         "_stopped",
@@ -613,10 +615,15 @@ class Engine:
         #: процесса обнуляется, а «этот заказ выдан» обязано жить, пока жив заказ.
         self._delivered = DeliveryLedger()
 
+        #: Чей аккаунт записан в файле состояния. Пустая строка означает, что
+        #: файла нет либо он записан прежней редакцией, не знавшей привязки.
+        self._stored_account = ""
+
         if self._ledger is not None:
             stored = self._ledger.load()
             self._state.outbound.restore(stored.get("outbound") or {})
             self._delivered.restore(stored.get("delivery") or {})
+            self._stored_account = str(stored.get("account") or "")
         #: Смены состояния доступа, ждущие выдачи партией.
         self._health_changes: list[tuple[Health, Health, str]] = []
 
@@ -700,6 +707,8 @@ class Engine:
         """
         observation = yield from self.fetch_ok(Capability.ACCOUNT_PROFILE, ACCOUNT_PATH)
         account = parse_account(observation.html, observed_at=datetime.now(UTC))
+        if account.user_id.is_observed:
+            self._bind_account(account.user_id.value)
         damaged = any(one.severity is Severity.PAGE for one in account.defects)
         self._note_success(
             Capability.ACCOUNT_PROFILE,
@@ -844,6 +853,7 @@ class Engine:
                 "имени диалога, его метки и защитного токена, нельзя"
             )
         anchor = take_anchor(observation.html)
+        self._bind_account(anchor.own_href)
 
         # Ограничитель спрашивается ПЕРВЫМ среди пределов. Ждать он не умеет и
         # не должен: его пределы часовые.
@@ -1174,6 +1184,57 @@ class Engine:
         self._note_success(Capability.CHATS_LIST, page.completeness, page)
         return page
 
+    def _bind_account(self, reference: str) -> None:
+        """Сверяет файл состояния с аккаунтом и закрепляет его за ним.
+
+        ЗАЧЕМ. Файл состояния сверял формат, семейство адаптера и версию
+        канонической формы - и не сверял, ЧЬИ в нём записи. Реестр, снятый с
+        одного аккаунта, молча применялся к другому.
+
+        Цена этого не в квоте, хотя и в ней тоже. Хуже другое: реестр
+        ВЫДАННОГО. Заказ второго аккаунта с тем же номером считался бы уже
+        выданным, и товар покупателю не ушёл бы вовсе - без отказа, без строки
+        в журнале, без единого следа.
+
+        ПОЧЕМУ ПРИВЯЗКА ЛЕНИВАЯ. Аккаунт становится известен только из ответа
+        площадки, а файл открывается в конструкторе: сверить в момент открытия
+        нечем. Зато сверить можно в тот момент, когда узнали, - и это раньше
+        любой отправки, потому что отправка сама читает страницу диалога.
+
+        ПОЧЕМУ НЕ ПО СЕКРЕТУ. Ключ сессии законно меняется - при смене пароля
+        площадка выдаёт новый. Привязка к нему отвергала бы файл после каждой
+        смены, и продавец, послушавшись отказа, удалял бы файл вместе с реестром
+        выданного. То есть защита от подмены аккаунта приводила бы к повторной
+        выдаче.
+
+        Args:
+            reference (str): Признак аккаунта: собственный номер либо адрес
+                собственного профиля. Пустая строка означает «не узнали», и
+                тогда метод не делает ничего.
+
+        Returns:
+            None
+
+        Raises:
+            CursorIncompatibleError: Если файл записан другим аккаунтом.
+        """
+        if not reference or self._ledger is None:
+            return
+
+        if self._stored_account and self._stored_account != reference:
+            raise CursorIncompatibleError(
+                f"файл состояния {self._ledger.path} записан аккаунтом "
+                f"{self._stored_account!r}, а работаем мы под {reference!r}. "
+                "Реестр выданного и пределы отправки принадлежат другому "
+                "аккаунту: по чужому реестру заказ считался бы уже выданным, и "
+                "товар покупателю не ушёл бы вовсе. Дайте каждому аккаунту свой "
+                "файл состояния"
+            )
+
+        if not self._stored_account:
+            self._stored_account = reference
+            self._ledger.update({"account": reference})
+
     @property
     def delivered(self) -> DeliveryLedger:
         """Реестр выданного по заказам.
@@ -1290,7 +1351,11 @@ class Engine:
         # Тот же приём и тот же узел, что у опоры сверки отправки. Второго
         # правила для одного и того же адреса заводить незачем: разойдись они -
         # и своё сообщение считалось бы чужим в одном месте и своим в другом.
-        return thread, take_anchor(observation.html).own_href
+        own_href = take_anchor(observation.html).own_href
+        # Личность узнаётся заодно с чтением переписки, и сверка идёт здесь же:
+        # это раньше любой отправки, потому что отправка сама читает страницу.
+        self._bind_account(own_href)
+        return thread, own_href
 
     def fetch_ok(self, capability: Capability, path: str) -> Generator[Request, Reply, Observation]:
         """Получает пригодный для разбора ответ по нормативному порядку шагов.
