@@ -1,0 +1,37 @@
+{
+  "captured_at": "2026-08-28T23:53:47+00:00",
+  "captured_format": "structural-skeleton-v8",
+  "classification": "ok",
+  "classification_provisional": false,
+  "classification_reason": "identity_confirmed",
+  "content_length": 4105913,
+  "converted": false,
+  "derived": true,
+  "derived_by": ".venv\\Scripts\\python.exe tools/trim_skeleton.py observations/lots_n.ru.skeleton.txt \"a.tc-item\" tests/fixtures/pages/market-offers.trimmed.logged.ru.skeleton.txt",
+  "derived_from": "lots_n.ru",
+  "derived_note": "ОБРЕЗАННЫЙ СНИМОК, А НЕ НАБЛЮДЕНИЕ. Годится, чтобы проверять разбор, и НЕ годится, чтобы утверждать о площадке: числа остались за самим наблюдением.",
+  "elapsed_ms": 1164,
+  "final_url": "https://funpay.com/lots/{n}/",
+  "format": "structural-skeleton-v8",
+  "http_status": 200,
+  "locale": "ru",
+  "note": "Структурный скелет: текст заменён подписями, сегменты путей с идентификаторами обезличены. Сырой HTML не сохраняется.",
+  "original_counts": {
+    "avatar_nodes_outside_rows": 24,
+    "characters": 7790297,
+    "distinct_seller_links": 478,
+    "lazyload_hidden": 2801,
+    "offer_promo": 70,
+    "offer_promoted": 1,
+    "rows": 3001,
+    "rows_with_data_user": 70
+  },
+  "path": "/lots/{n}/",
+  "redirects": 0,
+  "trimmed_counts": {
+    "characters": 218348,
+    "row_shapes": 5,
+    "rows": 25
+  },
+  "what_was_kept": "По шесть строк каждой РАЗЛИЧНОЙ формы - набора классов и имён атрибутов, - и единственная поднятая строка целиком. Форм пять, сохранены все пять. Простое \"первые N\" потеряло бы два вида из трёх: поднятая строка первая, ещё шестьдесят девять около тысячной, ленивая загрузка с двухсотой."
+}

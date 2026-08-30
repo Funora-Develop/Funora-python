@@ -75,6 +75,7 @@ SOURCES: Final[frozenset[str]] = frozenset(
         "spec/extraction/reviews.yaml",
         "spec/extraction/session.yaml",
         "spec/extraction/lots.yaml",
+        "spec/extraction/market.yaml",
         "spec/extraction/showcase.yaml",
         # Два файла извлечения были вне поля зрения генератора: их селекторы и
         # имена атрибутов не попадали ни в порождённый словарь, ни под сверку
@@ -597,9 +598,7 @@ def render_reconciliation(spec: Path) -> str:
         )
     ]
 
-    out.append(
-        '__all__ = ["ReconcileVerdict", "RECONCILE_READS", "RECONCILE_DELAYS_MS"]\n\n\n'
-    )
+    out.append('__all__ = ["ReconcileVerdict", "RECONCILE_READS", "RECONCILE_DELAYS_MS"]\n\n\n')
 
     out.append("class ReconcileVerdict(StrEnum):\n")
     out.append('    """Чем окончилась сверка.\n\n')
@@ -674,8 +673,7 @@ def render_send_outcome(spec: Path) -> str:
     missing = set(outcomes) - reached
     if missing:
         raise ValueError(
-            f"spec/protocol/send-outcome.yaml: исходы {sorted(missing)} не достижимы "
-            "ни одним шагом"
+            f"spec/protocol/send-outcome.yaml: исходы {sorted(missing)} не достижимы ни одним шагом"
         )
 
     extra = (
@@ -745,8 +743,7 @@ def render_send_outcome(spec: Path) -> str:
     for one in steps:
         verdict = str(one.get("verdict_when_failed") or one.get("verdict"))
         out.append(
-            f'    ("{" ".join(str(one["name"]).split())}", '
-            f'"{verdict}", "{one["reason"]}"),\n'
+            f'    ("{" ".join(str(one["name"]).split())}", "{verdict}", "{one["reason"]}"),\n'
         )
     out.append(")\n")
 
