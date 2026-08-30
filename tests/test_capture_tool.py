@@ -952,30 +952,66 @@ const source = require('fs').readFileSync(process.argv[1], 'utf8')
 const html = process.argv[2]
 
 // Подставной документ. Разбирать разметку целиком незачем: сборщику нужен один
-// вызов - querySelectorAll по имени атрибута.
-const nodes = []
-for (const match of html.matchAll(/data-([a-z-]+)="([^"]*)"/g)) {
-  nodes.push({ name: 'data-' + match[1], value: match[2] })
+// вызов, но их стало больше: команда отправки читает и виджет, и строку списка.
+// Поэтому разбираются НАСТОЯЩИЕ элементы - тег, классы, атрибуты.
+const elements = []
+for (const match of html.matchAll(/<([a-z]+)\s+([^>]*?)\/?>/g)) {
+  const attrs = {}
+  for (const pair of match[2].matchAll(/([a-z-]+)=("([^"]*)"|'([^']*)')/g)) {
+    attrs[pair[1]] = pair[3] !== undefined ? pair[3] : pair[4]
+  }
+  elements.push({
+    tag: match[1],
+    attrs,
+    classes: (attrs.class || '').split(/\s+/).filter(Boolean),
+  })
 }
-for (const match of html.matchAll(/data-app-data='([^']*)'/g)) {
-  nodes.push({ name: 'data-app-data', value: match[1] })
+
+/**
+ * Строит объект элемента, каким его ждёт сборщик.
+ *
+ * @param {object} one Разобранный элемент.
+ * @returns {object} Элемент с getAttribute и classList.
+ */
+function asNode(one) {
+  return {
+    getAttribute: (name) => (name in one.attrs ? one.attrs[name] : null),
+    classList: { contains: (name) => one.classes.includes(name) },
+  }
 }
+
+/**
+ * Проверяет простой селектор: тег, классы через точку, атрибут в скобках.
+ *
+ * @param {object} one Разобранный элемент.
+ * @param {string} selector Селектор.
+ * @returns {boolean} Подходит ли элемент.
+ */
+function matches(one, selector) {
+  const attr = selector.match(/\[([a-z-]+)\]$/)
+  const head = attr ? selector.slice(0, attr.index) : selector
+  if (attr && !(attr[1] in one.attrs)) return false
+
+  const parts = head.split('.')
+  const tag = parts.shift()
+  if (tag && one.tag !== tag) return false
+  return parts.every((name) => one.classes.includes(name))
+}
+
 globalThis.moveTheTag = function () {
-  for (const one of nodes) if (one.name !== 'data-app-data') one.value = 'ИНОЕ'
+  for (const one of elements) {
+    for (const name of Object.keys(one.attrs)) {
+      if (name.startsWith('data-') && name !== 'data-app-data') one.attrs[name] = 'ИНОЕ'
+    }
+  }
 }
 globalThis.document = {
   querySelectorAll(selector) {
-    const name = selector.replace(/[[\]]/g, '')
-    return nodes.filter((one) => one.name === name).map((one) => ({
-      getAttribute: () => one.value,
-    }))
+    return elements.filter((one) => matches(one, selector)).map(asNode)
   },
   querySelector(selector) {
-    if (selector === 'body[data-app-data]') {
-      const found = nodes.find((one) => one.name === 'data-app-data')
-      return found ? { getAttribute: () => found.value } : null
-    }
-    return null
+    const found = elements.find((one) => matches(one, selector))
+    return found ? asNode(found) : null
   },
   documentElement: { outerHTML: html, lang: 'ru' },
   title: '',
@@ -1324,3 +1360,170 @@ def test_the_action_fields_are_matched_against_the_page_too() -> None:
     written = json.dumps(out, ensure_ascii=False)
     assert "users-12345678-87654321" not in written, "значение узла ушло в запись"
     assert "2010613313" not in written, "значение позиции ушло в запись"
+
+
+#: Страница ОТКРЫТОГО диалога: только с неё можно отправить.
+WITH_DIALOGUE = (
+    '<html><body data-app-data=\'{"csrf-token": "abcdefgh12345678"}\'>'
+    '<div class="chat chat-float" data-name="users-12345678-87654321" '
+    'data-id="283028758" data-tag="7f3a9b21" data-user="12345678"></div>'
+    '<a class="contact-item" data-id="111111111" data-node-msg="1000000001"></a>'
+    '<a class="contact-item active" data-id="283028758" data-node-msg="2010613313"></a>'
+    "</body></html>"
+)
+
+#: Список диалогов без открытого собеседника.
+WITHOUT_DIALOGUE = (
+    '<html><body data-app-data=\'{"csrf-token": "abcdefgh12345678"}\'>'
+    '<div class="chat chat-float chat-not-selected" data-user="12345678"></div>'
+    "</body></html>"
+)
+
+
+def test_the_sending_probe_refuses_without_a_text() -> None:
+    """Требует отказать от отправки, пока текст не назван явно.
+
+    Команда единственная во всём сборщике, которая что-то МЕНЯЕТ на площадке.
+    Значения текста по умолчанию нет нарочно: отправка не должна случаться от
+    вызова без доводов - ни по опечатке, ни по автодополнению консоли.
+
+    Returns:
+        None
+    """
+    out = _in_browser(
+        """
+        funora.watch()
+        const refused = []
+        for (const bad of [undefined, '', '   ', 42, null]) {
+          try { await funora.probeSend(bad) } catch (e) { refused.push(String(e.message)) }
+        }
+        const mine = sent.filter((one) => String(one.url) === '/runner/')
+        answer({refused: refused.length, sent: mine.length})
+        """,
+        html=WITH_DIALOGUE,
+    )
+
+    assert out["sent"] == 0, f"ушло {out['sent']} запросов при пустом тексте"
+    assert out["refused"] == 5, out["refused"]
+
+
+def test_the_sending_probe_refuses_when_nothing_is_recording() -> None:
+    """Требует отказать, пока запись не идёт.
+
+    Иначе сообщение уйдёт, а наблюдения не будет - то есть неотменяемое действие
+    случится впустую.
+
+    Returns:
+        None
+    """
+    out = _in_browser(
+        """
+        let refused = ''
+        try { await funora.probeSend('проба') } catch (e) { refused = String(e.message) }
+        answer({refused, sent: sent.filter((one) => String(one.url) === '/runner/').length})
+        """,
+        html=WITH_DIALOGUE,
+    )
+
+    assert out["sent"] == 0, "сообщение ушло без записи"
+    assert "watch" in out["refused"], out["refused"]
+
+
+def test_the_sending_probe_refuses_on_a_page_without_an_open_dialogue() -> None:
+    """Требует отказать на списке диалогов без открытого собеседника.
+
+    Там у виджета нет ни имени диалога, ни его метки. Отправить не в диалог
+    нельзя, и отказ обязан сказать, что делать.
+
+    Returns:
+        None
+    """
+    out = _in_browser(
+        """
+        funora.watch()
+        let refused = ''
+        try { await funora.probeSend('проба') } catch (e) { refused = String(e.message) }
+        answer({refused, sent: sent.filter((one) => String(one.url) === '/runner/').length})
+        """,
+        html=WITHOUT_DIALOGUE,
+    )
+
+    assert out["sent"] == 0
+    assert "data-name" in out["refused"], out["refused"]
+    assert "откройте диалог" in out["refused"], out["refused"]
+
+
+def test_the_sending_probe_sends_one_message_with_an_empty_subscription() -> None:
+    """Требует отправить РОВНО ОДНО сообщение и с пустой подпиской.
+
+    Пустая подписка - ровно то, ради чего команда и заведена: наблюдено, что
+    канал принимает её при опросе, а выполняет ли он при этом действие - другое
+    утверждение, и оно не наблюдалось.
+
+    Returns:
+        None
+    """
+    out = _in_browser(
+        """
+        funora.watch()
+        await funora.probeSend('проба')
+        const mine = sent.filter((one) => String(one.url) === '/runner/')
+        answer(mine.map((one) => ({method: one.init.method, body: one.init.body})))
+        """,
+        html=WITH_DIALOGUE,
+    )
+
+    assert len(out) == 1, f"ушло не одно обращение, а {len(out)}"
+    fields = dict(pair.split("=", 1) for pair in out[0]["body"].split("&"))
+
+    assert fields["objects"] == "%5B%5D", f"подписка не пуста: {fields['objects']}"
+    assert fields["csrf_token"] == "abcdefgh12345678"
+
+    from urllib.parse import unquote_plus
+
+    action = json.loads(unquote_plus(fields["request"]))
+    assert action["action"] == "chat_message"
+    assert action["data"]["node"] == "users-12345678-87654321", action["data"]["node"]
+    assert action["data"]["content"] == "проба"
+
+    # Позиция берётся у ОТКРЫТОЙ строки, а не у первой попавшейся.
+    assert action["data"]["last_message"] == 2010613313, (
+        f"позиция {action['data']['last_message']} взята не у открытого диалога"
+    )
+
+
+def test_the_open_row_is_found_by_identity_not_by_styling() -> None:
+    """Требует искать открытую строку по идентификатору, а не по подсветке.
+
+    Класс - чужое решение об оформлении. Проверка снимает подсветку и ставит её
+    ЧУЖОЙ строке: позиция обязана остаться от нужного диалога.
+
+    Returns:
+        None
+    """
+    misleading = WITH_DIALOGUE.replace(
+        '<a class="contact-item" data-id="111111111"',
+        '<a class="contact-item active" data-id="111111111"',
+    ).replace(
+        '<a class="contact-item active" data-id="283028758"',
+        '<a class="contact-item" data-id="283028758"',
+    )
+    assert misleading != WITH_DIALOGUE, "подсветка не переставилась"
+
+    out = _in_browser(
+        """
+        funora.watch()
+        await funora.probeSend('проба')
+        const mine = sent.filter((one) => String(one.url) === '/runner/')
+        answer(mine.map((one) => one.init.body))
+        """,
+        html=misleading,
+    )
+
+    from urllib.parse import unquote_plus
+
+    fields = dict(pair.split("=", 1) for pair in out[0].split("&"))
+    action = json.loads(unquote_plus(fields["request"]))
+    assert action["data"]["last_message"] == 2010613313, (
+        f"позиция {action['data']['last_message']} взята у подсвеченной чужой строки"
+    )
