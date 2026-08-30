@@ -32,6 +32,7 @@ from ._chats import ChatsPage
 from ._engine import Deliver, Engine, Fetch, Pause, Reply, Request, Submit
 from ._host import host_of
 from ._identity import REGISTRY
+from ._lot_form import LotForm
 from ._observed import Observed
 from ._order import OrderView
 from ._orders import OrdersPage
@@ -295,6 +296,50 @@ class AsyncLotsService:
     def __init__(self, client: AsyncClient) -> None:
         self._client = client
 
+    async def form(self, node_id: str, offer_id: str) -> LotForm:
+        """Читает форму правки одного предложения.
+
+        ЕДИНСТВЕННОЕ МЕСТО, где виден признак показа лота в выдаче.
+
+        Args:
+            node_id (str): Идентификатор раздела.
+            offer_id (str): Идентификатор предложения.
+
+        Returns:
+            LotForm: Прочитанная форма.
+
+        Raises:
+            ValidationError: Если идентификатор непригоден.
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        return await self._client.run(self._client.engine.read_lot_form(node_id, offer_id))
+
+    async def update_price(
+        self, node_id: str, offer_id: str, price: str, *, expected_revision: str
+    ) -> LotForm:
+        """Меняет цену предложения, не трогая ничего другого.
+
+        Args:
+            node_id (str): Идентификатор раздела.
+            offer_id (str): Идентификатор предложения.
+            price (str): Новая цена.
+            expected_revision (str): Отпечаток, полученный через `form()`.
+
+        Returns:
+            LotForm: Форма, перечитанная после сохранения.
+
+        Raises:
+            PreconditionFailedError: Если лот успели изменить.
+            UsageError: Если лот выключен либо отпечаток не передан.
+            ConfigurationError: Если долговечного журнала правок нет.
+            FunoraError: Если сохранение не состоялось.
+        """
+        return await self._client.run(
+            self._client.engine.update_price(
+                node_id, offer_id, price, expected_revision=expected_revision
+            )
+        )
+
     async def list_own(self, node_id: str) -> OwnLotsPage:
         """Читает собственные лоты продавца в одном разделе.
 
@@ -381,6 +426,18 @@ class AsyncClient:
         budget (Budget | None): Общий бюджет запросов. Передаётся, когда в одном
             процессе живут несколько клиентов: площадке видна сетевая
             идентичность, а не то, сколько клиентов мы завели у себя.
+        proxies (tuple[Proxy, ...]): Выходы, между которыми распределяются
+            аккаунты. Пустой набор означает прямое соединение.
+        state_path (Path | None): Файл, в котором реестр отправок, реестр
+            выданного и журнал правок цены переживают перезапуск. Без него
+            отправка и правка цены ОТКАЗЫВАЮТ: обе защиты держатся памятью
+            процесса, а память обнуляется.
+        unsafe_sends_without_ledger (bool): Разрешает отправку без долговечного
+            реестра. Оставляет отметку в состоянии здоровья: снять защиту
+            можно, снять её незаметно нельзя.
+        unsafe_price_changes_without_audit (bool): Разрешает правку цены без
+            долговечного журнала. Отметку оставляет так же. Цена послабления
+            здесь - потерянная прежняя цена: истории цен у площадки нет.
 
     Raises:
         ConfigurationError: Если не передано ни секрета, ни транспорта. Повтор
@@ -408,6 +465,9 @@ class AsyncClient:
         transport: AsyncFetcher | None = None,
         budget: Budget | None = None,
         proxies: tuple[Proxy, ...] = (),
+        state_path: Path | None = None,
+        unsafe_sends_without_ledger: bool = False,
+        unsafe_price_changes_without_audit: bool = False,
     ) -> None:
         resolved_settings = settings or TransportSettings()
 
@@ -442,6 +502,9 @@ class AsyncClient:
             budget or identity.budget,
             experimental or frozenset(),
             identity,
+            state_path=state_path,
+            unsafe_sends_without_ledger=unsafe_sends_without_ledger,
+            unsafe_price_changes_without_audit=unsafe_price_changes_without_audit,
         )
         self.orders = AsyncOrdersService(self)
         self.chats = AsyncChatsService(self)

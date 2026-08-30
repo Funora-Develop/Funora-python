@@ -488,6 +488,26 @@ def test_async_facade_mirrors_the_sync_one() -> None:
             "аргумент принят и выброшен, а подпись обещает обратное"
         )
 
+    # СОЗДАНИЕ КЛИЕНТА СВЕРЯЕТСЯ ОТДЕЛЬНО, и выяснилось это тоже дорогой ценой.
+    # Перебор выше идёт по vars(), а __init__ начинается с подчёркивания и в
+    # перебор не попадал. Асинхронный клиент из-за этого не принимал state_path
+    # вовсе - то есть у него не было долговечного реестра НИКОГДА, а отправка
+    # без реестра отказывает. Асинхронный фасад не мог отправить ни одного
+    # сообщения, и обе проверки выше были довольны.
+    made_here = set(inspect.signature(Client.__init__).parameters)
+    made_there = set(inspect.signature(AsyncClient.__init__).parameters)
+    assert made_here == made_there, (
+        f"клиенты создаются по-разному: {sorted(made_here ^ made_there)}. "
+        "Настройка, которой нет у одного из них, - это отказ операции, "
+        "работающей у другого"
+    )
+
+    passed = inspect.getsource(AsyncClient.__init__)
+    for name in sorted(made_there - {"self"}):
+        assert passed.count(name) >= 2, (
+            f"асинхронный клиент принимает {name} и никуда его не передаёт"
+        )
+
 
 def test_documented_subscriptions_are_producible() -> None:
     """Проверяет, что примеры не подписываются на непорождаемое событие.

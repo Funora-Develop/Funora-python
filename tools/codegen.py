@@ -74,6 +74,7 @@ SOURCES: Final[frozenset[str]] = frozenset(
         "spec/extraction/orders.yaml",
         "spec/extraction/reviews.yaml",
         "spec/extraction/session.yaml",
+        "spec/extraction/lot-edit.yaml",
         "spec/extraction/lots.yaml",
         "spec/extraction/market.yaml",
         "spec/extraction/showcase.yaml",
@@ -2111,6 +2112,7 @@ def render_operations(spec: Path) -> str:
         "guards",
         "preconditions",
         "audit",
+        "audit_rules",
         "renamed_from",
         "rename_reason",
         "completeness_required",
@@ -2203,6 +2205,16 @@ def render_operations(spec: Path) -> str:
     out.append("            errors и выбрасывал его. Расхождение между обещанным и\n")
     out.append("            возбуждаемым не ловило ничто, и вызывающий, выписавший\n")
     out.append("            except по контракту, ловил не всё.\n")
+    out.append("        audit (str): Что операция обязана сохранить до того, как\n")
+    out.append("            выполнится. Пустая строка означает, что аудита ей не\n")
+    out.append("            предписано.\n")
+    out.append("\n")
+    out.append("            Ключ принимался и выбрасывался: спецификация требовала\n")
+    out.append("            аудита, пакет о требовании не знал, и связать отказ\n")
+    out.append("            операции с объявлением было нечем.\n")
+    out.append("        audit_fail_closed (bool): Отказывает ли операция, когда\n")
+    out.append("            сохранять некуда. Ложь означает либо отсутствие аудита,\n")
+    out.append("            либо аудит, которым разрешено пренебречь.\n")
     out.append('    """\n\n')
     out.append("    name: str\n")
     out.append("    capability: str\n")
@@ -2210,6 +2222,8 @@ def render_operations(spec: Path) -> str:
     out.append("    request_class: str\n")
     out.append("    returns: str\n")
     out.append("    errors: tuple[str, ...]\n")
+    out.append('    audit: str = ""\n')
+    out.append("    audit_fail_closed: bool = False\n")
 
     out.append("\n\n#: Операции служб по идентификатору.\n")
     out.append("OPERATIONS: Final[dict[str, Operation]] = {\n")
@@ -2239,6 +2253,16 @@ def render_operations(spec: Path) -> str:
             out.append("        ),\n")
         else:
             out.append("        errors=(),\n")
+
+        # Аудит доходит до пакета. Прежде ключ принимался и выбрасывался:
+        # спецификация требовала сохранить состояние до правки, пакет о
+        # требовании не знал, и связать отказ операции с объявлением было
+        # нечем - то есть объявление стояло и молчало.
+        rules = body.get("audit_rules") or {}
+        if "audit" in body:
+            out.append(f'        audit="{body["audit"]}",\n')
+        if rules.get("without_the_journal") == "fail_closed":
+            out.append("        audit_fail_closed=True,\n")
         out.append("    ),\n")
     out.append("}\n")
 

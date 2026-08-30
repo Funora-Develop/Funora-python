@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
+import sys
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
@@ -29,7 +31,7 @@ import funora._engine as engine_module
 from funora._client import Client
 from funora._transport import Observation
 from funora._watch import Router
-from funora.bot import Bot, Outbox, SendCommand
+from funora.bot import Bot, Outbox, SendCommand, Spool
 from funora.errors import UsageError
 from funora.send_outcome import SendOutcome
 
@@ -655,3 +657,167 @@ class _AsyncTape(_Tape):
         Возвращает:
             None
         """
+
+
+def test_a_command_from_another_process_is_sent_by_the_watch_loop(
+    tmp_path: Path, no_clock: list[float]
+) -> None:
+    """Требует, чтобы задание из ЧУЖОГО ПРОЦЕССА дошло до площадки.
+
+    Ради этого каталожная очередь и заведена. Телеграм-бот, поднятый отдельной
+    командой, до очереди в памяти наблюдения не дотягивается ничем: у него
+    другой интерпретатор и другая память.
+
+    Аргументы:
+        tmp_path (Path): временный каталог.
+        no_clock (list[float]): счётчик пауз вместо сна.
+
+    Возвращает:
+        None
+    """
+    root = tmp_path / "spool"
+    code = (
+        "from funora.bot import Spool, SendCommand;"
+        f"Spool({str(root)!r}).submit(SendCommand("
+        f"chat_id={NODE_ID!r}, text='из чужого процесса', idempotency_key='x1'))"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, encoding="utf-8"
+    )
+    assert done.returncode == 0, done.stderr
+
+    tape = _Tape()
+    with Client(transport=tape, state_path=tmp_path / "state.json") as client:  # type: ignore[arg-type]
+        client.engine._state.outbound.note_incoming(
+            NODE_ID, at_ms=int(datetime.now(UTC).timestamp() * 1000)
+        )
+        bot = Bot(client, Router(), spool_path=root)
+        assert bot.spool is not None
+        assert bot.spool.pending == 1
+
+        bot.run(max_iterations=2)
+
+    assert tape.submitted, "задание из чужого процесса не ушло"
+    assert bot.sent == 1
+    assert bot.spool.pending == 0
+
+    outcome = bot.spool.outcome("x1")
+    assert outcome is not None and outcome.state == "sent"
+
+
+def test_a_stranded_command_is_not_resent_on_restart(tmp_path: Path, no_clock: list[float]) -> None:
+    """Требует, чтобы взятое умершим процессом не ушло вторым сообщением.
+
+    Аргументы:
+        tmp_path (Path): временный каталог.
+        no_clock (list[float]): счётчик пауз вместо сна.
+
+    Возвращает:
+        None
+    """
+    root = tmp_path / "spool"
+    spool = Spool(root)
+    spool.submit(SendCommand(chat_id=NODE_ID, text="судьба неизвестна", idempotency_key="lost"))
+    spool.take(1)  # взяли и «умерли»
+
+    tape = _Tape()
+    with Client(transport=tape, state_path=tmp_path / "state.json") as client:  # type: ignore[arg-type]
+        client.engine._state.outbound.note_incoming(
+            NODE_ID, at_ms=int(datetime.now(UTC).timestamp() * 1000)
+        )
+        bot = Bot(client, Router(), spool_path=root)
+        bot.run(max_iterations=2)
+
+    assert not tape.submitted, "сообщение с неизвестной судьбой ушло вторым разом"
+    assert bot.spool is not None
+    assert bot.spool.stuck == ("lost",)
+
+
+def test_a_refused_command_records_its_refusal(tmp_path: Path, no_clock: list[float]) -> None:
+    """Требует, чтобы отказ дошёл до положившего задание.
+
+    Переписка НЕ согрета нарочно: холодное обращение отвергает ограничитель, и
+    отказ этот обязан оказаться в исходе, а не пропасть в журнале.
+
+    Аргументы:
+        tmp_path (Path): временный каталог.
+        no_clock (list[float]): счётчик пауз вместо сна.
+
+    Возвращает:
+        None
+    """
+    root = tmp_path / "spool"
+    Spool(root).submit(
+        SendCommand(chat_id=NODE_ID, text="в холодную переписку", idempotency_key="cold")
+    )
+
+    tape = _Tape()
+    with Client(transport=tape, state_path=tmp_path / "state.json") as client:  # type: ignore[arg-type]
+        bot = Bot(client, Router(), spool_path=root)
+        bot.run(max_iterations=2)
+
+    assert not tape.submitted, "холодное обращение ушло"
+    assert bot.refused == 1
+    assert bot.spool is not None
+    outcome = bot.spool.outcome("cold")
+    assert outcome is not None and outcome.state == "refused"
+
+
+def test_both_queues_share_one_limit(tmp_path: Path, no_clock: list[float]) -> None:
+    """Требует, чтобы предел за паузу был ОБЩИМ у обеих очередей.
+
+    Предел бережёт не очередь, а паузу между опросами. Две очереди с
+    собственными пределами удлинили бы её вдвое, и наблюдение отстало бы ровно
+    настолько же.
+
+    Аргументы:
+        tmp_path (Path): временный каталог.
+        no_clock (list[float]): счётчик пауз вместо сна.
+
+    Возвращает:
+        None
+    """
+    root = tmp_path / "spool"
+    spool = Spool(root)
+    for step in range(3):
+        spool.submit(
+            SendCommand(chat_id=NODE_ID, text=f"каталог {step}", idempotency_key=f"s{step}")
+        )
+
+    tape = _Tape()
+    with Client(transport=tape, state_path=tmp_path / "state.json") as client:  # type: ignore[arg-type]
+        client.engine._state.outbound.note_incoming(
+            NODE_ID, at_ms=int(datetime.now(UTC).timestamp() * 1000)
+        )
+        bot = Bot(client, Router(), max_sends_per_idle=2, spool_path=root)
+        bot.send(NODE_ID, "из памяти", idempotency_key="m1")
+
+        bot.run(max_iterations=1)
+
+    # Считаются ПОПЫТКИ, а не удачи: бюджет запросов в одном шаге может не
+    # дать второй отправке состояться, и тогда проверка про предел паузы
+    # превратилась бы в проверку про бюджет.
+    assert bot.sent + bot.refused == 2, (
+        f"за паузу разобрано {bot.sent + bot.refused} заданий, а предел объявлен двойкой"
+    )
+    assert bot.spool is not None
+    assert bot.spool.pending == 2, (
+        "каталог разобран сверх общего предела: одно задание взято из памяти, "
+        "значит каталогу остаётся ровно одно"
+    )
+
+
+def test_the_spool_is_absent_unless_asked_for(tmp_path: Path) -> None:
+    """Требует, чтобы каталог не заводился сам собой.
+
+    Каталог - это файлы на диске вызывающего. Заводить их без просьбы значит
+    насорить в чужом проекте.
+
+    Аргументы:
+        tmp_path (Path): временный каталог.
+
+    Возвращает:
+        None
+    """
+    with Client(transport=_Tape(), state_path=tmp_path / "state.json") as client:  # type: ignore[arg-type]
+        assert Bot(client, Router()).spool is None

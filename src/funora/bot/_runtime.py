@@ -28,6 +28,7 @@ from ..errors import (
     ValidationError,
 )
 from ._outbox import Outbox, SendCommand, SendTicket
+from ._spool import Spool
 
 if TYPE_CHECKING:
     from ._delivery import AutoDelivery, DeliveryDecision, DeliveryPlan
@@ -55,7 +56,15 @@ class Bot:
         max_sends_per_idle (int): Сколько отправок разбирать за одну паузу.
     """
 
-    __slots__ = ("_client", "_router", "_outbox", "_limit", "_sent", "_refused")
+    __slots__ = (
+        "_client",
+        "_router",
+        "_outbox",
+        "_spool",
+        "_limit",
+        "_sent",
+        "_refused",
+    )
 
     def __init__(
         self,
@@ -63,6 +72,7 @@ class Bot:
         router: Router,
         *,
         max_sends_per_idle: int = MAX_SENDS_PER_IDLE,
+        spool_path: Path | str | None = None,
     ) -> None:
         # Ноль означал бы «не разбирать очередь никогда»: take(0) отдаёт
         # пустой перечень, задания копятся, квитанции не закрываются, и
@@ -77,9 +87,25 @@ class Bot:
         self._client = client
         self._router = router
         self._outbox = Outbox()
+
+        #: Очередь между ПРОЦЕССАМИ. None означает, что её не просили.
+        #:
+        #: Она не заменяет очередь в памяти, а дополняет её: та решает
+        #: задачу про потоки, эта - про процессы. Телеграм-бот, поднятый
+        #: отдельной командой, до очереди в памяти не дотягивается ничем.
+        self._spool = Spool(spool_path) if spool_path is not None else None
         self._limit = max_sends_per_idle
         self._sent = 0
         self._refused = 0
+
+    @property
+    def spool(self) -> Spool | None:
+        """Очередь исходящих между процессами.
+
+        Returns:
+            Spool | None: Очередь либо None, если её не просили.
+        """
+        return self._spool
 
     @property
     def outbox(self) -> Outbox:
@@ -172,6 +198,13 @@ class Bot:
             FunoraError: Любая ошибка чтения, которую не удалось повторить.
         """
         self._outbox.claim()
+
+        # Застрявшее разбирается ОДИН РАЗ, на старте, и до первого опроса.
+        # Задание, взятое умершим процессом, могло уйти на площадку и могло не
+        # уйти; повторять его нельзя, и молчать о нём нельзя тоже.
+        if self._spool is not None:
+            self._spool.recover()
+
         self._client.run(
             self._client.engine.watch(
                 self._router,
@@ -206,7 +239,9 @@ class Bot:
         Returns:
             None
         """
-        for ticket in self._outbox.take(self._limit):
+        left = self._limit
+        for ticket in self._outbox.take(left):
+            left -= 1
             command = ticket.command
             try:
                 result = self._client.chats.send_text(
@@ -225,6 +260,32 @@ class Bot:
                 continue
             self._sent += 1
             ticket.settle(result=result)
+
+        # Каталог разбирается ПОСЛЕ памяти и в остаток того же предела. Предел
+        # общий нарочно: он бережёт не очередь, а паузу между опросами, и две
+        # очереди с собственными пределами вдвое удлинили бы её.
+        if self._spool is None:
+            return
+
+        for entry in self._spool.take(left):
+            command = entry.command
+            try:
+                result = self._client.chats.send_text(
+                    command.chat_id,
+                    command.text,
+                    declared_cold=command.declared_cold,
+                )
+            except FunoraError as exc:
+                self._refused += 1
+                _log.warning(
+                    "задание %s из каталога не отправлено: %s",
+                    command.idempotency_key,
+                    type(exc).__name__,
+                )
+                self._spool.settle(entry, state="refused", detail=type(exc).__name__)
+                continue
+            self._sent += 1
+            self._spool.settle(entry, state="sent", detail=result.outcome.value)
 
     def deliveries(
         self,

@@ -28,6 +28,7 @@ from ._chats import ChatsPage
 from ._engine import Deliver, Engine, Fetch, Pause, Reply, Request, Submit
 from ._host import host_of
 from ._identity import REGISTRY
+from ._lot_form import LotForm
 from ._observed import Observed
 from ._order import OrderView
 from ._orders import OrdersPage
@@ -340,6 +341,59 @@ class LotsService:
         """
         return self._client.run(self._client.engine.read_own_lots(node_id))
 
+    def form(self, node_id: str, offer_id: str) -> LotForm:
+        """Читает форму правки одного предложения.
+
+        ЕДИНСТВЕННОЕ МЕСТО, где виден признак показа лота в выдаче: на странице
+        своих лотов его нет ни одного.
+
+        Отсюда же берётся `revision` - отпечаток состояния лота, без которого
+        не примет правку `update_price`.
+
+        Args:
+            node_id (str): Идентификатор раздела.
+            offer_id (str): Идентификатор предложения.
+
+        Returns:
+            LotForm: Прочитанная форма: цена, знак валюты, признак показа и
+            отпечаток.
+
+        Raises:
+            ValidationError: Если идентификатор непригоден.
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        return self._client.run(self._client.engine.read_lot_form(node_id, offer_id))
+
+    def update_price(
+        self, node_id: str, offer_id: str, price: str, *, expected_revision: str
+    ) -> LotForm:
+        """Меняет цену предложения, не трогая ничего другого.
+
+        ОТПРАВЛЯЕТСЯ ПРОЧИТАННОЕ, с заменой одной цены. Форма несёт описание
+        лота и сообщение покупателю после оплаты; собрать запрос из перечня
+        нужных полей значило бы стереть их.
+
+        Args:
+            node_id (str): Идентификатор раздела.
+            offer_id (str): Идентификатор предложения.
+            price (str): Новая цена, как её пишут в поле.
+            expected_revision (str): Отпечаток, полученный через `form()`.
+                Обязателен: без него параллельная правка перетирается молча.
+
+        Returns:
+            LotForm: Форма, перечитанная после сохранения.
+
+        Raises:
+            PreconditionFailedError: Если лот успели изменить.
+            UsageError: Если лот выключен либо отпечаток не передан.
+            FunoraError: Если сохранение не состоялось.
+        """
+        return self._client.run(
+            self._client.engine.update_price(
+                node_id, offer_id, price, expected_revision=expected_revision
+            )
+        )
+
     def showcase(self, user_id: str) -> ShowcasePage:
         """Читает публичную витрину продавца.
 
@@ -406,6 +460,19 @@ class Client:
             идентичность, а не то, сколько клиентов мы завели у себя, и общий
             предел обходится ровно тем, что каждый заводит свой бюджет.
 
+        proxies (tuple[Proxy, ...]): Выходы, между которыми распределяются
+            аккаунты. Пустой набор означает прямое соединение.
+        state_path (Path | None): Файл, в котором реестр отправок, реестр
+            выданного и журнал правок цены переживают перезапуск. Без него
+            отправка и правка цены ОТКАЗЫВАЮТ: обе защиты держатся памятью
+            процесса, а память обнуляется.
+        unsafe_sends_without_ledger (bool): Разрешает отправку без долговечного
+            реестра. Оставляет отметку в состоянии здоровья: снять защиту
+            можно, снять её незаметно нельзя.
+        unsafe_price_changes_without_audit (bool): Разрешает правку цены без
+            долговечного журнала. Отметку оставляет так же. Цена послабления
+            здесь - потерянная прежняя цена: истории цен у площадки нет.
+
     Raises:
         ConfigurationError: Если не передано ни секрета, ни транспорта. Повтор
             здесь не поможет, исправлять надо вызов.
@@ -434,6 +501,7 @@ class Client:
         proxies: tuple[Proxy, ...] = (),
         state_path: Path | None = None,
         unsafe_sends_without_ledger: bool = False,
+        unsafe_price_changes_without_audit: bool = False,
     ) -> None:
         resolved_settings = settings or TransportSettings()
 
@@ -470,6 +538,7 @@ class Client:
             identity,
             state_path=state_path,
             unsafe_sends_without_ledger=unsafe_sends_without_ledger,
+            unsafe_price_changes_without_audit=unsafe_price_changes_without_audit,
         )
         self.orders = OrdersService(self)
         self.chats = ChatsService(self)

@@ -56,6 +56,16 @@ class Operation:
             errors и выбрасывал его. Расхождение между обещанным и
             возбуждаемым не ловило ничто, и вызывающий, выписавший
             except по контракту, ловил не всё.
+        audit (str): Что операция обязана сохранить до того, как
+            выполнится. Пустая строка означает, что аудита ей не
+            предписано.
+
+            Ключ принимался и выбрасывался: спецификация требовала
+            аудита, пакет о требовании не знал, и связать отказ
+            операции с объявлением было нечем.
+        audit_fail_closed (bool): Отказывает ли операция, когда
+            сохранять некуда. Ложь означает либо отсутствие аудита,
+            либо аудит, которым разрешено пренебречь.
     """
 
     name: str
@@ -64,6 +74,8 @@ class Operation:
     request_class: str
     returns: str
     errors: tuple[str, ...]
+    audit: str = ""
+    audit_fail_closed: bool = False
 
 
 #: Операции служб по идентификатору.
@@ -288,6 +300,8 @@ OPERATIONS: Final[dict[str, Operation]] = {
             "funora.auth.session_expired",
             "funora.transport",
         ),
+        audit="before_state",
+        audit_fail_closed=True,
     ),
     "market.offers": Operation(
         name="market.offers",

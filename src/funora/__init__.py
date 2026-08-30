@@ -44,6 +44,7 @@ from ._diff import (
 )
 from ._gate import check_capability
 from ._host import host_of, is_safe_hop, same_host
+from ._lot_form import LotForm, parse_lot_form
 from ._market import MarketOffer, MarketPage
 from ._money import Money
 from ._observed import Confidence, Observed, Presence
@@ -174,6 +175,8 @@ __all__ = [
     "Review",
     "OwnLotsPage",
     "OwnLot",
+    "LotForm",
+    "parse_lot_form",
     "ShowcasePage",
     "ShowcaseSection",
     "CatalogPage",
