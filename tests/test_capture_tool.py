@@ -337,6 +337,89 @@ def test_the_dangerous_headers_are_dropped_by_name() -> None:
     assert names == ["content-type", "x-requested-with"], names
 
 
+def test_the_route_name_rule_matches_between_the_two_languages() -> None:
+    """ЗАКРЫВАЕТ РАСХОЖДЕНИЕ, стоившее скрытого адреса сохранения лота.
+
+    Правило одно: имя метода в адресе сохраняется, идентификатор маскируется.
+    Описаний у него было два - в браузерном сборщике и в питоне, - и они
+    разошлись. Браузер получил исключение 24.08.2026, питон не получил.
+
+    Цена: снимок формы правки лота отдал адрес сохранения как /lots/{n12}. Имя
+    метода, единственное, ради чего форму и снимали, было скрыто, и добыть его
+    предлагалось настоящим сохранением лота - то есть записью на площадке.
+
+    Returns:
+        None
+    """
+    from funora._skeleton import DEFAULT_OWN_HOST, mask_path
+
+    cases = [
+        "offerSave",
+        "offerEdit",
+        "trade",
+        "addImage",
+        "75289502",
+        "ABCD1234",
+        "1908",
+        "v2Api",
+    ]
+    theirs = _in_node(json.dumps(cases) + ".map(isRouteName)")
+    ours = [
+        mask_path(f"https://funpay.com/x/{one}", DEFAULT_OWN_HOST, {}).endswith(one)
+        for one in cases
+    ]
+
+    for case, mine, other in zip(cases, ours, theirs, strict=True):
+        assert mine == other, (
+            f"о сегменте {case!r} питон говорит {mine}, браузер {other}. Два "
+            "описания одного правила разошлись - снимок страницы и запись "
+            "запроса скажут о площадке разное"
+        )
+
+    # И сама суть: имя метода видно, идентификатор нет.
+    assert ours[cases.index("offerSave")] is True
+    assert ours[cases.index("75289502")] is False
+    assert ours[cases.index("ABCD1234")] is False
+
+
+def test_a_form_field_name_survives_but_its_value_never_does() -> None:
+    """Требует раскрывать ИМЯ поля формы и никогда - его значение.
+
+    Имя выбирает площадка: csrf_token, price, fields[summary][ru]. По нему
+    собирается запрос, и без него снятая форма нечитаема как договор.
+
+    Значение выбирает человек: цена, описание лота, сообщение покупателю. Его
+    раскрывать нельзя ни при каких условиях.
+
+    Returns:
+        None
+    """
+    from funora._skeleton import skeletonize
+
+    out = skeletonize(
+        "<form action='/lots/offerSave'>"
+        "<input name='csrf_token' value='СЕКРЕТНЫЙТОКЕН'>"
+        "<input name='fields[summary][ru]' value='Мой лот про CS2'>"
+        "<input name='price' value='299.00'>"
+        "<input name='имя по-русски' value='x'>"
+        "<input name='имя с пробелом' value='y'>"
+        "<textarea name='fields[desc][ru]'>Длинное описание лота</textarea>"
+        "</form>"
+    )
+
+    for name in ("csrf_token", "fields[summary][ru]", "price", "fields[desc][ru]"):
+        assert name in out, f"имя поля {name} потеряно - форму не собрать"
+
+    for value in ("СЕКРЕТНЫЙТОКЕН", "Мой лот про CS2", "299.00", "Длинное описание лота"):
+        assert value not in out, f"значение {value!r} уехало в скелет"
+
+    for odd in ("имя по-русски", "имя с пробелом"):
+        assert odd not in out, (
+            f"имя {odd!r} сохранено дословно: правило обязано пропускать только "
+            "то, что похоже на имя поля, иначе через него утечёт что угодно"
+        )
+
+
 def test_the_signature_matches_between_the_two_languages() -> None:
     """Сверяет подпись значения в питоне и в браузерной части.
 
