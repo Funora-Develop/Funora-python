@@ -892,6 +892,7 @@
       const widget = document.querySelector('.chat.chat-float')
       if (widget === null) return { error: 'на странице нет виджета переписки' }
 
+      const tag = widget.getAttribute('data-tag')
       const node = widget.getAttribute('data-name')
       if (!node) {
         return {
@@ -912,7 +913,7 @@
       const last = row.getAttribute('data-node-msg')
       if (!last) return { error: 'у строки диалога нет позиции последнего сообщения' }
 
-      return { token, node, last }
+      return { token, node, last, tag }
     },
 
     /**
@@ -930,11 +931,21 @@
      * Текст обязателен и вводится руками. Значения по умолчанию нет нарочно:
      * отправка не должна случаться от вызова без доводов.
      *
+     * ДОВЕСОК subscribe. Наблюдено 30.08.2026: ответ канала несёт изменения
+     * ТОЛЬКО подписанных объектов. При пустой подписке отправка проходит, а
+     * ответ приходит пустым - подтверждать нечем.
+     *
+     * С довеском подписка ставится ровно одна - на узел этого диалога. Она
+     * собирается со страницы целиком: идентификатор из data-name, метка из
+     * data-tag, данные те же, что у действия. Догадок в ней нет.
+     *
      * @param {string} text Текст сообщения. Пишите туда, где лишнее сообщение
      *   никому не помешает.
+     * @param {object} [options] Довески. Поле subscribe включает подписку на
+     *   узел диалога.
      * @returns {Promise<string>} Что вышло.
      */
-    probeSend(text) {
+    probeSend(text, options) {
       if (!watching) {
         return Promise.reject(
           new Error('сперва funora.watch(): иначе сообщение уйдёт, а записи не будет'),
@@ -952,16 +963,24 @@
       const where = this.context()
       if (where.error) return Promise.reject(new Error(where.error))
 
+      const data = { node: where.node, last_message: Number(where.last), content: text }
+
+      // Подписка либо пуста, либо состоит РОВНО ИЗ ОДНОГО узла - того самого
+      // диалога. Второго вида объектов здесь нет нарочно: метка закладок не
+      // наблюдалась, и собрать её было бы догадкой.
+      let objects = []
+      if (options && options.subscribe) {
+        if (!where.tag) {
+          return Promise.reject(
+            new Error('у виджета нет метки диалога (data-tag): подписку не собрать'),
+          )
+        }
+        objects = [{ type: 'chat_node', id: where.node, tag: where.tag, data }]
+      }
+
       const form = new URLSearchParams()
-      // ПУСТАЯ подписка - ровно то, ради чего команда и заведена.
-      form.set('objects', '[]')
-      form.set(
-        'request',
-        JSON.stringify({
-          action: 'chat_message',
-          data: { node: where.node, last_message: Number(where.last), content: text },
-        }),
-      )
+      form.set('objects', JSON.stringify(objects))
+      form.set('request', JSON.stringify({ action: 'chat_message', data }))
       form.set('csrf_token', where.token)
 
       return window

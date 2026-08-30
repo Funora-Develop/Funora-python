@@ -1527,3 +1527,103 @@ def test_the_open_row_is_found_by_identity_not_by_styling() -> None:
     assert action["data"]["last_message"] == 2010613313, (
         f"позиция {action['data']['last_message']} взята у подсвеченной чужой строки"
     )
+
+
+def test_the_sending_probe_can_subscribe_to_exactly_one_node() -> None:
+    """Требует собирать подписку ровно из одного узла - и только из наблюдённого.
+
+    Наблюдено 30.08.2026 контрольной парой: ответ канала несёт изменения ТОЛЬКО
+    подписанных объектов. При пустой подписке отправка проходит, а ответ
+    приходит пустым - подтверждать нечем.
+
+    Подписка из одного узла собирается со страницы целиком: идентификатор из
+    data-name, метка из data-tag, данные те же, что у действия. Второго вида
+    объектов здесь нет нарочно - метка закладок не наблюдалась, и собрать её
+    было бы догадкой.
+
+    Returns:
+        None
+    """
+    out = _in_browser(
+        """
+        funora.watch()
+        await funora.probeSend('проба', {subscribe: true})
+        const mine = sent.filter((one) => String(one.url) === '/runner/')
+        answer(mine.map((one) => one.init.body))
+        """,
+        html=WITH_DIALOGUE,
+    )
+
+    from urllib.parse import unquote_plus
+
+    fields = dict(pair.split("=", 1) for pair in out[0].split("&"))
+    objects = json.loads(unquote_plus(fields["objects"]))
+
+    assert len(objects) == 1, f"подписка не из одного объекта: {objects}"
+    one = objects[0]
+    assert one["type"] == "chat_node"
+    assert one["id"] == "users-12345678-87654321"
+    assert one["tag"] == "7f3a9b21", one["tag"]
+    assert one["data"]["node"] == one["id"]
+    assert one["data"]["content"] == "проба"
+
+    # Действие при этом то же самое, что и без довеска.
+    action = json.loads(unquote_plus(fields["request"]))
+    assert action["action"] == "chat_message"
+    assert action["data"] == one["data"]
+
+
+def test_without_the_option_the_subscription_stays_empty() -> None:
+    """Требует, чтобы без довеска подписка оставалась пустой.
+
+    Довесок обязан быть ЯВНЫМ: команда с подпиской и команда без неё отвечают на
+    разные вопросы, и перепутать их значит потерять наблюдение.
+
+    Returns:
+        None
+    """
+    out = _in_browser(
+        """
+        funora.watch()
+        await funora.probeSend('проба')
+        await funora.probeSend('проба', {})
+        await funora.probeSend('проба', {subscribe: false})
+        const mine = sent.filter((one) => String(one.url) === '/runner/')
+        answer(mine.map((one) => one.init.body))
+        """,
+        html=WITH_DIALOGUE,
+    )
+
+    assert len(out) == 3
+    for body in out:
+        fields = dict(pair.split("=", 1) for pair in body.split("&"))
+        assert fields["objects"] == "%5B%5D", f"подписка не пуста: {fields['objects']}"
+
+
+def test_the_subscription_refuses_without_the_dialogue_tag() -> None:
+    """Требует отказать, если метки диалога на странице нет.
+
+    Собрать подписку без метки нельзя, а подставить её нечем: метка наблюдается,
+    а не выводится.
+
+    Returns:
+        None
+    """
+    without_tag = WITH_DIALOGUE.replace(' data-tag="7f3a9b21"', "")
+    assert without_tag != WITH_DIALOGUE, "метка не снялась"
+
+    out = _in_browser(
+        """
+        funora.watch()
+        let refused = ''
+        try {
+          await funora.probeSend('проба', {subscribe: true})
+        } catch (e) { refused = String(e.message) }
+        const mine = sent.filter((one) => String(one.url) === '/runner/')
+        answer({refused, sent: mine.length})
+        """,
+        html=without_tag,
+    )
+
+    assert out["sent"] == 0, "сообщение ушло без метки подписки"
+    assert "data-tag" in out["refused"], out["refused"]
