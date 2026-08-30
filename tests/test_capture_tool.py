@@ -720,15 +720,54 @@ def test_the_held_token_is_never_shown_to_the_human() -> None:
         "    setItem: (k, v) => { store[k] = String(v) },"
         "    removeItem: (k) => { delete store[k] },"
         "  };"
-        "  globalThis.document.querySelector = (one) => (one === 'body[data-app-data]'"
-        "    ? {getAttribute: () => JSON.stringify({'csrf-token': 'СЕКРЕТНЫЙТОКЕН'})}"
-        "    : null);"
+        # Страница ВОШЕДШЕГО: меню с ссылкой на свой профиль на месте. Без
+        # него сборщик откажет - и правильно откажет, см. соседнюю проверку.
+        "  globalThis.document.querySelector = (one) => {"
+        "    if (one === 'body[data-app-data]') return "
+        "      {getAttribute: () => JSON.stringify({'csrf-token': 'СЕКРЕТНЫЙТОКЕН'})};"
+        "    if (one === 'a.user-link-dropdown') return {};"
+        "    return null;"
+        "  };"
         "  return {ответ: funora.holdToken(), в_хранилище: store['funora.held-token']};"
         "})()"
     )
 
     assert "СЕКРЕТНЫЙТОКЕН" not in said["ответ"], f"токен показан человеку: {said['ответ']!r}"
     assert said["в_хранилище"] == "СЕКРЕТНЫЙТОКЕН", "токен не запомнен - опыт не выйдет"
+
+
+def test_the_token_is_refused_on_a_guest_page() -> None:
+    """Требует отказать, когда токен просят запомнить ПОСЛЕ выхода.
+
+    Порядок здесь перепутать легко, и перепутанный он не виден никак: токен
+    есть и у гостевой страницы, и выглядит он точно так же.
+
+    Запомненный после выхода, он отвечает на другой вопрос - «что канал скажет
+    гостю» вместо «что он скажет тому, у кого сессия истекла». Отличить это
+    потом по записи наблюдения НЕЛЬЗЯ: в ней подписи, а не значения. Значит
+    проверять надо в момент, когда ещё можно.
+
+    Returns:
+        None
+    """
+    said = _run_collector(
+        "(async () => {"
+        "  const store = {};"
+        "  globalThis.localStorage = {"
+        "    getItem: () => null, setItem: (k, v) => { store[k] = v }, removeItem: () => {},"
+        "  };"
+        # Носитель настроек есть - как на настоящей гостевой странице, - а
+        # меню вошедшего нет.
+        "  globalThis.document.querySelector = (one) => (one === 'body[data-app-data]'"
+        "    ? {getAttribute: () => JSON.stringify({'csrf-token': 'ГОСТЕВОЙ'})}"
+        "    : null);"
+        "  return {ответ: funora.holdToken(), запомнено: store['funora.held-token'] || null};"
+        "})()"
+    )
+
+    assert said["запомнено"] is None, "гостевой токен запомнен: опыт выйдет не тот"
+    assert "ОТКАЗ" in said["ответ"], said["ответ"]
+    assert "войдите" in said["ответ"].lower(), f"отказ не сказал, что делать: {said['ответ']!r}"
 
 
 def test_the_dead_session_probe_forgets_the_token_right_after() -> None:
