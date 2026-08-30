@@ -27,7 +27,7 @@ from funora._outbound import UNSAFE_SENDS_WITHOUT_LEDGER
 from funora._state import StateFile
 from funora._transport import Observation
 from funora.budget import OUTBOUND_MESSAGES_PER_HOUR
-from funora.errors import ConfigurationError, FunoraError
+from funora.errors import ConfigurationError, CursorIncompatibleError, FunoraError
 
 FIXTURES: Final[Path] = Path(__file__).parent / "fixtures" / "pages"
 
@@ -497,3 +497,135 @@ def test_the_ledger_is_pruned_even_without_a_single_send(tmp_path: Path) -> None
         "столько же, сколько живёт аккаунт, и уезжает на диск каждый шаг"
     )
     assert "свежий" in left, "прополка унесла и свежую метку"
+
+
+def test_a_ledger_of_another_account_is_refused(tmp_path: Path) -> None:
+    """ЗАКРЫВАЕТ ПОСЛЕДНИЙ ДЕФЕКТ, найденный аудитом.
+
+    Файл состояния сверял формат, семейство адаптера и версию канонической
+    формы - и не сверял, ЧЬИ в нём записи.
+
+    Цена не только в квоте. Хуже реестр ВЫДАННОГО: заказ второго аккаунта с тем
+    же номером считался бы уже выданным, и товар покупателю не ушёл бы вовсе -
+    без отказа, без строки в журнале, без единого следа.
+
+    Аргументы:
+        tmp_path (Path): временный каталог.
+
+    Возвращает:
+        None
+    """
+    state = tmp_path / "state.json"
+    StateFile(state).save({"account": "https://funpay.com/users/111", "outbound": {}})
+
+    with (
+        Client(transport=_Tape(), state_path=state) as client,  # type: ignore[arg-type]
+        pytest.raises(CursorIncompatibleError, match="другим аккаунтом|другому аккаунту"),
+    ):
+        client.chats.send_text(NODE_ID, "здравствуйте")
+
+    assert not _Tape().submitted, "запрос ушёл под чужим реестром"
+
+
+def test_the_file_is_stamped_with_the_account_on_first_use(tmp_path: Path) -> None:
+    """Требует закрепить файл за аккаунтом, как только тот стал известен.
+
+    Привязка ленивая по необходимости: аккаунт известен только из ответа
+    площадки, а файл открывается в конструкторе. Зато закрепить его можно в тот
+    момент, когда узнали, - и это раньше любой отправки.
+
+    Аргументы:
+        tmp_path (Path): временный каталог.
+
+    Возвращает:
+        None
+    """
+    state = tmp_path / "state.json"
+
+    with Client(transport=_Tape(), state_path=state) as client:  # type: ignore[arg-type]
+        assert not StateFile(state).load().get("account"), "файл закреплён до первого чтения"
+        _warm(client)
+        client.chats.send_text(NODE_ID, "здравствуйте")
+
+    stamped = StateFile(state).load().get("account")
+    assert stamped, "файл не закреплён за аккаунтом после отправки"
+    assert "funpay.com/users/" in str(stamped), stamped
+
+
+def test_the_same_account_keeps_working(tmp_path: Path) -> None:
+    """Требует, чтобы свой же файл принимался без возражений.
+
+    Защита, отвергающая всех, проходит проверку выше и делает SDK непригодным.
+
+    Аргументы:
+        tmp_path (Path): временный каталог.
+
+    Возвращает:
+        None
+    """
+    state = tmp_path / "state.json"
+
+    # Переписки РАЗНЫЕ: пауза на одну переписку - тридцать секунд, и второй
+    # запуск в тот же диалог упёрся бы в неё, а проверка не о ней.
+    for node in ("283028758", "283028759"):
+        with Client(transport=_Tape(), state_path=state) as client:  # type: ignore[arg-type]
+            client.engine._state.outbound.note_incoming(node, at_ms=_now_ms())
+            client.chats.send_text(node, "здравствуйте")
+
+    stored = StateFile(state).load()
+    assert stored.get("account"), "закрепление потерялось"
+    assert len(stored["outbound"]["sent"]) == 2, (
+        f"в реестре {len(stored['outbound']['sent'])} отправок вместо двух: "
+        "второй запуск не дописал"
+    )
+
+
+def test_an_unreadable_identity_neither_binds_nor_refuses(tmp_path: Path) -> None:
+    """Требует молчать, когда личность со страницы не читается.
+
+    Сверять нечем: адрес собственного профиля снимается, только если оба узла
+    меню дали один и тот же. Разошлись - адреса нет вовсе.
+
+    ВЫБРАНА ТЕРПИМОСТЬ, и вот довод. Незнание личности случается от смены
+    разметки, а не от смены аккаунта: у подменённого аккаунта личность как раз
+    читается, и на ней сверка срабатывает. Отказывать при неизвестной личности
+    значило бы ронять отправку от любой правки меню на площадке.
+
+    Проверяется обе половины: не отказали И не закрепили. Закрепить неизвестным
+    значило бы записать в файл пустоту и сделать его совместимым с чем угодно.
+
+    Аргументы:
+        tmp_path (Path): временный каталог.
+
+    Возвращает:
+        None
+    """
+    state = tmp_path / "state.json"
+
+    class _NoIdentity(_Tape):
+        """Лента, отдающая страницу БЕЗ ссылки на собственный профиль."""
+
+        def fetch(self, path: str) -> Observation:
+            """Отдаёт страницу диалога со снятой ссылкой на свой профиль.
+
+            Аргументы:
+                path (str): запрошенный путь.
+
+            Возвращает:
+                Observation: наблюдение.
+            """
+            html = _thread_html().replace("user-link-dropdown", "user-link-was-dropdown")
+            return _observation(html, url=f"https://funpay.com/chat/?node={NODE_ID}")
+
+    with Client(transport=_NoIdentity(), state_path=state) as client:  # type: ignore[arg-type]
+        _warm(client)
+        # Отправка проходит: сверять нечем, и отказ здесь означал бы падение от
+        # любой правки меню.
+        client.chats.send_text(NODE_ID, "здравствуйте")
+
+    stored = StateFile(state).load()
+    assert not stored.get("account"), (
+        f"файл закреплён неизвестной личностью: {stored.get('account')!r}. "
+        "Такое закрепление делает его совместимым с чем угодно"
+    )
+    assert stored["outbound"]["sent"], "отправка не записалась"
