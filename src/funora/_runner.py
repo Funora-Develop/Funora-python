@@ -28,6 +28,7 @@ chat-not-selected, и из пяти атрибутов остаются два: 
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Final
 
@@ -38,8 +39,21 @@ from ._result import Defect, Severity
 from ._secret import Secret
 from ._whoami import parse_app_data
 from .extraction import ATTRIBUTES, SELECTORS
+from .send_outcome import SendOutcome
 
-__all__ = ["RunnerContext", "parse_runner_context"]
+__all__ = [
+    "RunnerContext",
+    "SendResult",
+    "classify_send_response",
+    "parse_runner_context",
+]
+
+#: Имя вида объекта, которым канал отвечает об изменении в диалоге.
+#:
+#: Записано ДОСЛОВНО: сборщик наблюдений хранит значения полей type без
+#: маскирования, потому что это протокольные знаки, а не то, что написал
+#: человек.
+_CHAT_NODE_TYPE: Final[str] = "chat_node"
 
 #: Узел виджета переписки. Он же носитель имени диалога и меток подписки.
 _WIDGET: Final[str] = SELECTORS["order.chat.widget"]
@@ -248,4 +262,160 @@ def parse_runner_context(html: str) -> RunnerContext:
             and _attribute(row, _LAST_MESSAGE, "last_message").is_observed
         ),
         defects=tuple(defects),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class SendResult:
+    """Чем окончилось обращение к каналу с действием.
+
+    НЕ СООБЩЕНИЕ, А КВИТАНЦИЯ. Текста здесь нет и быть не может: в ответе лежит
+    готовая разметка, значения которой не наблюдают намеренно - это чужая
+    переписка. Подставить эхо своего ввода не то же самое: что площадка
+    сохранила, неизвестно.
+
+    Attributes:
+        outcome (SendOutcome): Исход. Три значения, и третье - честное незнание.
+        reason (str): Машиночитаемая причина решения из закрытого перечня.
+        channel_message_id (Observed[int]): Идентификатор сообщения В ОТВЕТЕ
+            КАНАЛА. Имя нарочно не message_id: в разметке идентификатор - строка,
+            в канале число, и что это одно значение, не наблюдалось.
+        node (Observed[str]): Имя диалога, подтверждённое площадкой.
+        messages_in_answer (int): Сколько сообщений пришло в ответе.
+    """
+
+    outcome: SendOutcome
+    reason: str
+    channel_message_id: Observed[int]
+    node: Observed[str]
+    messages_in_answer: int
+
+    @property
+    def is_confirmed(self) -> bool:
+        """Говорит, подтвердила ли площадка отправку.
+
+        Свойство именованное, а не приведение к булеву: у квитанции три исхода,
+        и молчаливое `if result` читало бы unconfirmed как успех - ровно ту
+        ошибку, ради которой третий исход и заведён.
+
+        Returns:
+            bool: True только при исходе confirmed.
+        """
+        return self.outcome is SendOutcome.CONFIRMED
+
+
+def _unconfirmed(reason: str) -> SendResult:
+    """Собирает квитанцию без подтверждения.
+
+    Args:
+        reason (str): Машиночитаемая причина.
+
+    Returns:
+        SendResult: Квитанция с исходом unconfirmed.
+    """
+    return SendResult(
+        outcome=SendOutcome.UNCONFIRMED,
+        reason=reason,
+        channel_message_id=Observed.missing(reason),
+        node=Observed.missing(reason),
+        messages_in_answer=0,
+    )
+
+
+def classify_send_response(body: str, *, sent_to: str) -> SendResult:
+    """Устанавливает исход отправки по ответу канала.
+
+    ПОРЯДОК ШАГОВ НОРМАТИВЕН и объявлен в spec/protocol/send-outcome.yaml. Две
+    реализации, проверившие условия в разном порядке, разойдутся ровно на том
+    ответе, ради которого правило написано.
+
+    Подтверждение объявляется по ПОЛОЖИТЕЛЬНОМУ признаку - площадка вернула
+    сообщение в том самом диалоге, - а не по отсутствию отказа. Отсутствие
+    отказа означало бы «отправлено» о всяком ответе с кодом 200.
+
+    Args:
+        body (str): Тело ответа канала.
+        sent_to (str): Имя диалога, в который отправляли. Сверяется с тем, что
+            вернула площадка: канал отвечает и о чужих диалогах, потому что
+            подписка едет в каждом запросе.
+
+    Returns:
+        SendResult: Исход, причина и прочитанное из ответа.
+    """
+    # Шаг 1. Тело разбирается как JSON.
+    try:
+        parsed: object = json.loads(body)
+    except ValueError:
+        return _unconfirmed("body_not_json")
+
+    # Шаг 2. Разобранное - объект.
+    if not isinstance(parsed, dict):
+        return _unconfirmed("body_not_an_object")
+
+    # Шаг 3. Поле response - объект.
+    #
+    # При запросе БЕЗ действия оно приходит булевым, и это наблюдено. Булево
+    # здесь означает, что ответ пришёл на опрос, а не на действие: подтверждать
+    # им отправку нечем.
+    answer = parsed.get("response")
+    if not isinstance(answer, dict):
+        return _unconfirmed("response_not_an_object")
+
+    # Шаг 4. Поле error пусто.
+    #
+    # Формы отказа никто не видел, и она здесь не нужна: довольно предиката.
+    if answer.get("error") is not None:
+        return SendResult(
+            outcome=SendOutcome.REFUSED,
+            reason="channel_reported_error",
+            channel_message_id=Observed.missing("channel_reported_error"),
+            node=Observed.missing("channel_reported_error"),
+            messages_in_answer=0,
+        )
+
+    # Шаг 5. Среди объектов есть узел диалога.
+    objects = parsed.get("objects")
+    nodes = [
+        one
+        for one in (objects if isinstance(objects, list) else [])
+        if isinstance(one, dict) and one.get("type") == _CHAT_NODE_TYPE
+    ]
+    if not nodes:
+        return _unconfirmed("no_chat_node_in_answer")
+
+    # Шаг 6. Узел диалога - тот самый.
+    mine = None
+    for one in nodes:
+        data = one.get("data")
+        if not isinstance(data, dict):
+            continue
+        node = data.get("node")
+        name = node.get("name") if isinstance(node, dict) else None
+        if isinstance(name, str) and name == sent_to:
+            mine = one
+            break
+    if mine is None:
+        return _unconfirmed("node_mismatch")
+
+    # Шаг 7. Список сообщений непуст.
+    data = mine.get("data")
+    messages = data.get("messages") if isinstance(data, dict) else None
+    written = [
+        one for one in (messages if isinstance(messages, list) else []) if isinstance(one, dict)
+    ]
+    if not written:
+        return _unconfirmed("empty_message_list")
+
+    # Шаг 8. Подтверждено.
+    last = written[-1].get("id")
+    return SendResult(
+        outcome=SendOutcome.CONFIRMED,
+        reason="confirmed_by_channel",
+        channel_message_id=(
+            Observed.present(last)
+            if isinstance(last, int) and not isinstance(last, bool)
+            else Observed.missing("channel_message_id_not_a_number")
+        ),
+        node=Observed.present(sent_to),
+        messages_in_answer=len(written),
     )

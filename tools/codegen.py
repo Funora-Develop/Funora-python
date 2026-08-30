@@ -82,6 +82,7 @@ SOURCES: Final[frozenset[str]] = frozenset(
         "spec/extraction/updates.yaml",
         "spec/protocol/response-classes.yaml",
         "spec/protocol/retry-policy.yaml",
+        "spec/protocol/send-outcome.yaml",
         "spec/runtime/budget.yaml",
         "spec/services/account.yaml",
         "spec/services/catalog.yaml",
@@ -501,6 +502,133 @@ def render_capabilities(spec: Path) -> str:
             f"    Capability.{_const(name)}: CapabilityState.{str(entry['initial']).upper()},\n"
         )
     out.append("}\n")
+
+    return "".join(out)
+
+
+def render_send_outcome(spec: Path) -> str:
+    """Порождает исходы обращения к каналу и их причины.
+
+    Args:
+        spec (Path): Корень рабочей копии Funora-spec.
+
+    Returns:
+        str: Содержимое модуля.
+
+    Raises:
+        ValueError: Если порядок шагов не объявлен нормативным либо причина шага
+            не названа в перечне причин.
+    """
+    doc = _load(spec, "spec/protocol/send-outcome.yaml")
+    outcomes: dict[str, str] = doc["outcomes"]
+    reasons: dict[str, str] = doc["reasons"]
+    pipeline = doc.get("pipeline", {})
+    steps = pipeline.get("steps") or []
+
+    if pipeline.get("order_is_normative") is not True:
+        raise ValueError(
+            "spec/protocol/send-outcome.yaml: порядок шагов обязан быть объявлен нормативным"
+        )
+
+    # Причина шага обязана быть в перечне причин, а перечень - не иметь лишних.
+    # Иначе словарь причин расходится с порядком шагов молча: шаг называет то,
+    # чего вызывающий не знает, либо перечень обещает то, чего не бывает.
+    named = {str(one.get("reason")) for one in steps if one.get("reason")}
+    unknown = named - set(reasons)
+    if unknown:
+        raise ValueError(
+            f"spec/protocol/send-outcome.yaml: шаги называют причины, которых нет в "
+            f"перечне: {sorted(unknown)}"
+        )
+    unused = set(reasons) - named
+    if unused:
+        raise ValueError(
+            f"spec/protocol/send-outcome.yaml: в перечне есть причины, которых не "
+            f"называет ни один шаг: {sorted(unused)}. Причина без шага - обещание "
+            "исхода, которого не бывает"
+        )
+
+    # Всякий исход обязан быть достижим хотя бы одним шагом. Недостижимый исход
+    # хуже отсутствующего: вызывающий пишет ветку, которая никогда не сработает.
+    reached = {str(one.get("verdict_when_failed") or one.get("verdict")) for one in steps}
+    missing = set(outcomes) - reached
+    if missing:
+        raise ValueError(
+            f"spec/protocol/send-outcome.yaml: исходы {sorted(missing)} не достижимы "
+            "ни одним шагом"
+        )
+
+    extra = (
+        "Три исхода, а не два. Третий - unconfirmed - честное незнание, а не\n"
+        "третий род неудачи: отправка могла состояться и могла не состояться.\n"
+        "\n"
+        "Двузначный ответ вынудил бы реализацию выбрать одно из двух зол.\n"
+        "Объявить успехом всё, что вернулось с кодом 200, значит однажды сказать\n"
+        "«отправлено» о неотправленном. Объявить неудачей значит однажды\n"
+        "отправить второй раз, а отменить сообщение покупателю нельзя.\n"
+        "\n"
+        "Порядок шагов нормативен и объявлен в спецификации. Здесь он\n"
+        "порождается перечнем, чтобы проверка могла пройти по нему, а не по\n"
+        "прозе.\n"
+    )
+
+    out = [
+        HEADER.format(
+            title="Исход обращения к каналу обновлений с действием.",
+            source="spec/protocol/send-outcome.yaml",
+            extra=extra,
+        ).replace(
+            "from typing import ClassVar, Final",
+            "from enum import StrEnum\nfrom typing import Final",
+        )
+    ]
+
+    out.append('__all__ = ["SendOutcome", "SEND_REASONS", "SEND_PIPELINE"]\n\n\n')
+
+    out.append("class SendOutcome(StrEnum):\n")
+    out.append('    """Чем окончилось обращение к каналу с действием.\n\n')
+    for name, note in outcomes.items():
+        folded = textwrap.fill(
+            f"{name}: {' '.join(str(note).split())}",
+            width=88,
+            initial_indent="    ",
+            subsequent_indent="        ",
+        )
+        out.append(f"{folded}\n\n")
+    out.append('    """\n\n')
+    for name in outcomes:
+        out.append(f'    {name.upper()} = "{name}"\n')
+
+    out.append("\n\n#: Причины решения. Машиночитаемы и закрыты.\n")
+    out.append("SEND_REASONS: Final[dict[str, str]] = {\n")
+    for name, note in reasons.items():
+        # Причина складывается из кусков: она машиночитаема и в одну строку
+        # предела не умещается, а склеивать её переносами нельзя - разбирать
+        # обратно пришлось бы читателю.
+        pieces = textwrap.wrap(" ".join(str(note).split()), width=76)
+        if len(pieces) == 1:
+            out.append(f'    "{name}": "{pieces[0]}",\n')
+            continue
+        out.append(f'    "{name}": (\n')
+        for index, piece in enumerate(pieces):
+            tail = "" if index == len(pieces) - 1 else " "
+            out.append(f'        "{piece}{tail}"\n')
+        out.append("    ),\n")
+    out.append("}\n")
+
+    out.append("\n#: Порядок шагов. НОРМАТИВЕН: две реализации, проверившие условия\n")
+    out.append("#: в разном порядке, разойдутся ровно на том ответе, ради которого\n")
+    out.append("#: правило написано.\n")
+    out.append("#:\n")
+    out.append("#: Каждый шаг - имя, исход при непрохождении и причина.\n")
+    out.append("SEND_PIPELINE: Final[tuple[tuple[str, str, str], ...]] = (\n")
+    for one in steps:
+        verdict = str(one.get("verdict_when_failed") or one.get("verdict"))
+        out.append(
+            f'    ("{" ".join(str(one["name"]).split())}", '
+            f'"{verdict}", "{one["reason"]}"),\n'
+        )
+    out.append(")\n")
 
     return "".join(out)
 
@@ -2409,6 +2537,7 @@ TARGETS: Final[dict[str, Callable[[Path], str]]] = {
     "errors.py": render_errors,
     "capabilities.py": render_capabilities,
     "response_classes.py": render_response_classes,
+    "send_outcome.py": render_send_outcome,
     "retry.py": render_retry,
     "budget.py": render_budget,
     "events.py": render_events,
