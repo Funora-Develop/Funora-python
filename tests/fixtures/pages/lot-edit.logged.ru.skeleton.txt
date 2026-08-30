@@ -35,7 +35,7 @@
               <div class="hide-navbar"></div>
               <div class="container-fluid">
                 <div class="navbar-header">
-                  <button aria-expanded="T5:a#1" class="collapsed navbar-toggle navbar-toggle-logged" data-target="T7:ap#1" data-toggle="T8:a#1" type="T6:a#4">
+                  <button aria-expanded="T5:a#1" class="collapsed navbar-toggle navbar-toggle-logged" data-target="T7:ap#1" data-toggle="T8:a#1" type="button">
                     <span class="user-link-photo">
                       <img alt src="https://sfunpay.com/{t}/{t}/{t}/{t}/{t}"/>
                     </span>
@@ -54,10 +54,10 @@
                   </a>
                   <form action="https://funpay.com/games/promoFilter" class="navbar-form navbar-left dropdown promo-games-filter" method="T4:a#1">
                     <div class="form-group">
-                      <input autocomplete="T3:a#1" class="form-control dropdown-toggle" data-toggle="T8:a#2" name="query" placeholder="T18:cds#1" role="T9:a#1" type="T4:a#5"/>
+                      <input autocomplete="T3:a#1" class="form-control dropdown-toggle" data-toggle="T8:a#2" name="query" placeholder="T18:cds#1" role="T9:a#1" type="text"/>
                       <div class="dropdown-menu dropdown-autocomplete hidden"></div>
                     </div>
-                    <button class="btn btn-link" type="T6:a#6">
+                    <button class="btn btn-link" type="submit">
                       <i class="fa fa-search"></i>
                     </button>
                   </form>
@@ -255,10 +255,10 @@
             </nav>
             <div class="hidden" data-message="T1:d#1" id="T17:ap#4">
               <audio class="loud">
-                <source src="/audio/{n7}" type="T10:ap#7"/>
+                <source src="/audio/{n7}" type="T10:ap#4"/>
               </audio>
               <audio class="quiet">
-                <source src="/audio/{n8}" type="T10:ap#7"/>
+                <source src="/audio/{n8}" type="T10:ap#4"/>
               </audio>
             </div>
             <div class="hidden" data-chat="T8:a#1" data-orders="T8:ad#1" id="T13:ap#5"></div>
@@ -285,12 +285,12 @@
                       T26:cs
                     </h1>
                     <form action="https://funpay.com/lots/offerSave" class="form-offer-editor" data-offer="{&quot;amount&quot;: &quot;T1:d&quot;}" method="T4:a#1">
-                      <input name="csrf_token" type="T6:a#8" value="T16:ad#1"/>
-                      <input name="form_created_at" type="T6:a#8" value="T10:d#2"/>
-                      <input name="offer_id" type="T6:a#8" value="T8:d#3"/>
-                      <input name="node_id" type="T6:a#8" value="T4:d#4"/>
-                      <input name="location" type="T6:a#8" value/>
-                      <input name="deleted" type="T6:a#8" value/>
+                      <input name="csrf_token" type="hidden" value="T16:ad#1"/>
+                      <input name="form_created_at" type="hidden" value="T10:d#2"/>
+                      <input name="offer_id" type="hidden" value="T8:d#3"/>
+                      <input name="node_id" type="hidden" value="T4:d#4"/>
+                      <input name="location" type="hidden" value/>
+                      <input name="deleted" type="hidden" value/>
                       <div class="lot-fields" data-fields="T169:adp#1">
                         <div class="lot-fields-multilingual">
                           <ul class="nav nav-tabs">
@@ -309,7 +309,7 @@
                             <label class="control-label">
                               T16:cs
                             </label>
-                            <input class="form-control lot-field-input" name="fields[summary][ru]" type="T4:a#5" value="T90:acdops#5"/>
+                            <input class="form-control lot-field-input" name="fields[summary][ru]" type="text" value="T90:acdops#5"/>
                             <p class="help-block">
                               T28:cs
                             </p>
@@ -318,7 +318,7 @@
                             <label class="control-label">
                               T17:as
                             </label>
-                            <input class="form-control lot-field-input" name="fields[summary][en]" type="T4:a#5" value="T74:adps#6"/>
+                            <input class="form-control lot-field-input" name="fields[summary][en]" type="text" value="T74:adps#6"/>
                             <p class="help-block">
                               T29:as
                             </p>
@@ -372,7 +372,7 @@
                           <label class="control-label">
                             T8:c
                           </label>
-                          <input class="lot-field-input" name="fields[images]" type="T6:a#8" value/>
+                          <input class="lot-field-input" name="fields[images]" type="hidden" value/>
                           <div class="attachments-box">
                             <ul class="attachments-list">
                               <li class="attachments-item attachments-new">
@@ -386,7 +386,7 @@
                         <label class="control-label">
                           T4:c
                         </label>
-                        <input autocomplete="T3:a#1" class="form-control" inputmode="T7:a#1" name="price" type="T4:a#5" value="T5:dp#7"/>
+                        <input autocomplete="T3:a#1" class="form-control" inputmode="T7:a#1" name="price" type="text" value="T5:dp#7"/>
                         <span class="form-control-feedback">
                           T1:o
                         </span>
@@ -435,28 +435,28 @@
                       <div class="form-group">
                         <div class="checkbox">
                           <label>
-                            <input checked name="active" type="T8:a#9"/>
+                            <input checked name="active" type="checkbox"/>
                             <i></i>
                             T8:c
                           </label>
                         </div>
-                        <input name="deactivate_after_sale" type="T6:a#8" value/>
+                        <input name="deactivate_after_sale" type="hidden" value/>
                         <div class="checkbox">
                           <label>
-                            <input checked name="deactivate_after_sale" type="T8:a#9"/>
+                            <input checked name="deactivate_after_sale" type="checkbox"/>
                             <i></i>
                             T28:cs
                           </label>
                         </div>
                       </div>
                       <div class="margin-top">
-                        <button class="btn btn-primary btn-block js-btn-save" type="T6:a#6">
+                        <button class="btn btn-primary btn-block js-btn-save" type="submit">
                           T9:c
                         </button>
-                        <button class="btn btn-danger btn-block js-btn-delete" data-text-confirm="T20:cs#1" type="T6:a#6">
+                        <button class="btn btn-danger btn-block js-btn-delete" data-text-confirm="T20:cs#1" type="submit">
                           T7:c
                         </button>
-                        <button class="btn btn-default btn-block hidden js-btn-delete-cancel" type="T6:a#6">
+                        <button class="btn btn-default btn-block hidden js-btn-delete-cancel" type="submit">
                           T17:cs
                         </button>
                       </div>
@@ -525,10 +525,10 @@
           T1:p
         </div>
         <div class="cc-buttons">
-          <button class="btn btn-primary btn-block-mobile cc-accept-all" type="T6:a#4">
+          <button class="btn btn-primary btn-block-mobile cc-accept-all" type="button">
             T11:cs
           </button>
-          <button class="btn btn-gray btn-block-mobile cc-options" type="T6:a#4">
+          <button class="btn btn-gray btn-block-mobile cc-options" type="button">
             T9:c
           </button>
         </div>
@@ -536,7 +536,7 @@
     </div>
     <div aria-hidden="T4:a#1" class="modal fade modal-cookie-consent" role="T6:a#3" tabindex="T2:dp#1">
       <div class="modal-dialog">
-        <button aria-label="T5:a#1" class="close" data-dismiss="T5:a#1" type="T6:a#4">
+        <button aria-label="T5:a#1" class="close" data-dismiss="T5:a#1" type="button">
           <i class="fas fa-times"></i>
         </button>
         <div class="modal-content">
@@ -567,7 +567,7 @@
             <hr/>
             <div class="checkbox">
               <label>
-                <input checked disabled name="cc-option-essential" type="T8:a#9"/>
+                <input checked disabled name="cc-option-essential" type="checkbox"/>
                 <i></i>
                 <strong>
                   T25:acs
@@ -626,7 +626,7 @@
             </div>
             <div class="checkbox">
               <label>
-                <input name="cc-option-analytics" type="T8:a#9"/>
+                <input name="cc-option-analytics" type="checkbox"/>
                 <i></i>
                 <strong>
                   T38:acs
@@ -640,10 +640,10 @@
             </div>
           </div>
           <div class="modal-footer">
-            <button class="btn btn-gray cc-save" data-dismiss="T5:a#1" type="T6:a#4">
+            <button class="btn btn-gray cc-save" data-dismiss="T5:a#1" type="button">
               T9:c
             </button>
-            <button class="btn btn-primary cc-accept-all" data-dismiss="T5:a#1" type="T6:a#4">
+            <button class="btn btn-primary cc-accept-all" data-dismiss="T5:a#1" type="button">
               T11:cs
             </button>
           </div>

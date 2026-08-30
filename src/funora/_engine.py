@@ -38,6 +38,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic
 from typing import Final, TypeVar
+from urllib.parse import urlparse
 
 from ._account import BalancePage, parse_balance_page
 from ._budget import Budget
@@ -60,12 +61,14 @@ from ._extract import observe_locale
 from ._gate import check_capability
 from ._host import host_of
 from ._identity import REGISTRY, Identity, identity_of
+from ._lot_form import SAVE_PATH, LotForm, parse_lot_form
 from ._observed import Observed
 from ._order import OrderView, parse_order_page
 from ._orders import Completeness, OrdersPage, parse_orders_page
 from ._outbound import UNSAFE_SENDS_WITHOUT_LEDGER, OutboundGovernor, OutboundRefusal
 from ._own_lots import OwnLotsPage, parse_own_lots
 from ._poll import Deduplicator, Schedule
+from ._price_audit import UNSAFE_PRICE_CHANGES_WITHOUT_AUDIT, PriceAudit, PriceChange
 from ._result import Defect, Severity
 from ._retry import RETRY_REASON_ATTR, plan_attempt
 from ._reviews import ReviewsPage, parse_reviews_page
@@ -103,9 +106,11 @@ from .errors import (
     CursorIncompatibleError,
     FunoraError,
     NetworkError,
+    PreconditionFailedError,
     ProtocolChangedError,
     RateLimitedError,
     TransportError,
+    UnexpectedResponseError,
     UsageError,
     ValidationError,
 )
@@ -129,6 +134,7 @@ __all__ = [
     "ORDERS_PATH",
     "CHATS_PATH",
     "RUNNER_PATH",
+    "LOT_EDIT_PATH",
     "OWN_LOTS_PATH",
     "PROFILE_PATH",
     "ORDER_PATH",
@@ -161,6 +167,9 @@ BALANCE_PATH: Final[str] = "/account/balance"
 #: Страница собственных лотов раздела. Требует НОМЕРА РАЗДЕЛА: управление
 #: лотами живёт по одному адресу на раздел, а не по одному на аккаунт.
 OWN_LOTS_PATH: Final[str] = "/lots/{node_id}/trade"
+
+#: Форма правки одного предложения.
+LOT_EDIT_PATH: Final[str] = "/lots/offerEdit?node={node_id}&offer={offer_id}"
 
 #: Канал обновлений. Тем же адресом площадка и опрашивается, и меняется.
 RUNNER_PATH: Final[str] = "/runner/"
@@ -467,6 +476,31 @@ def _scoped(error: Exception) -> bool:
     return bool(policy and policy.account_scoped)
 
 
+def _digits(value: str, what: str) -> str:
+    """Проверяет, что идентификатор состоит из одних цифр.
+
+    Проверка идёт ДО сети: подставленный в адрес мусор отправил бы запрос
+    неизвестно куда, а на странице правки цена ошибки - чужой лот.
+
+    Args:
+        value (str): Идентификатор.
+        what (str): Чего именно, для сообщения.
+
+    Returns:
+        str: Идентификатор без краевых пробелов.
+
+    Raises:
+        ValidationError: Если идентификатор непригоден.
+    """
+    cleaned = value.strip()
+    if not cleaned or not cleaned.isdigit():
+        raise ValidationError(
+            f"идентификатор {what} обязан состоять из цифр, получено "
+            f"{len(cleaned)} знаков иного вида"
+        )
+    return cleaned
+
+
 def _outbound_error(refusal: OutboundRefusal) -> FunoraError:
     """Превращает отказ ограничителя в ошибку нужного класса.
 
@@ -567,6 +601,7 @@ class Engine:
         "_health_changes",
         "_identity",
         "_delivered",
+        "_price_audit",
         "_ledger",
         "_stored_account",
         "_settings",
@@ -583,6 +618,7 @@ class Engine:
         identity: Identity | None = None,
         state_path: Path | None = None,
         unsafe_sends_without_ledger: bool = False,
+        unsafe_price_changes_without_audit: bool = False,
     ) -> None:
         self._settings = settings
         self._budget = budget
@@ -615,6 +651,19 @@ class Engine:
         #: процесса обнуляется, а «этот заказ выдан» обязано жить, пока жив заказ.
         self._delivered = DeliveryLedger()
 
+        #: Что стояло у лота до правки цены. Контракт требует этого аудита у
+        #: одной-единственной операции, и требует не зря: у площадки нет ни
+        #: истории цен, ни отката, и «как было» знать больше некому.
+        self._price_audit = PriceAudit()
+
+        # Правка цены без долговечного журнала ОТКАЗЫВАЕТ, и довод тот же, что
+        # у отправки без реестра: память процесса обнуляется, а «какая цена
+        # стояла до бота» обязано жить, пока жив лот. Послабление есть, оно
+        # называется вслух и оставляет след в состоянии здоровья.
+        self._price_audit.durable = self._ledger is not None or unsafe_price_changes_without_audit
+        if unsafe_price_changes_without_audit and state_path is None:
+            self._unsafe.add(UNSAFE_PRICE_CHANGES_WITHOUT_AUDIT)
+
         #: Чей аккаунт записан в файле состояния. Пустая строка означает, что
         #: файла нет либо он записан прежней редакцией, не знавшей привязки.
         self._stored_account = ""
@@ -623,6 +672,7 @@ class Engine:
             stored = self._ledger.load()
             self._state.outbound.restore(stored.get("outbound") or {})
             self._delivered.restore(stored.get("delivery") or {})
+            self._price_audit.restore(stored.get("price_audit") or {})
             self._stored_account = str(stored.get("account") or "")
         #: Смены состояния доступа, ждущие выдачи партией.
         self._health_changes: list[tuple[Health, Health, str]] = []
@@ -965,6 +1015,164 @@ class Engine:
                 return verdict
         return verdict
 
+    def read_lot_form(self, node_id: str, offer_id: str) -> Generator[Request, Reply, LotForm]:
+        """Читает форму правки одного предложения.
+
+        ЕДИНСТВЕННОЕ МЕСТО, где виден признак показа лота в выдаче. На странице
+        своих лотов его нет ни одного, и модель Lot из-за этого не собиралась
+        вовсе.
+
+        Цена известна и записана: одна страница на предложение. У продавца с
+        двумя сотнями лотов это две сотни запросов, и потому список своих лотов
+        признака по-прежнему не отдаёт.
+
+        Args:
+            node_id (str): Идентификатор раздела.
+            offer_id (str): Идентификатор предложения.
+
+        Yields:
+            Request: Просьбы о вводе-выводе.
+
+        Returns:
+            LotForm: Прочитанная форма.
+
+        Raises:
+            ValidationError: Если идентификатор непригоден для подстановки.
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        node = _digits(node_id, "раздела")
+        offer = _digits(offer_id, "предложения")
+
+        observation = yield from self.fetch_ok(
+            Capability.LOTS_LIST_OWN,
+            LOT_EDIT_PATH.format(node_id=node, offer_id=offer),
+        )
+        return parse_lot_form(observation.html, observed_at=datetime.now(UTC))
+
+    def update_price(
+        self, node_id: str, offer_id: str, price: str, *, expected_revision: str
+    ) -> Generator[Request, Reply, LotForm]:
+        """Меняет цену предложения, не трогая ничего другого.
+
+        ПОРЯДОК ЗДЕСЬ И ЕСТЬ ОПЕРАЦИЯ. Форма читается заново, отпечаток
+        сверяется с ожидаемым, и отправляется ПРОЧИТАННОЕ - с заменой одной
+        цены. Собрать запрос из перечня нужных полей значило бы стереть
+        описание лота и сообщение покупателю.
+
+        Args:
+            node_id (str): Идентификатор раздела.
+            offer_id (str): Идентификатор предложения.
+            price (str): Новая цена, как её пишут в поле.
+            expected_revision (str): Отпечаток, полученный чтением формы.
+                Обязателен: без него параллельная правка перетирается молча.
+
+        Yields:
+            Request: Просьбы о вводе-выводе.
+
+        Returns:
+            LotForm: Форма, перечитанная ПОСЛЕ сохранения.
+
+        Raises:
+            PreconditionFailedError: Если лот успели изменить.
+            UsageError: Если лот выключен: поведение снятого флажка не
+                наблюдалось, и отправка могла бы включить его молча.
+            FunoraError: Если сохранение не состоялось.
+        """
+        if not expected_revision:
+            raise UsageError(
+                "нужен expected_revision: без него параллельная правка - из "
+                "другого процесса, из приложения, из веб-интерфейса - будет "
+                "перетёрта молча. Возьмите его чтением формы"
+            )
+
+        # УСЛОВИЕ ОТКАЗА ЧИТАЕТСЯ ИЗ КОНТРАКТА, а не стоит здесь литералом.
+        # Спецификация объявляет у операции аудит и его вид - fail_closed, -
+        # и если объявление снимут, отказ обязан исчезнуть вместе с ним. Правило,
+        # записанное в коде отдельно, пережило бы снятие объявления и осталось
+        # бы отказывать неизвестно по чьему требованию.
+        #
+        # Отказ РАНЬШЕ чтения формы: настройка клиента от страницы не зависит,
+        # и ходить за ней ради заведомого отказа значит тратить чужой запрос.
+        contract = OPERATIONS["lots.update_price"]
+        if contract.audit_fail_closed and not self._price_audit.durable:
+            raise ConfigurationError(
+                "правка цены отказывает без долговечного журнала: у площадки "
+                "нет ни истории цен, ни отката, и вернуть как было можно только "
+                "по нашей записи. Передайте клиенту state_path - тот же файл, "
+                "что и наблюдению, - либо, если вы понимаете цену, "
+                "unsafe_price_changes_without_audit"
+            )
+
+        before = yield from self.read_lot_form(node_id, offer_id)
+        if before.revision != expected_revision:
+            raise PreconditionFailedError(
+                f"лот изменился с тех пор, как вы его читали: ожидался отпечаток "
+                f"{expected_revision}, на странице {before.revision}. Перечитайте "
+                "форму и решите заново"
+            )
+
+        if not before.is_active:
+            # Что уходит при СНЯТОМ флажке, никто не наблюдал. Отправив форму,
+            # мы отправили бы флажок отмеченным - то есть включили бы лот,
+            # которого не просили включать.
+            raise UsageError(
+                "лот выключен, и менять ему цену эта операция отказывается. "
+                "Поведение снятого флажка не наблюдалось, а отправка формы "
+                "включила бы лот молча - вместе с ценой"
+            )
+
+        cleaned = price.strip()
+        if not cleaned:
+            raise ValidationError("цена пуста: пустое поле стирает цену, а не оставляет прежнюю")
+
+        # Вид аудита тоже из контракта: before_state - сохранить состояние ДО
+        # правки. Появись у операции аудит другого вида, здесь станет видно,
+        # что исполняется по-прежнему прежний.
+        if contract.audit != "before_state":
+            raise ConfigurationError(
+                f"контракт требует у правки цены аудита {contract.audit!r}, а "
+                "реализован before_state. Что именно сохранять - решает "
+                "спецификация, и молча исполнять не то нельзя"
+            )
+
+        # ЗАПИСЬ ВПЕРЕДИ ОТПРАВКИ. «Запишем, когда подтвердится» означает не
+        # записать ровно те правки, которые могли уйти: ответ теряется, процесс
+        # падает, а цена на площадке уже новая. Прежней после этого не знает
+        # никто.
+        self._price_audit.record(
+            PriceChange(
+                offer_id=offer_id,
+                node_id=node_id,
+                price_before=before.price_text,
+                price_after=cleaned,
+                revision_before=before.revision,
+                at_ms=int(datetime.now(UTC).timestamp() * 1000),
+            )
+        )
+        self._save_price_audit()
+
+        reply = yield Submit(SAVE_PATH, before.to_request(price=cleaned), {})
+        if not isinstance(reply, Observation):
+            raise TypeError(f"на просьбу Submit ожидалось наблюдение, получено {type(reply)}")
+
+        # Успех виден ПЕРЕХОДОМ на список своих предложений раздела. Тела
+        # ответа страница не получает - его забирает браузер, - и наблюдено
+        # именно это.
+        landed = urlparse(reply.final_url).path
+        # Раздел берётся ИЗ ЗАПРОСА, а не из прочитанной формы. Запрос уходил
+        # по нему же, и сверять надо с тем, куда шли: значение в форме - то,
+        # что сказала площадка, и подставлять его сюда значило бы сверять её с
+        # ней самой.
+        expected = OWN_LOTS_PATH.format(node_id=_digits(node_id, "раздела"))
+        if landed != expected:
+            raise UnexpectedResponseError(
+                f"сохранение привело на {landed!r}, а наблюдался переход на "
+                f"{expected!r}. Что случилось с лотом - неизвестно, и объявлять "
+                "успех по чужому адресу нельзя"
+            )
+
+        return (yield from self.read_lot_form(node_id, offer_id))
+
     def read_own_lots(self, node_id: str) -> Generator[Request, Reply, OwnLotsPage]:
         """Читает собственные лоты продавца в одном разделе.
 
@@ -1264,6 +1472,35 @@ class Engine:
         if self._ledger is None:
             return
         self._ledger.update({"delivery": self._delivered.snapshot()})
+
+    @property
+    def price_audit(self) -> PriceAudit:
+        """Журнал правок цены.
+
+        Живёт у движка по той же причине, что и реестр выданного: файл
+        состояния один, и владеть им должен тот, кто его открыл.
+
+        Returns:
+            PriceAudit: Журнал.
+        """
+        return self._price_audit
+
+    def _save_price_audit(self) -> None:
+        """Сохраняет журнал правок цены.
+
+        Зовётся ВПЕРЕДИ отправки формы. «Сохраним, когда подтвердится» означает
+        не сохранить ровно те правки, которые могли уйти, а вернуть цену без
+        записи о прежней нечем: истории цен у площадки нет.
+
+        Без файла состояния не делает ничего. Отказывать здесь нечему -
+        отказывает сама правка, и отказывает раньше.
+
+        Returns:
+            None
+        """
+        if self._ledger is None:
+            return
+        self._ledger.update({"price_audit": self._price_audit.snapshot()})
 
     def _save_ledger(self, *, now_ms: int) -> None:
         """Сохраняет реестр отправок в файл состояния.

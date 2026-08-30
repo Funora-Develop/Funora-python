@@ -128,6 +128,8 @@ SELECTORS: Final[dict[str, str]] = {
     "chats.sending.form": ".chat-form form",
     "chats.unread_badge": "span.badge-chat",
     "chats.widget": ".chat-contacts",
+    "lot-edit.fields.currency_symbol": ".form-control-feedback",
+    "lot-edit.form": "form.form-offer-editor",
     "lots.controls.raise_button": "button.js-lot-raise",
     "lots.fields.currency_symbol_text": ".tc-price .unit",
     "lots.fields.description_text": ".tc-desc-text",

@@ -27,7 +27,7 @@
 There is no released package and nothing to install yet. The contract is not
 stabilised and still changes.
 
-Fourteen operations work: thirteen reads and one write - sending text.
+Sixteen operations work: fourteen reads and two writes - sending text and changing a lot price.
 
 **The guide lives in [docs/index.md](docs/index.md).** It builds into a site
 (`mkdocs serve`) and is checked by the same run as the code: examples are parsed
@@ -73,6 +73,8 @@ async with AsyncClient(EnvSecretProvider()) as client:
 | `client.chats.thread(node_id)` | a conversation with message origin resolved |
 | `client.chats.send_text(node_id, text)` | a send receipt carrying the outcome |
 | `client.lots.list_own(node_id)` | your own lots in a section, with offer ids |
+| `client.lots.form(node_id, offer_id)` | a lot edit form, and whether the lot is listed |
+| `client.lots.update_price(...)` | the lot with a new price and nothing else touched |
 | `client.lots.showcase(user_id)` | a seller showcase, by section |
 | `client.reviews.get(user_id)` | reviews |
 | `client.account.get()` | the account identity |
@@ -82,9 +84,18 @@ async with AsyncClient(EnvSecretProvider()) as client:
 | `client.account.capabilities()` | which of the declared capabilities are available |
 | `client.catalog.categories()` | the marketplace sections |
 
-There is exactly one write operation - sending text - and it has [its own guide
-chapter](docs/guide/sending.md): a send has three outcomes rather than two, and
-the third one, "unknown", is what the chapter is about.
+There are two write operations, and each carries its own cost of getting it
+wrong.
+
+**Sending text** - [its own guide chapter](docs/guide/sending.md): a send has
+three outcomes rather than two, and the third one, "unknown", is what the chapter
+is about.
+
+**Changing a price** - [the lots chapter](docs/guide/lots.md): the form is sent
+back as it was read, exactly one field changes, and the previous price is written
+to a durable journal before the request leaves. Without a state file the operation
+refuses: the marketplace keeps no price history and offers no undo, so what the
+price used to be is known only from our own record.
 
 On top of that there is a bot layer, `funora.bot`. It provides an outbox you can
 post to **from any thread** - a Telegram handler, say - while the actual sending
@@ -95,9 +106,9 @@ out loud. The whole picture is in the [bot chapter](docs/guide/bot.md).
 The public section listing is parsed too, but has no operation: the `Offer` model
 requires an id, a price and a category, and the page carries none of the three.
 
-Sending an image, marking read and four lot write operations are declared by the
-contract and not written: nobody has observed the requests the marketplace makes
-for them. Calling them raises `NotImplementedOperationError` - a refusal from
+Sending an image, marking read and three lot write operations - activate,
+deactivate and promote - are declared by the contract and not written: nobody has
+observed the requests the marketplace makes for them. Calling them raises `NotImplementedOperationError` - a refusal from
 Funora itself, not a built-in Python error.
 
 ## What the SDK cannot do, and why that is stated here
