@@ -10,6 +10,9 @@
  *   funora.currency('метка') - собрать символы валют без сумм;
  *   funora.watch()      - начать запись ФОРМЫ запросов (не значений);
  *   funora.probe()      - один опрос канала с пустой подпиской;
+ *   funora.probeTag()   - опрос канала с ВЫДУМАННОЙ меткой: отвечает на
+ *                         вопрос, нужна ли для подписки настоящая;
+ *   funora.listen([..]) - опрос канала с произвольной подпиской;
  *   funora.probeSend('текст') - ОТПРАВЛЯЕТ настоящее сообщение с пустой
  *                       подпиской. Единственная команда, которая меняет
  *                       что-то на площадке. Отменить нельзя;
@@ -871,6 +874,102 @@
     },
 
     /**
+     * Опрашивает канал с ПРОИЗВОЛЬНОЙ подпиской, ничего не делая на площадке.
+     *
+     * Отличается от probe одним: подписку задаёт вызывающий. Поле request
+     * по-прежнему несёт false, то есть действия в запросе нет - это тот же
+     * опрос, который страница делает сама каждые несколько секунд.
+     *
+     * РАДИ ЧЕГО. Наблюдение сегодня читает две полные страницы за шаг. Канал
+     * отдаёт то же самое одним небольшим ответом, и если подписаться можно, не
+     * зная настоящих меток, наблюдение переводится на него целиком. Это и
+     * проверяется: подписка с ВЫДУМАННОЙ меткой либо даст изменения, либо не
+     * даст, и оба ответа одинаково полезны.
+     *
+     * Ответ записывается обычным перехватом, поэтому звать надо между watch и
+     * stop - иначе запрос уйдёт, а записи не будет.
+     *
+     * @param {object[]} objects Подписка: перечень объектов как есть.
+     * @returns {Promise<string>} Что вышло.
+     */
+    listen(objects) {
+      if (!Array.isArray(objects)) {
+        return Promise.reject(
+          new Error('нужен массив объектов подписки: funora.listen([{type: "...", ...}])')
+        )
+      }
+
+      const carrier = document.querySelector('body[data-app-data]')
+      if (carrier === null) {
+        return Promise.reject(new Error('на странице нет носителя настроек body[data-app-data]'))
+      }
+      let token = ''
+      try {
+        token = String((JSON.parse(carrier.getAttribute('data-app-data')) || {})['csrf-token'] || '')
+      } catch {
+        return Promise.reject(new Error('настройки страницы не разбираются как JSON'))
+      }
+      if (!token) return Promise.reject(new Error('в настройках страницы нет защитного токена'))
+
+      const form = new URLSearchParams()
+      form.set('objects', JSON.stringify(objects))
+      form.set('request', 'false')
+      form.set('csrf_token', token)
+
+      return window
+        .fetch('/runner/', {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json, text/javascript, */*; q=0.01',
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'X-Requested-With': 'XMLHttpRequest',
+          },
+          body: form.toString(),
+        })
+        .then(
+          (response) =>
+            'опрос с подпиской из ' + objects.length + ' объектов сделан, код ' + response.status
+        )
+    },
+
+    /**
+     * Опрашивает канал подпиской с ВЫДУМАННОЙ меткой.
+     *
+     * ГЛАВНЫЙ ОПЫТ ПЛАНА НАБЛЮДЕНИЙ, и вот почему. Сегодня, чтобы обратиться к
+     * каналу, приходится сперва прочитать страницу диалога - метки лежат на
+     * ней. Если площадка принимает выдуманную метку и отвечает «вот что
+     * изменилось», то читать страницу больше не нужно: хватит защитного токена
+     * и собственного идентификатора.
+     *
+     * Ничего не ломает и ничего не провоцирует: это обычный опрос с полем
+     * request равным false. Выдуманная метка - не подделка защиты, а значение
+     * «я ничего не видел», ровно как при первом обращении страницы.
+     *
+     * Идентификатор берётся со страницы, а не задаётся вызывающим: собственный
+     * номер лежит в атрибуте data-user, и просить его руками значило бы
+     * приглашать вписать чужой.
+     *
+     * @param {string} tag Метка. По умолчанию заведомо несуществующая.
+     * @returns {Promise<string>} Что вышло.
+     */
+    probeTag(tag) {
+      const label = String(tag === undefined ? '0000000000' : tag)
+      const holder = document.querySelector('[data-user]')
+      if (holder === null) {
+        return Promise.reject(
+          new Error('на странице нет узла с data-user: собственный номер брать неоткуда')
+        )
+      }
+      const own = String(holder.getAttribute('data-user') || '')
+      if (!own) return Promise.reject(new Error('атрибут data-user пуст'))
+
+      return this.listen([
+        { type: 'chat_bookmarks', id: own, tag: label, data: false },
+        { type: 'orders_counters', id: own, tag: label, data: false },
+      ])
+    },
+
+    /**
      * Собирает со страницы всё нужное для обращения к каналу.
      *
      * Места взяты из наблюдения, а не из догадки: имя диалога сверено с
@@ -1063,7 +1162,7 @@
   }
   console.log(
     `%cfunora%c собран, сборка ${BUILD}. Команды: funora.page("имя"), `
-      + 'funora.currency("метка"), funora.watch(), funora.probe(), funora.stop("имя")\n  ВНИМАНИЕ: funora.probeSend("текст") ОТПРАВЛЯЕТ настоящее сообщение',
+      + 'funora.currency("метка"), funora.watch(), funora.probe(), funora.probeTag(), funora.listen([...]), funora.stop("имя")\n  ВНИМАНИЕ: funora.probeSend("текст") ОТПРАВЛЯЕТ настоящее сообщение',
     'font-weight:bold',
     '',
   )
