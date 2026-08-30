@@ -10,6 +10,9 @@
  *   funora.currency('метка') - собрать символы валют без сумм;
  *   funora.watch()      - начать запись ФОРМЫ запросов (не значений);
  *   funora.probe()      - один опрос канала с пустой подпиской;
+ *   funora.probeSend('текст') - ОТПРАВЛЯЕТ настоящее сообщение с пустой
+ *                       подпиской. Единственная команда, которая меняет
+ *                       что-то на площадке. Отменить нельзя;
  *   funora.stop()       - остановить запись и отдать собранное;
  *   funora.status()     - показать, что уже собрано.
  *
@@ -868,6 +871,117 @@
     },
 
     /**
+     * Собирает со страницы всё нужное для обращения к каналу.
+     *
+     * Места взяты из наблюдения, а не из догадки: имя диалога сверено с
+     * атрибутом data-name, позиция - с data-node-msg АКТИВНОЙ строки списка.
+     *
+     * @returns {object} Поля обращения либо {error} с объяснением.
+     */
+    context() {
+      const carrier = document.querySelector('body[data-app-data]')
+      if (carrier === null) return { error: 'на странице нет носителя настроек body[data-app-data]' }
+      let token = ''
+      try {
+        token = String((JSON.parse(carrier.getAttribute('data-app-data')) || {})['csrf-token'] || '')
+      } catch {
+        return { error: 'настройки страницы не разбираются как JSON' }
+      }
+      if (!token) return { error: 'в настройках страницы нет защитного токена' }
+
+      const widget = document.querySelector('.chat.chat-float')
+      if (widget === null) return { error: 'на странице нет виджета переписки' }
+
+      const node = widget.getAttribute('data-name')
+      if (!node) {
+        return {
+          error:
+            'у виджета нет имени диалога (data-name). Так выглядит список без '
+            + 'открытого собеседника: откройте диалог и вставьте сборщик заново',
+        }
+      }
+
+      // Строка открытого диалога ищется по идентификатору, а не по подсветке:
+      // класс - чужое решение об оформлении.
+      const wanted = widget.getAttribute('data-id') || ''
+      const rows = [...document.querySelectorAll('a.contact-item')]
+      let row = wanted ? rows.find((one) => (one.getAttribute('data-id') || '') === wanted) : null
+      if (!row) row = rows.find((one) => one.classList.contains('active')) || null
+      if (!row) return { error: 'строка открытого диалога не нашлась в списке' }
+
+      const last = row.getAttribute('data-node-msg')
+      if (!last) return { error: 'у строки диалога нет позиции последнего сообщения' }
+
+      return { token, node, last }
+    },
+
+    /**
+     * ОТПРАВЛЯЕТ НАСТОЯЩЕЕ СООБЩЕНИЕ с пустой подпиской.
+     *
+     * Команда единственная во всём сборщике, которая что-то МЕНЯЕТ на площадке.
+     * Прочие только смотрят. Отменить отправленное нельзя.
+     *
+     * Зачем она нужна. Наблюдено, что канал принимает пустое поле objects при
+     * ОПРОСЕ. Выполняет ли он при этом ДЕЙСТВИЕ - другое утверждение, и оно не
+     * наблюдалось. Это последняя догадка, которая осталась бы в написанной
+     * отправке, и снять её иначе нельзя: страница площадки всегда шлёт подписку
+     * целиком.
+     *
+     * Текст обязателен и вводится руками. Значения по умолчанию нет нарочно:
+     * отправка не должна случаться от вызова без доводов.
+     *
+     * @param {string} text Текст сообщения. Пишите туда, где лишнее сообщение
+     *   никому не помешает.
+     * @returns {Promise<string>} Что вышло.
+     */
+    probeSend(text) {
+      if (!watching) {
+        return Promise.reject(
+          new Error('сперва funora.watch(): иначе сообщение уйдёт, а записи не будет'),
+        )
+      }
+      if (typeof text !== 'string' || text.trim() === '') {
+        return Promise.reject(
+          new Error(
+            'нужен текст: funora.probeSend("проба"). Команда ОТПРАВЛЯЕТ настоящее '
+              + 'сообщение, и отменить его нельзя',
+          ),
+        )
+      }
+
+      const where = this.context()
+      if (where.error) return Promise.reject(new Error(where.error))
+
+      const form = new URLSearchParams()
+      // ПУСТАЯ подписка - ровно то, ради чего команда и заведена.
+      form.set('objects', '[]')
+      form.set(
+        'request',
+        JSON.stringify({
+          action: 'chat_message',
+          data: { node: where.node, last_message: Number(where.last), content: text },
+        }),
+      )
+      form.set('csrf_token', where.token)
+
+      return window
+        .fetch('/runner/', {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json, text/javascript, */*; q=0.01',
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'X-Requested-With': 'XMLHttpRequest',
+          },
+          body: form.toString(),
+        })
+        .then((response) =>
+          'отправка с пустой подпиской сделана, код '
+            + response.status
+            + '. Посмотрите в переписку: пришло ли сообщение',
+        )
+    },
+
+    /**
      * Начинает запись формы запросов.
      *
      * @returns {string} Что делать дальше.
@@ -928,7 +1042,7 @@
   }
   console.log(
     `%cfunora%c собран, сборка ${BUILD}. Команды: funora.page("имя"), `
-      + 'funora.currency("метка"), funora.watch(), funora.probe(), funora.stop("имя")',
+      + 'funora.currency("метка"), funora.watch(), funora.probe(), funora.stop("имя")\n  ВНИМАНИЕ: funora.probeSend("текст") ОТПРАВЛЯЕТ настоящее сообщение',
     'font-weight:bold',
     '',
   )
