@@ -41,6 +41,7 @@ from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Final
+from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
@@ -364,6 +365,27 @@ class Handler(BaseHTTPRequestHandler):
         Returns:
             None
         """
+        # Занято ли имя. Спрашивается ДО записи, и вот зачем.
+        #
+        # Запись, уходящая маяком при переходе по форме, ответа приёмника не
+        # читает: маяк для того и сделан, чтобы довезти и не ждать. Значит отказ
+        # «под этим именем уже лежит другое» пропадает молча, и наблюдение
+        # теряется в тот самый миг, ради которого велось.
+        #
+        # Так и потерялось наблюдение сохранения лота: имя было занято прежней
+        # попыткой, приёмник отказал, а сказать об этом было некому.
+        if self.path.startswith("/taken?"):
+            asked = parse_qs(urlparse(self.path).query).get("name", [""])[0]
+            free = not (OUTPUT / f"network.{asked}.json").is_file()
+            body = json.dumps({"name": asked, "free": free}).encode("utf-8")
+            self.send_response(200)
+            self._allow()
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
         if self.path != "/snippet.js":
             self.send_response(404)
             self._allow()

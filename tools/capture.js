@@ -292,6 +292,13 @@
   //
   // Признак живёт в памяти вкладки и обнуляется вместе с ней: сравнивать
   // токены РАЗНЫХ сессий незачем и нельзя.
+  //: Имя, под которым запись уйдёт при уходе со страницы.
+  //
+  // ЗАЧЕМ. Отправка формы с переходом уносит вкладку вместе со сборщиком, и
+  // stop() выполнить уже негде. Наблюдение сохранения лота потерялось именно
+  // так: запись велась, действие произошло, а отдать её было некому.
+  let pendingName = ''
+
   let tokenBefore = null
 
   /**
@@ -726,6 +733,50 @@
    * @param {*} payload Содержимое.
    * @returns {Promise<string>} Что ответил сервер.
    */
+  /**
+   * Записывает отправку формы, уходящую ПЕРЕХОДОМ.
+   *
+   * ЗАЧЕМ ОТДЕЛЬНЫЙ ПУТЬ. Сборщик перехватывает fetch и XMLHttpRequest, а форма
+   * с обычной отправкой не пользуется ни тем, ни другим: браузер уходит на
+   * новый адрес сам, и для JavaScript этого запроса не существует вовсе.
+   *
+   * Так потерялось наблюдение сохранения лота: запись велась, кнопка нажата,
+   * страница ушла на список предложений - а в записи оказался один фоновый
+   * опрос канала.
+   *
+   * Ответ здесь не записывается и записан быть не может: его получает не
+   * страница, а браузер. Зато адрес, куда он привёл, виден - это следующая
+   * страница, и снимать её надо отдельно.
+   *
+   * @param {HTMLFormElement} form Отправляемая форма.
+   * @returns {void}
+   */
+  function recordFormNavigation(form) {
+    if (!watching) return
+    const where = maskUrl(form.action || location.href)
+    if (where.origin !== location.origin) return
+
+    const fields = {}
+    // FormData собирает РОВНО ТО, что уйдёт: снятый флажок в неё не попадает,
+    // а скрытый близнец попадает. Перебирать поля руками значило бы гадать об
+    // этом, а гадать здесь не о чем - браузер уже посчитал.
+    for (const [key, value] of new FormData(form).entries()) {
+      fields[key] = typeof value === 'string' ? fieldShape(key, value) : 'file'
+    }
+
+    recorded.push({
+      method: (form.method || 'GET').toUpperCase(),
+      origin: where.origin,
+      path: where.path,
+      query: where.query,
+      navigation: true,
+      request: { kind: 'form', fields },
+      // Ответ достаётся браузеру, а не странице. Ставим признак, а не пустоту:
+      // пустота читалась бы как «ответа не было».
+      response: { kind: 'taken_by_the_browser' },
+    })
+  }
+
   async function send(kind, name, payload) {
     const response = await nativeFetch(ENDPOINT, {
       method: 'POST',
@@ -736,6 +787,62 @@
     console.log(`funora: ${text}`)
     return text
   }
+
+  // Отправка формы ловится ЗАРАНЕЕ, на перехвате: обработчик страницы вправе
+  // отменить событие, и повесься мы после него - не увидели бы ничего.
+  if (typeof document.addEventListener === 'function') {
+    document.addEventListener(
+      'submit',
+      (event) => {
+        const form = event.target
+        if (typeof HTMLFormElement !== 'undefined' && form instanceof HTMLFormElement) {
+          recordFormNavigation(form)
+        }
+      },
+      true
+    )
+  }
+
+  // Запись отдаётся МАЯКОМ при уходе со страницы.
+  //
+  // navigator.sendBeacon для того и сделан: обычный запрос при уходе браузер
+  // вправе оборвать, маяк - обязан довезти. Иначе всякое наблюдение за формой с
+  // переходом теряется в тот самый миг, ради которого велось.
+  //
+  // Уходит только если имя дали заранее: funora.watch("имя"). Без имени приёмник
+  // не знает, куда класть, а придумывать имя за наблюдателя нельзя - оно и есть
+  // то, чем наблюдение отличают от соседнего.
+  const onUnload = () => {
+    if (!watching || !pendingName || recorded.length === 0) return
+    watching = false
+    try {
+      navigator.sendBeacon(
+        ENDPOINT,
+        new Blob(
+          [
+            JSON.stringify({
+              kind: 'network',
+              name: pendingName,
+              payload: {
+                collector_build: BUILD,
+                captured_at: new Date().toISOString(),
+                flushed_on_unload: true,
+                records: recorded.slice(),
+              },
+            }),
+          ],
+          { type: 'text/plain' }
+        )
+      )
+    } catch {
+      /* уход со страницы отменять нечем: маяк не довёз - наблюдение потеряно */
+    }
+  }
+  if (typeof window.addEventListener === 'function') {
+    window.addEventListener('pagehide', onUnload)
+  }
+
+  window.submitted = recordFormNavigation
 
   window.funora = {
     /**
@@ -1432,10 +1539,31 @@
      *
      * @returns {string} Что делать дальше.
      */
-    watch() {
+    watch(name) {
       recorded.length = 0
       watching = true
-      return 'запись идёт. Сделайте нужное действие и вызовите funora.stop("имя")'
+      pendingName = name ? String(name) : ''
+      if (!pendingName) {
+        return 'запись идёт. Сделайте нужное действие и вызовите funora.stop("имя")'
+      }
+
+      // Занято ли имя, спрашивается СЕЙЧАС. Запись уходит маяком, а маяк ответа
+      // приёмника не читает: отказ «под этим именем уже лежит другое» пропал бы
+      // молча, и наблюдение потерялось бы в тот самый миг, ради которого велось.
+      // Ровно так и потерялось наблюдение сохранения лота.
+      nativeFetch(ENDPOINT + 'taken?name=' + encodeURIComponent(pendingName))
+        .then((r) => r.json())
+        .then((answer) => {
+          if (!answer.free) {
+            console.warn(
+              'funora: ВНИМАНИЕ, имя ' + pendingName + ' занято. Запись уйдёт маяком, ' +
+                'а он отказа не услышит - наблюдение пропадёт. Возьмите другое имя.'
+            )
+          }
+        })
+        .catch(() => {})
+
+      return 'запись идёт под именем ' + pendingName + '. Переживёт переход по форме'
     },
 
     /**
