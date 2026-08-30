@@ -575,6 +575,128 @@ def _run_collector(script: str) -> Any:
     return json.loads(marked[-1][2:])
 
 
+def test_the_tag_probe_summary_never_carries_a_single_word_of_the_platform() -> None:
+    """Требует, чтобы сводка опроса канала не выносила чужого текста.
+
+    ЭТО НЕ ПРИДИРКА. Ответ канала несёт разметку списка диалогов, то есть имена
+    собеседников и куски их сообщений. Сводка печатается в консоль браузера, а
+    оттуда её копируют в переписку, в issue, в чат с помощником.
+
+    Правило потому и такое: наружу идут ИМЕНА полей и ЧИСЛА, а значения - нет.
+    Имя поля говорит о площадке, значение - о человеке.
+
+    Returns:
+        None
+    """
+    # Ответ канала подставляется заведомо «грязным»: имя собеседника, текст
+    # сообщения, разметка. Ни одно из этого не имеет права уехать в сводку.
+    dirty = {
+        "objects": [
+            {
+                "type": "chat_bookmarks",
+                "id": "77",
+                "tag": "новая-метка-1",
+                "data": {"html": "<div>Иван Петров</div>", "counter": 3, "order": [1, 2]},
+            },
+            {
+                "type": "orders_counters",
+                "id": "77",
+                "tag": "новая-метка-2",
+                "data": {"buyer": 0, "seller": 4},
+            },
+        ],
+        "response": False,
+    }
+
+    summary = _run_collector(
+        "(async () => {"
+        "  globalThis.document.querySelector = (one) => {"
+        "    if (one === '[data-user]') return {getAttribute: () => '77'};"
+        "    if (one === 'body[data-app-data]') return "
+        "      {getAttribute: () => JSON.stringify({'csrf-token': 'tok'})};"
+        "    return null;"
+        "  };"
+        "  globalThis.document.querySelectorAll = () => [];"
+        f"  const answer = {json.dumps(dirty, ensure_ascii=False)};"
+        "  globalThis.fetch = async () => ({ok: true, status: 200,"
+        "    text: async () => JSON.stringify(answer), json: async () => answer,"
+        "    clone(){ return this }, headers: {forEach(){}}});"
+        "  return await funora.probeTag();"
+        "})()"
+    )
+
+    printed = json.dumps(summary, ensure_ascii=False)
+
+    for leak in ("Иван", "Петров", "<div>", "новая-метка"):
+        assert leak not in printed, (
+            f"в сводку уехало {leak!r}: {printed}. Ответ канала несёт имена "
+            "собеседников, и печатать его в консоль нельзя"
+        )
+
+    # А то, ради чего сводка и нужна, - в ней есть.
+    first = summary["выдуманная_метка"]
+    assert first["объектов"] == 2
+    assert first["виды"] == ["chat_bookmarks", "orders_counters"]
+    assert sorted(first["поля"][1]) == ["buyer", "seller"], (
+        "имена полей не дошли: по ним и решают, годится ли канал"
+    )
+    assert first["метки_сменились"] is True
+
+
+def test_the_tag_probe_asks_three_times_in_one_go() -> None:
+    """Требует, чтобы опрос сам слал второй запрос вернувшимися метками.
+
+    Переносить метки руками НЕЛЬЗЯ: ответ в консоль не показывается, а
+    показать его значит показать имена собеседников. Раньше здесь был один
+    запрос и указание «повторите с метками из ответа» - указание неисполнимое.
+
+    Метки к тому же сменяются от ответа к ответу: сделать второй запрос позже
+    уже не выйдет.
+
+    Returns:
+        None
+    """
+    answer = {
+        "objects": [
+            {"type": "chat_bookmarks", "id": "77", "tag": "вторая", "data": {}},
+            {"type": "orders_counters", "id": "77", "tag": "третья", "data": {}},
+        ]
+    }
+
+    bodies = _run_collector(
+        "(async () => {"
+        "  const asked = [];"
+        "  globalThis.document.querySelector = (one) => {"
+        "    if (one === '[data-user]') return {getAttribute: () => '77'};"
+        "    if (one === 'body[data-app-data]') return "
+        "      {getAttribute: () => JSON.stringify({'csrf-token': 'tok'})};"
+        "    return null;"
+        "  };"
+        "  globalThis.document.querySelectorAll = () => [];"
+        f"  const answer = {json.dumps(answer, ensure_ascii=False)};"
+        "  globalThis.fetch = async (url, init) => {"
+        "    asked.push(String(init.body));"
+        "    return {ok: true, status: 200, text: async () => JSON.stringify(answer),"
+        "      json: async () => answer, clone(){ return this }, headers: {forEach(){}}};"
+        "  };"
+        "  await funora.probeTag();"
+        "  return asked;"
+        "})()"
+    )
+
+    assert len(bodies) == 2, (
+        f"опросов было {len(bodies)}, а нужно два: с выдуманной меткой и с "
+        "вернувшимися. Третий пропускается, если на странице мало строк"
+    )
+    assert "0000000000" in bodies[0], "первый опрос ушёл не с выдуманной меткой"
+    assert "0000000000" not in bodies[1], (
+        "второй опрос ушёл с той же выдуманной меткой: вернувшиеся не подставились"
+    )
+    assert "%D0%B2%D1%82%D0%BE%D1%80%D0%B0%D1%8F" in bodies[1] or "вторая" in bodies[1], (
+        f"во втором опросе нет метки из первого ответа: {bodies[1]}"
+    )
+
+
 def test_the_collector_stamps_its_build_into_what_it_sends() -> None:
     """Требует, чтобы браузерная часть ВПРАВДУ клала отпечаток сборки.
 

@@ -949,8 +949,19 @@
      * номер лежит в атрибуте data-user, и просить его руками значило бы
      * приглашать вписать чужой.
      *
+     * ТРИ ЗАПРОСА ОДНОЙ КОМАНДОЙ, И ЭТО НЕ УДОБСТВО. Метки сменяются от ответа
+     * к ответу: второй запрос надо послать с теми, что вернулись в первом, и
+     * сделать это позже уже нельзя - они устареют. Раньше здесь был один
+     * запрос, а метки предлагалось перенести руками; перенести их руками
+     * НЕЛЬЗЯ, потому что ответ канала в консоль не показывается и показываться
+     * не должен: в нём разметка списка диалогов, то есть имена собеседников.
+     *
+     * Возвращается сводка БЕЗ содержимого: виды объектов, число их и признак
+     * пустоты. Ни текста, ни разметки, ни имён. Сам ответ уходит на диск
+     * обычным перехватом и превращается там в скелет.
+     *
      * @param {string} tag Метка. По умолчанию заведомо несуществующая.
-     * @returns {Promise<string>} Что вышло.
+     * @returns {Promise<object>} Сводка по трём опросам.
      */
     probeTag(tag) {
       const label = String(tag === undefined ? '0000000000' : tag)
@@ -963,10 +974,134 @@
       const own = String(holder.getAttribute('data-user') || '')
       if (!own) return Promise.reject(new Error('атрибут data-user пуст'))
 
-      return this.listen([
+      const carrier = document.querySelector('body[data-app-data]')
+      if (carrier === null) {
+        return Promise.reject(new Error('на странице нет носителя настроек body[data-app-data]'))
+      }
+      let token = ''
+      try {
+        token = String((JSON.parse(carrier.getAttribute('data-app-data')) || {})['csrf-token'] || '')
+      } catch {
+        return Promise.reject(new Error('настройки страницы не разбираются как JSON'))
+      }
+      if (!token) return Promise.reject(new Error('в настройках страницы нет защитного токена'))
+
+      /**
+       * Шлёт один опрос и возвращает разобранный ответ.
+       *
+       * @param {object[]} objects Подписка.
+       * @returns {Promise<object>} Код ответа и разобранное тело.
+       */
+      const ask = (objects) => {
+        const form = new URLSearchParams()
+        form.set('objects', JSON.stringify(objects))
+        form.set('request', 'false')
+        form.set('csrf_token', token)
+        return window
+          .fetch('/runner/', {
+            method: 'POST',
+            headers: {
+              Accept: 'application/json, text/javascript, */*; q=0.01',
+              'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+              'X-Requested-With': 'XMLHttpRequest',
+            },
+            body: form.toString(),
+          })
+          .then((response) =>
+            response.text().then((body) => {
+              let parsed = null
+              try {
+                parsed = JSON.parse(body)
+              } catch {
+                parsed = null
+              }
+              return { status: response.status, parsed }
+            })
+          )
+      }
+
+      /**
+       * Сводит ответ к безопасному описанию: без единого чужого слова.
+       *
+       * @param {object} answer Код и разобранное тело.
+       * @returns {object} Сводка.
+       */
+      const digest = (answer) => {
+        const objects = answer.parsed && Array.isArray(answer.parsed.objects)
+          ? answer.parsed.objects
+          : []
+        return {
+          код: answer.status,
+          разобрано: answer.parsed !== null,
+          объектов: objects.length,
+          виды: objects.map((one) => String((one || {}).type || '?')),
+          // Поля перечисляются ИМЕНАМИ, а не значениями: имя поля говорит о
+          // площадке, значение - о собеседнике.
+          поля: objects.map((one) =>
+            Object.keys(((one || {}).data && typeof one.data === 'object' ? one.data : {}) || {})
+          ),
+          метки_сменились: null,
+        }
+      }
+
+      const invented = [
         { type: 'chat_bookmarks', id: own, tag: label, data: false },
         { type: 'orders_counters', id: own, tag: label, data: false },
-      ])
+      ]
+
+      const report = { выдуманная_метка: null, вернувшиеся_метки: null, одиннадцать_узлов: null }
+
+      return ask(invented)
+        .then((first) => {
+          report.выдуманная_метка = digest(first)
+
+          // Второй опрос - с метками, ВЕРНУВШИМИСЯ в первом. Отвечает на
+          // отдельный вопрос: подтверждает ли площадка метку как квитанцию,
+          // то есть перестаёт ли отдавать то же самое во второй раз.
+          const objects = first.parsed && Array.isArray(first.parsed.objects)
+            ? first.parsed.objects
+            : []
+          const returned = new Map()
+          for (const one of objects) {
+            if (one && one.type && one.tag !== undefined) returned.set(String(one.type), one.tag)
+          }
+          report.выдуманная_метка.метки_сменились = returned.size > 0
+
+          const second = invented.map((one) =>
+            returned.has(one.type) ? { ...one, tag: returned.get(one.type) } : one
+          )
+          return ask(second)
+        })
+        .then((second) => {
+          report.вернувшиеся_метки = digest(second)
+
+          // Третий опрос - одиннадцать узлов диалога с выдуманными метками.
+          // Проверяет чужую константу «не больше десяти объектов в подписке»:
+          // если одиннадцатый молча отбрасывается, об этом надо знать заранее.
+          const rows = Array.from(document.querySelectorAll('a.contact-item[data-id]')).slice(0, 11)
+          if (rows.length < 11) {
+            report.одиннадцать_узлов = {
+              пропущено: 'на странице ' + rows.length + ' строк диалогов, нужно одиннадцать',
+            }
+            return null
+          }
+          return ask(
+            rows.map((row) => ({
+              type: 'chat_node',
+              id: String(row.getAttribute('data-id') || ''),
+              tag: label,
+              data: false,
+            }))
+          )
+        })
+        .then((third) => {
+          if (third !== null) {
+            report.одиннадцать_узлов = digest(third)
+            report.одиннадцать_узлов.послано = 11
+          }
+          report.дальше = 'funora.stop("runner-invented-tag")'
+          return report
+        })
     },
 
     /**
