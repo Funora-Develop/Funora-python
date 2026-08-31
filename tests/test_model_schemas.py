@@ -253,6 +253,7 @@ def test_every_returned_field_is_described() -> None:
     """
     from funora._chats import ChatListEntry
     from funora._lot_form import LotForm
+    from funora._market import MarketOffer
     from funora._orders import OrderListEntry
     from funora._own_lots import OwnLot
     from funora._runner import SendResult
@@ -265,6 +266,7 @@ def test_every_returned_field_is_described() -> None:
         (SendResult, "send-result"),
         (OwnLot, "own-lot"),
         (LotForm, "lot-form"),
+        (MarketOffer, "market-offer"),
     )
     for cls, name in pairs:
         declared = set(_schema(name).get("properties", {}))
@@ -297,6 +299,10 @@ def test_unbuildable_models_say_so() -> None:
         # и тогда же написана - в один заход, чтобы схема не успела побыть
         # намерением.
         "lot-form",
+        # Собираются с 31.08.2026: funora._market.MarketOffer и MarketPage.
+        # Объявлены тогда же, когда написана операция market.offers.
+        "market-offer",
+        "market-page",
         "order-list-entry",
         "chat-list-entry",
         "thread-message",

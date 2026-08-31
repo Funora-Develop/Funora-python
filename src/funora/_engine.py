@@ -62,6 +62,7 @@ from ._gate import check_capability
 from ._host import host_of
 from ._identity import REGISTRY, Identity, identity_of
 from ._lot_form import SAVE_PATH, LotForm, parse_lot_form
+from ._market import MarketPage, parse_market
 from ._observed import Observed
 from ._order import OrderView, parse_order_page
 from ._orders import Completeness, OrdersPage, parse_orders_page
@@ -136,6 +137,7 @@ __all__ = [
     "RUNNER_PATH",
     "LOT_EDIT_PATH",
     "OWN_LOTS_PATH",
+    "MARKET_PATH",
     "PROFILE_PATH",
     "ORDER_PATH",
     "BALANCE_PATH",
@@ -167,6 +169,13 @@ BALANCE_PATH: Final[str] = "/account/balance"
 #: Страница собственных лотов раздела. Требует НОМЕРА РАЗДЕЛА: управление
 #: лотами живёт по одному адресу на раздел, а не по одному на аккаунт.
 OWN_LOTS_PATH: Final[str] = "/lots/{node_id}/trade"
+
+#: Публичный список предложений раздела - то, что видит ПОКУПАТЕЛЬ.
+#:
+#: Страница отдаётся и без сессии: наблюдено 31.08.2026 гостем, 1417 строк со
+#: всеми ценами и продавцами. Операция ходит по ней под сессией - отдельной
+#: дорожки public_read у реализации пока нет, и это записано в реестре.
+MARKET_PATH: Final[str] = "/lots/{node_id}/"
 
 #: Форма правки одного предложения.
 LOT_EDIT_PATH: Final[str] = "/lots/offerEdit?node={node_id}&offer={offer_id}"
@@ -441,6 +450,7 @@ IMPLEMENTED: Final[frozenset[Capability]] = frozenset(
         # цены не показывал вовсе.
         Capability.LOTS_FORM,
         Capability.LOTS_UPDATE_PRICE,
+        Capability.MARKET_OFFERS,
     }
 )
 
@@ -1213,6 +1223,49 @@ class Engine:
 
         return (yield from self.read_lot_form(node_id, offer_id))
 
+    def read_market(self, node_id: str) -> Generator[Request, Reply, MarketPage]:
+        """Читает публичный список предложений раздела.
+
+        ТО, ЧТО ВИДИТ ПОКУПАТЕЛЬ, а не витрина продавца и не страница
+        управления. Здесь предложения МНОГИХ продавцов в одном разделе, и потому
+        здесь есть колонка, которой нет больше нигде, - сам продавец.
+
+        РАДИ ЧЕГО ОНА НУЖНА: это вход в переоценку. Прочитать цены соседей,
+        решить, поменять свою через lots.update_price - и всё это без единого
+        взгляда на площадку глазами.
+
+        Args:
+            node_id (str): Номер раздела. Тот самый, что стоит в адресе.
+
+        Yields:
+            Request: Просьбы о вводе-выводе.
+
+        Returns:
+            MarketPage: Разобранный список. Предложения выдаются через
+            `offers()`, и неполноту он требует признать.
+
+        Raises:
+            ValidationError: Если номер непригоден для подстановки.
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        node = _digits(node_id, "раздела")
+        # СЕССИЯ ЗДЕСЬ НЕ НУЖНА, и это наблюдение, а не удобство: 31.08.2026
+        # список снят гостем целиком - 1417 строк со всеми ценами и продавцами.
+        #
+        # Под сессией страница читается тоже, и обычно так и будет: клиент ходит
+        # со своим ключом. Признак нужен для случая, когда ключ истёк: чтение
+        # рынка от этого не зависит, и отказывать ему нечему.
+        observation = yield from self.fetch_ok(
+            Capability.MARKET_OFFERS,
+            MARKET_PATH.format(node_id=node),
+            session_required=False,
+        )
+        page = parse_market(observation.html, observed_at=datetime.now(UTC))
+        if not integrity_verified(observation):
+            page = replace(page, completeness=Completeness.UNKNOWN, reason="integrity_unverified")
+        self._note_success(Capability.MARKET_OFFERS, page.completeness, None)
+        return page
+
     def read_own_lots(self, node_id: str) -> Generator[Request, Reply, OwnLotsPage]:
         """Читает собственные лоты продавца в одном разделе.
 
@@ -1634,7 +1687,9 @@ class Engine:
         self._bind_account(own_href)
         return thread, own_href
 
-    def fetch_ok(self, capability: Capability, path: str) -> Generator[Request, Reply, Observation]:
+    def fetch_ok(
+        self, capability: Capability, path: str, *, session_required: bool = True
+    ) -> Generator[Request, Reply, Observation]:
         """Получает пригодный для разбора ответ по нормативному порядку шагов.
 
         Метод общий для всех операций чтения намеренно. Порядок шагов нормативен,
@@ -1645,6 +1700,20 @@ class Engine:
         Args:
             capability (Capability): Возможность, под которую идёт чтение.
             path (str): Путь запрашиваемой страницы.
+            session_required (bool): Нужна ли странице сессия.
+
+                ЛОЖЬ ОЗНАЧАЕТ РОВНО ОДНО: вердикт login_required перестаёт быть
+                отказом. Всё прочее - ограничение частоты, страница проверки,
+                отказ в доступе, оборванное тело - остаётся отказом, и порядок
+                шагов не меняется ни на шаг.
+
+                Заведено 31.08.2026 по наблюдению: публичный список предложений
+                отдаётся ГОСТЮ целиком, со всеми ценами и продавцами. Классификатор
+                при этом честно говорит login_required - про сессию он прав, - и
+                операция рынка на нём отказывала бы на каждом чтении.
+
+                То есть объявленная дорожка public_read была непригодна не только
+                тем, что её нет: будь она заведена, чтение всё равно отказывало бы.
 
         Yields:
             Request: Просьбы о вводе-выводе.
@@ -1728,6 +1797,17 @@ class Engine:
                 # отчитывается о состоянии, а не падает от него.
                 self._state.last_verdict = verdict
                 error = error_for(verdict, session_ever_valid=self._state.session_ever_valid)
+                # Страница, которой сессия не нужна, читается и без сессии.
+                # Гасится ровно один вердикт, и гасится он по ПРИЗНАКУ вердикта,
+                # а не по типу ошибки: типом login_required и session_expired не
+                # различаются, а различие между ними здесь существенно.
+                if (
+                    error is not None
+                    and not session_required
+                    and verdict.cls is ResponseClass.LOGIN_REQUIRED
+                ):
+                    _log.debug("чтение %s идёт без сессии: страница публичная", capability.value)
+                    error = None
                 if error is not None:
                     self.note_stop(error)
                     raise error

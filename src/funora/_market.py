@@ -32,13 +32,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Final
+from urllib.parse import parse_qsl, urlsplit
 
 from selectolax.parser import HTMLParser, Node
 
 from ._observed import Observed
 from ._result import Completeness, Defect, Severity
 from .errors import IncompleteResultError, ProtocolChangedError
-from .extraction import ATTRIBUTES, SELECTORS
+from .extraction import ATTRIBUTES, QUERY_PARAMS, SELECTORS
 
 __all__ = ["MarketOffer", "MarketPage", "parse_market"]
 
@@ -52,6 +53,12 @@ _PRICE_TEXT: Final[str] = SELECTORS["market.fields.price_text"]
 _CURRENCY: Final[str] = SELECTORS["market.fields.currency_symbol_text"]
 
 _OFFER_HREF: Final[str] = ATTRIBUTES["market.rows.attributes.offer_href"]
+
+#: Имя параметра, в котором лежит идентификатор предложения.
+#:
+#: Берётся из порождённой таблицы, а не пишется литералом: имя выбирает
+#: площадка, и живя в двух местах, оно разошлось бы с объявлением молча.
+_OFFER_ID_PARAM: Final[str] = QUERY_PARAMS["market.rows.attributes.offer_id"]
 _SERVER_ID: Final[str] = ATTRIBUTES["market.rows.attributes.server_id"]
 _FILTER_TYPE: Final[str] = ATTRIBUTES["market.rows.attributes.filter_type"]
 _SELLER_HREF: Final[str] = ATTRIBUTES["market.fields.seller_link.attributes.seller_href"]
@@ -72,9 +79,16 @@ class MarketOffer:
     """Одно предложение в списке раздела.
 
     Attributes:
-        offer_href (Observed[str]): Ссылка на предложение. Идентификатор в ней
-            лежит в строке запроса, и скелет её маскирует: наблюдать его здесь
-            нельзя.
+        offer_id (Observed[str]): Идентификатор предложения.
+
+            ЛЕЖИТ ОН В СТРОКЕ ЗАПРОСА ССЫЛКИ И БОЛЬШЕ НИГДЕ, и до формата
+            скелета v9 наблюдать его было нельзя: снимок заменял строку запроса
+            одной подписью. Из-за этого market.offers не собиралась вовсе, а
+            причиной называли модель.
+
+            Наблюдено 31.08.2026: параметр называется id, значение - восемь
+            цифр, и есть он у всех 1417 строк.
+        offer_href (Observed[str]): Ссылка на предложение целиком.
         seller_href (Observed[str]): Ссылка на профиль продавца. НАСТОЯЩИЙ
             продавец строки - не атрибут data-user, которого у большинства строк
             нет вовсе.
@@ -91,6 +105,7 @@ class MarketOffer:
         row_index (int): Место строки, считая с нуля.
     """
 
+    offer_id: Observed[str]
     offer_href: Observed[str]
     seller_href: Observed[str]
     seller_name_text: Observed[str]
@@ -221,6 +236,33 @@ def _classes(node: Node) -> set[str]:
     return set(((node.attributes or {}).get("class") or "").split())
 
 
+def _query_param(href: Observed[str], name: str, field_name: str) -> Observed[str]:
+    """Достаёт параметр строки запроса из наблюдённого адреса.
+
+    ЧИТАЕТСЯ ИЗ УЖЕ НАБЛЮДЁННОГО, а не из узла заново. Так наблюдённость
+    наследуется честно: нет ссылки - нет и идентификатора, и причина у обоих
+    одна.
+
+    Аргументы:
+        href (Observed[str]): Адрес, каким его прочитали.
+        name (str): Имя параметра.
+        field_name (str): Имя поля для причины ненаблюдения.
+
+    Возвращает:
+        Observed[str]: Значение параметра либо причина, по которой его нет.
+    """
+    if not href.is_observed:
+        return Observed.missing(f"carrier_missing:{field_name}")
+
+    for key, value in parse_qsl(urlsplit(href.value).query, keep_blank_values=True):
+        if key != name:
+            continue
+        # Пустое значение параметра - не идентификатор. Отдать его значило бы
+        # выдать «id=» за прочитанный лот.
+        return Observed.present(value) if value else Observed.missing(f"empty:{field_name}")
+    return Observed.missing(f"no_query_param:{name}")
+
+
 def _row(node: Node, index: int) -> tuple[MarketOffer, list[Defect]]:
     """Собирает одно предложение из строки.
 
@@ -255,9 +297,26 @@ def _row(node: Node, index: int) -> tuple[MarketOffer, list[Defect]]:
 
     price_cell = node.css_first(_PRICE_CELL)
     classes = _classes(node)
+    offer_href = _attribute(node, _OFFER_HREF, "offer_href")
+    offer_id = _query_param(offer_href, _OFFER_ID_PARAM, "offer_id")
+    if not offer_id.is_observed and offer_href.is_observed:
+        defects.append(
+            Defect(
+                severity=Severity.ROW,
+                code="offer_id_missing",
+                detail=(
+                    f"в ссылке строки нет параметра {_OFFER_ID_PARAM!r}. Это "
+                    "единственный носитель идентификатора чужого предложения: "
+                    "атрибутом он не выносится нигде"
+                ),
+                row_index=index,
+                field_name="offer_id",
+            )
+        )
     return (
         MarketOffer(
-            offer_href=_attribute(node, _OFFER_HREF, "offer_href"),
+            offer_id=offer_id,
+            offer_href=offer_href,
             seller_href=seller_href,
             seller_name_text=_text(node.css_first(_SELLER_NAME), "seller_name_text"),
             # Признак читается НАЛИЧИЕМ атрибута, а не значением: значение

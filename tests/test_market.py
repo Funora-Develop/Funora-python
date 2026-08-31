@@ -28,13 +28,46 @@ ROOT: Final[Path] = Path(__file__).resolve().parent.parent
 FIXTURES: Final[Path] = ROOT / "tests" / "fixtures" / "pages"
 OBSERVATIONS: Final[Path] = ROOT / "observations"
 
-#: Обрезанный снимок: двадцать пять строк пяти форм.
-TRIMMED: Final[str] = "market-offers.trimmed.logged.ru"
+#: Обрезанный снимок ФОРМАТА v9: двадцать четыре строки четырёх форм.
+#:
+#: Переведено сюда 31.08.2026 с market-offers.trimmed.logged.ru. Причина не в
+#: свежести: на снимке v8 строка запроса заменена одной подписью, и
+#: идентификатор предложения из неё не читается. Разбор объявляет это
+#: повреждением строки - и объявляет верно, потому что на живой странице
+#: идентификатор есть у всех строк до единой.
+#:
+#: То есть прежний снимок перестал быть образцом ПОЛНОГО чтения. Образцом
+#: разметки он остался, и на нём по-прежнему держится проверка про то, зачем
+#: понадобился новый.
+TRIMMED: Final[str] = "market-offers.trimmed.guest.ru"
+
+#: Он же, снятый форматом v8. Идентификатора не несёт по устройству формата.
+OLDER: Final[str] = "market-offers.trimmed.logged.ru"
 
 #: Само наблюдение. Может отсутствовать: в репозиторий оно не кладётся.
-FULL: Final[Path] = OBSERVATIONS / "lots_n.ru.skeleton.txt"
+#:
+#: Снятое форматом v8 не годится: разбор объявит каждую строку повреждённой,
+#: и числа, ради которых наблюдение и читается, придут вперемешку с шумом.
+FULL: Final[Path] = OBSERVATIONS / "lots_n.guest.ru.skeleton.txt"
 
 WHEN: Final[datetime] = datetime(2026, 8, 30, tzinfo=UTC)
+
+
+def _older() -> str:
+    """Читает снимок формата v8.
+
+    Нужен ровно двум проверкам - про поднятые строки. На снимке v9,
+    снятом 31.08.2026, поднятых предложений не оказалось ни одного: раздел был
+    без них в ту минуту.
+
+    Отсутствие поднятых - свойство МОМЕНТА, а не разметки, и потому проверки
+    про них держатся за снимок, где они есть. Идентификатора предложения этот
+    снимок не несёт, и неполноту его чтения приходится признавать.
+
+    Возвращает:
+        str: разметка снимка v8.
+    """
+    return (FIXTURES / f"{OLDER}.skeleton.txt").read_text(encoding="utf-8")
 
 
 def _page() -> str:
@@ -69,7 +102,7 @@ def test_the_seller_comes_from_the_profile_link_not_from_data_user() -> None:
     Возвращает:
         None
     """
-    tree = HTMLParser(_page())
+    tree = HTMLParser(_older())
     rows = tree.css("a.tc-item")
 
     with_attribute = [one for one in rows if "data-user" in (one.attributes or {})]
@@ -95,7 +128,7 @@ def test_the_attribute_named_user_marks_promotion_not_the_seller() -> None:
     """
     pairs = {(False, False): 0, (True, True): 0}
     other = 0
-    for row in HTMLParser(_page()).css("a.tc-item"):
+    for row in HTMLParser(_older()).css("a.tc-item"):
         promoted = "offer-promo" in ((row.attributes or {}).get("class") or "").split()
         has = "data-user" in (row.attributes or {})
         if (promoted, has) in pairs:
@@ -263,11 +296,35 @@ def test_the_observation_carries_the_counts_the_contract_claims() -> None:
     if not FULL.is_file():
         pytest.skip("наблюдения нет на диске: числа сверять не с чем")
 
-    page = parse_market(FULL.read_text(encoding="utf-8"), observed_at=WHEN)
-    offers = page.offers()
+    # ЧИСЛА БЕРУТСЯ ИЗ ОПИСАНИЯ ЗАХВАТА, а не пишутся здесь литералами.
+    #
+    # Прежде они стояли литералами - три тысячи одна строка, семьдесят
+    # поднятых, - и держались за ОДНО наблюдение. Пересняли страницу, и
+    # проверка стала сверять новый снимок со старыми числами: она падает не
+    # потому, что разбор ошибся, а потому, что снимок другой.
+    #
+    # Описание захвата считает те же числа независимо от разбора - обходом
+    # разметки в момент съёмки. Сверка с ним и есть настоящая проверка: два
+    # счёта одного, сделанные разным кодом.
+    import json
 
-    assert page.rows_total == 3001, page.rows_total
-    assert page.rows_lazy == 2801, page.rows_lazy
-    assert sum(1 for one in offers if one.promoted) == 70
-    assert sum(1 for one in offers if one.seller_online) == 2182
-    assert len({one.seller_href.value for one in offers if one.seller_href.is_observed}) == 478
+    provenance = json.loads(
+        FULL.with_name(FULL.name.replace(".skeleton.txt", ".provenance.json")).read_text(
+            encoding="utf-8"
+        )
+    )
+    counts = provenance["original_counts"]
+
+    page = parse_market(FULL.read_text(encoding="utf-8"), observed_at=WHEN)
+    offers = page.offers(accept_incomplete=True)
+
+    assert page.rows_total == counts["rows"], page.rows_total
+    assert page.rows_lazy == counts["lazyload_hidden"], page.rows_lazy
+    assert sum(1 for one in offers if one.promoted) == counts["offer_promo"]
+    assert (
+        len({one.seller_href.value for one in offers if one.seller_href.is_observed})
+        == counts["distinct_seller_links"]
+    )
+    assert sum(1 for one in offers if one.offer_id.is_observed) == counts["rows_with_offer_id"], (
+        "идентификатор прочитан не у всех строк, у которых он есть на странице"
+    )

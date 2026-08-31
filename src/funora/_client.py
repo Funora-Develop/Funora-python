@@ -29,6 +29,7 @@ from ._engine import Deliver, Engine, Fetch, Pause, Reply, Request, Submit
 from ._host import host_of
 from ._identity import REGISTRY
 from ._lot_form import LotForm
+from ._market import MarketPage
 from ._observed import Observed
 from ._order import OrderView
 from ._orders import OrdersPage
@@ -415,6 +416,39 @@ class LotsService:
         return self._client.run(self._client.engine.read_showcase(user_id))
 
 
+class MarketService:
+    """Публичные предложения раздела.
+
+    То, что видит ПОКУПАТЕЛЬ. Вход в переоценку: прочитать цены соседей,
+    решить, поменять свою через `lots.update_price`.
+
+    Args:
+        client (Client): Клиент, которому принадлежит сервис.
+    """
+
+    __slots__ = ("_client",)
+
+    def __init__(self, client: Client) -> None:
+        self._client = client
+
+    def offers(self, node_id: str) -> MarketPage:
+        """Читает публичный список предложений раздела.
+
+        Args:
+            node_id (str): Номер раздела. Тот самый, что стоит в адресе.
+
+        Returns:
+            MarketPage: Разобранный список. Предложения выдаются через
+            `offers()`, и неполноту он требует признать: неполный список
+            неотличим от короткого, а решение о цене по нему - неверное.
+
+        Raises:
+            ValidationError: Если номер непригоден для подстановки.
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        return self._client.run(self._client.engine.read_market(node_id))
+
+
 class CatalogService:
     """Операции с каталогом.
 
@@ -485,6 +519,7 @@ class Client:
         "chats",
         "engine",
         "lots",
+        "market",
         "orders",
         "pool",
         "reviews",
@@ -546,6 +581,7 @@ class Client:
         self.account = AccountService(self)
         self.lots = LotsService(self)
         self.catalog = CatalogService(self)
+        self.market = MarketService(self)
 
     def __getattr__(self, name: str) -> object:
         """Отвечает на обращение к службе, которой у этой реализации нет.

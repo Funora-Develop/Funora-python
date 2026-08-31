@@ -33,6 +33,7 @@ from ._engine import Deliver, Engine, Fetch, Pause, Reply, Request, Submit
 from ._host import host_of
 from ._identity import REGISTRY
 from ._lot_form import LotForm
+from ._market import MarketPage
 from ._observed import Observed
 from ._order import OrderView
 from ._orders import OrdersPage
@@ -385,6 +386,39 @@ class AsyncLotsService:
         return await self._client.run(self._client.engine.read_showcase(user_id))
 
 
+class AsyncMarketService:
+    """Публичные предложения раздела.
+
+    То, что видит ПОКУПАТЕЛЬ. Вход в переоценку: прочитать цены соседей,
+    решить, поменять свою через `lots.update_price`.
+
+    Args:
+        client (AsyncClient): Клиент, которому принадлежит сервис.
+    """
+
+    __slots__ = ("_client",)
+
+    def __init__(self, client: AsyncClient) -> None:
+        self._client = client
+
+    async def offers(self, node_id: str) -> MarketPage:
+        """Читает публичный список предложений раздела.
+
+        Args:
+            node_id (str): Номер раздела. Тот самый, что стоит в адресе.
+
+        Returns:
+            MarketPage: Разобранный список. Предложения выдаются через
+            `offers()`, и неполноту он требует признать: неполный список
+            неотличим от короткого, а решение о цене по нему - неверное.
+
+        Raises:
+            ValidationError: Если номер непригоден для подстановки.
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        return await self._client.run(self._client.engine.read_market(node_id))
+
+
 class AsyncCatalogService:
     """Операции с каталогом.
 
@@ -451,6 +485,7 @@ class AsyncClient:
         "chats",
         "engine",
         "lots",
+        "market",
         "orders",
         "pool",
         "reviews",
@@ -512,6 +547,7 @@ class AsyncClient:
         self.account = AsyncAccountService(self)
         self.lots = AsyncLotsService(self)
         self.catalog = AsyncCatalogService(self)
+        self.market = AsyncMarketService(self)
 
     async def __aenter__(self) -> AsyncClient:
         """Входит в асинхронный контекстный менеджер.

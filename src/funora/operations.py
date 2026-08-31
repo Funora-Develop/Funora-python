@@ -322,7 +322,7 @@ OPERATIONS: Final[dict[str, Operation]] = {
         capability="market.offers",
         safety=Safety.SAFE,
         request_class="monitoring",
-        returns="Offer[]",
+        returns="MarketPage",
         errors=(
             "funora.protocol.changed",
             "funora.transport.rate_limited",
