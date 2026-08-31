@@ -1,0 +1,27 @@
+{
+  "captured_at": "2026-08-31T07:13:14+00:00",
+  "captured_format": "structural-skeleton-v9",
+  "classification": "ok",
+  "classification_provisional": false,
+  "classification_reason": "identity_confirmed",
+  "content_length": 2326570,
+  "converted": false,
+  "derived": true,
+  "derived_by": ".venv\\Scripts\\python.exe tools/trim_skeleton.py observations/v9/lots_n.ru.skeleton.txt \"a.tc-item\" tests/fixtures/pages/catalog-fields.logged.ru.skeleton.txt",
+  "derived_from": "lots_n.ru (v9)",
+  "derived_note": "ОБРЕЗАННЫЙ СНИМОК. Строки обрезаны, шапка раздела - где и лежит схема полей - сохранена целиком.",
+  "elapsed_ms": 776,
+  "final_url": "https://funpay.com/lots/{n}/",
+  "format": "structural-skeleton-v9",
+  "http_status": 200,
+  "locale": "ru",
+  "note": "Структурный скелет: текст заменён подписями, сегменты путей с идентификаторами обезличены. Сырой HTML не сохраняется.",
+  "path": "/lots/{n}/",
+  "redirects": 0,
+  "trimmed_counts": {
+    "characters": 195402,
+    "rows": 46
+  },
+  "what": "раздел с ПОЛЯМИ: набор .lot-fields в шапке фильтра",
+  "why_this_snapshot_exists": "Схема полей подкатегории числилась ненаблюдённой. Она лежит в форме фильтра раздела: .lot-fields с полями .lot-field, у каждого свой data-id, имя вида f-{id} и вид управления - выбор либо диапазон."
+}
