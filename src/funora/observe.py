@@ -43,7 +43,7 @@ from hashlib import blake2s
 from pathlib import Path
 from time import monotonic
 
-from ._classify import DEFAULT_IDENTITY_CSS, classify
+from ._classify import DEFAULT_IDENTITY_CSS, ResponseClass, classify
 from ._secret import EnvSecretProvider, FileSecretProvider, SecretNotFoundError, SecretProvider
 from ._signals import collect, compare, format_relations, format_report, relations
 from ._skeleton import SKELETON_FORMAT, SkeletonError, mask_path, skeletonize
@@ -191,6 +191,29 @@ def observe(
         expected_host=host,
         identity_css=identity_css,
     )
+
+    # ОТВЕТ «ТАКОГО АДРЕСА НЕТ» СНИМКОМ СТРАНИЦЫ НЕ ЯВЛЯЕТСЯ.
+    #
+    # Страница входа, страница проверки, отказ в доступе - всё это НАСТОЯЩИЕ
+    # страницы площадки, и снимать их надо: на снимке гостя стоит половина
+    # проверок классификатора.
+    #
+    # А 404 - это ответ о том, что адрес неверен, и разметка у него общая для
+    # всей площадки. Сохранённый, он занимает имя, выведенное из пути, и
+    # ЗАКРЫВАЕТ дорогу настоящему снимку: тот отличается содержимым, а
+    # затирать чужой снимок инструмент отказывается - и отказывается верно.
+    #
+    # Так и вышло 31.08.2026: неверный адрес дал 404, 404 занял имя, и
+    # повторная съёмка верного адреса упёрлась в собственный мусор.
+    if verdict.cls is ResponseClass.TRANSPORT_ERROR:
+        print(
+            f"НЕ СОХРАНЕНО: площадка ответила {obs.status} - {verdict.reason}. "
+            "Это ответ об АДРЕСЕ, а не страница: снимок из него занял бы имя, "
+            "выведенное из пути, и закрыл бы дорогу настоящему. Проверьте путь "
+            f"{path!r} - у страниц площадки косая черта на конце значима",
+            file=sys.stderr,
+        )
+        return 2
 
     try:
         skeleton = skeletonize(obs.html)

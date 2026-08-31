@@ -431,3 +431,59 @@ def test_analysis_modes_refuse_several_paths(tmp_path: Path) -> None:
             ]
         )
         assert code == 2, f"{mode} принял две страницы"
+
+
+def test_a_missing_address_never_takes_the_name_of_a_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ГЛАВНОЕ: ответ «такого адреса нет» снимком не становится.
+
+    Стоило лишнего круга. Неверный адрес дал 404, 404 сохранился под именем,
+    выведенным из пути, и повторная съёмка ВЕРНОГО адреса упёрлась в
+    собственный мусор: инструмент отказался затирать чужой снимок - и отказался
+    верно, он не знает, что там лежит ошибка.
+
+    Args:
+        tmp_path (Path): Временный каталог pytest.
+        monkeypatch (pytest.MonkeyPatch): Инструмент подмены.
+
+    Returns:
+        None
+    """
+    _FakeFetcher.html = "<html><body>такой страницы нет</body></html>"
+    _FakeFetcher.status = 404
+    _FakeFetcher.final_url = "https://funpay.com/account/balance/"
+    monkeypatch.setattr(observe_mod, "Fetcher", _FakeFetcher)
+
+    code = observe_mod.observe(path="/account/balance/", out_dir=tmp_path, provider=_provider())
+
+    assert code == 2, "404 не отвергнут"
+    assert not list(tmp_path.glob("*.skeleton.txt")), (
+        f"404 сохранился снимком: {sorted(one.name for one in tmp_path.iterdir())}"
+    )
+
+
+def test_a_guest_page_is_still_saved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Требует, чтобы страница гостя ПО-ПРЕЖНЕМУ снималась.
+
+    Отказ выше узкий нарочно. Страница входа, страница проверки и отказ в
+    доступе - настоящие страницы площадки, и на снимке гостя стоит половина
+    проверок классификатора. Отвергать их значило бы выбросить нужное вместе с
+    ненужным.
+
+    Args:
+        tmp_path (Path): Временный каталог pytest.
+        monkeypatch (pytest.MonkeyPatch): Инструмент подмены.
+
+    Returns:
+        None
+    """
+    _FakeFetcher.html = '<html><body><a class="navbar-toggle-guest">войти</a></body></html>'
+    _FakeFetcher.status = 200
+    _FakeFetcher.final_url = "https://funpay.com/orders/trade"
+    monkeypatch.setattr(observe_mod, "Fetcher", _FakeFetcher)
+
+    code = observe_mod.observe(path="/orders/trade", out_dir=tmp_path, provider=_provider())
+
+    assert list(tmp_path.glob("*.skeleton.txt")), "страница гостя не сохранилась"
+    assert code != 0, "страница гостя объявлена пригодной"

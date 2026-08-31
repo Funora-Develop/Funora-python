@@ -84,6 +84,7 @@ PRESENCE_BY_CLASS: Final[dict[str, bool]] = {
 #: Ключ выведен из пути внутри документа: он однозначен и не
 #: зависит от языка реализации.
 SELECTORS: Final[dict[str, str]] = {
+    "account.balances.currency_switcher": ".user-cy-switcher",
     "account.balances.delimiter": "span.balances-delimiter",
     "account.balances.list": "span.balances-list",
     "account.balances.value": "span.balances-value",
