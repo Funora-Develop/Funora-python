@@ -881,9 +881,18 @@
      * @returns {Promise<string>} Что ответил сервер.
      */
     currency(label) {
-      const found = {}
-      const pairs = {}
-      const seen = {}
+      // СПИСКАМИ, А НЕ СЛОВАРЯМИ, и это не вкусовщина.
+      //
+      // Приёмник пишет ключи ДОСЛОВНО - на том основании, что ключ есть имя
+      // поля, то есть протокол, а не человек. Знак валюты в ключе это
+      // основание нарушает: ключ приходит из данных страницы.
+      //
+      // Основание дороже удобства: 24.08.2026 ответ в виде разметки разобрался
+      // как форма, ключами стали куски HTML, и с ними записались настоящие
+      // суммы. Поэтому знак и код лежат в ЗНАЧЕНИИ, а ключи здесь свои.
+      const found = []
+      const pairs = []
+      const seen = []
       // Знак валюты по Unicode либо код по ISO 4217. Три заглавные подряд
       // кодом валюты НЕ считаются: список продаж принёс так GTA, NBA и MIR -
       // сокращения игр и платёжной системы, стоявшие рядом с числом.
@@ -915,8 +924,9 @@
         const codes = text.match(code) || []
         const signs = text.match(money) || []
         if (codes.length === 1 && signs.length === 1) {
-          const pair = `${signs[0]} ${codes[0]}`
-          pairs[pair] = (pairs[pair] || 0) + 1
+          const already = pairs.find((one) => one.symbol === signs[0] && one.code === codes[0])
+          if (already) already.count += 1
+          else pairs.push({ symbol: signs[0], code: codes[0], count: 1 })
         }
         // Код сам по себе тоже записывается: страница, где валюта названа
         // кодом и не показана знаком, иначе выглядела бы пустой.
@@ -929,11 +939,15 @@
         // Знак валюты страница показывает, код называет; пары в одном узле не
         // встретилось ни разу, и связать их можно только через место.
         for (const one of codes) {
-          if (!seen[one]) seen[one] = { count: 0, near: [] }
-          seen[one].count += 1
+          let record = seen.find((each) => each.code === one)
+          if (!record) {
+            record = { code: one, count: 0, near: [] }
+            seen.push(record)
+          }
+          record.count += 1
           const holder = node.parentElement
-          if (holder && seen[one].near.length < 3) {
-            seen[one].near.push({
+          if (holder && record.near.length < 3) {
+            record.near.push({
               tag: holder.tagName.toLowerCase(),
               class: holder.className || '',
               attrs: [...holder.attributes].map((one) => one.name),
@@ -953,11 +967,15 @@
         let match = money.exec(text)
         while (match) {
           const symbol = match[0]
-          if (!found[symbol]) found[symbol] = { count: 0, near: [] }
-          found[symbol].count += 1
+          let record = found.find((one) => one.symbol === symbol)
+          if (!record) {
+            record = { symbol, count: 0, near: [] }
+            found.push(record)
+          }
+          record.count += 1
           const holder = node.parentElement
-          if (holder && found[symbol].near.length < 3) {
-            found[symbol].near.push({
+          if (holder && record.near.length < 3) {
+            record.near.push({
               tag: holder.tagName.toLowerCase(),
               class: holder.className || '',
               attrs: [...holder.attributes]
