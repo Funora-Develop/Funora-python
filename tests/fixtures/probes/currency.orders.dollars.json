@@ -1,0 +1,41 @@
+{
+  "codes": {
+    "RUB": 3
+  },
+  "lang": "ru",
+  "page": {
+    "origin": "https://funpay.com",
+    "path": "/orders/",
+    "query": []
+  },
+  "pairs": {},
+  "switcher": [],
+  "symbols": {
+    "₽": {
+      "count": 16,
+      "near": [
+        {
+          "attrs": [
+            "class"
+          ],
+          "class": "unit",
+          "tag": "span"
+        },
+        {
+          "attrs": [
+            "class"
+          ],
+          "class": "unit",
+          "tag": "span"
+        },
+        {
+          "attrs": [
+            "class"
+          ],
+          "class": "unit",
+          "tag": "span"
+        }
+      ]
+    }
+  }
+}

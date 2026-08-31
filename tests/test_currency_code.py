@@ -17,8 +17,12 @@
 Разойдись любое из двух - таблица снова становится гаданием, и проверка обязана
 это заметить раньше пользователя.
 
-Наблюдено 30-31.08.2026: account_balance.ru.skeleton.txt и восемнадцать проб
-валюты в observations/.
+Улики лежат в tests/fixtures - поимённо, как велит правило проекта. Каталог
+observations от репозитория закрыт, и проверка, читающая оттуда, проходила бы
+у прочих молча, не проверяя ничего.
+
+Наблюдено 30-31.08.2026: account-balance.v9.logged.ru и восемнадцать проб
+валюты в tests/fixtures/probes.
 """
 
 from __future__ import annotations
@@ -49,7 +53,7 @@ def _probes() -> list[dict[str, Any]]:
         list[dict[str, Any]]: Разобранные пробы.
     """
     out: list[dict[str, Any]] = []
-    for name in sorted(glob.glob(str(ROOT / "observations" / "currency.*.json"))):
+    for name in sorted(glob.glob(str(ROOT / "tests/fixtures/probes" / "currency.*.json"))):
         out.append(json.loads(Path(name).read_text(encoding="utf-8")))
     return out
 
@@ -67,7 +71,7 @@ def test_the_codes_are_the_ones_the_marketplace_declares_itself() -> None:
     Возвращает:
         None
     """
-    snapshot = (ROOT / "observations/v9/account_balance.ru.skeleton.txt").read_text(
+    snapshot = (ROOT / "tests/fixtures/pages/account-balance.v9.logged.ru.skeleton.txt").read_text(
         encoding="utf-8"
     )
     found = re.search(r'withdraw-box"\s+data-data="([^"]+)"', snapshot)
@@ -143,7 +147,7 @@ def test_the_amounts_on_a_showcase_follow_the_setting() -> None:
     """
     by_symbol: dict[str, int] = {}
     for name in ("rubles", "dollars", "euro"):
-        path = ROOT / f"observations/currency.users-n.{name}.json"
+        path = ROOT / f"tests/fixtures/probes/currency.users-n.{name}.json"
         probe = json.loads(path.read_text(encoding="utf-8"))
         symbols = probe.get("symbols") or {}
         names = (
@@ -177,9 +181,8 @@ def test_the_order_list_does_not_follow_the_setting() -> None:
     """
     seen: list[tuple[frozenset[str], frozenset[str]]] = []
     for name in ("codes-carrier", "codes-carrier-2"):
-        probe = json.loads(
-            (ROOT / f"observations/currency.orders-trade.{name}.json").read_text(encoding="utf-8")
-        )
+        path = ROOT / f"tests/fixtures/probes/currency.orders-trade.{name}.json"
+        probe = json.loads(path.read_text(encoding="utf-8"))
         symbols = probe.get("symbols")
         names = (
             set(symbols)
