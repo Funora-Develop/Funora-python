@@ -1,0 +1,20 @@
+{
+  "captured_at": "2026-08-31T07:49:24+00:00",
+  "captured_format": "structural-skeleton-v9",
+  "classification": "ok",
+  "classification_provisional": false,
+  "classification_reason": "identity_confirmed",
+  "content_length": 26353,
+  "converted": false,
+  "derived": false,
+  "elapsed_ms": 228,
+  "final_url": "https://funpay.com/lots/{n}/trade",
+  "format": "structural-skeleton-v9",
+  "http_status": 200,
+  "locale": "ru",
+  "note": "Структурный скелет: текст заменён подписями, сегменты путей с идентификаторами обезличены. Сырой HTML не сохраняется.",
+  "path": "/lots/{n}/trade",
+  "redirects": 0,
+  "what": "свои лоты раздела, ОДИН ИЗ НИХ ВЫКЛЮЧЕН",
+  "why_this_snapshot_exists": "РАДИ ОДНОГО КЛАССА. own-lot.schema.json утверждал: признака показа лота в выдаче на этой странице нет ни одного, все строки структурно одинаковы. Утверждение неверно - выключенная строка несёт класс warning.\n\nСнять это можно было только имея выключенный лот, а его не было: прежний снимок сделан при всех включённых. Владелец выключил самый малозначимый лот, снял страницу и включил обратно."
+}

@@ -48,6 +48,17 @@ from .extraction import ATTRIBUTES, SELECTORS
 __all__ = ["OwnLot", "OwnLotsPage", "parse_own_lots"]
 
 _ROW: Final[str] = SELECTORS["lots.rows"]
+
+#: Класс, которым помечена ВЫКЛЮЧЕННАЯ строка.
+#:
+#: Литералом, а не из порождённой таблицы, и это не небрежность: генератор
+#: классы-признаки не собирает вовсе - ровно так же литералом стоит offer-promo
+#: в разборе рынка. Объявление живёт в spec/extraction/lots.yaml, раздел
+#: visibility.
+#:
+#: Собрать их в таблицу стоит, и это отдельная работа: признаков таких в
+#: проекте уже три, и все три - литералы.
+_OFF_CLASS: Final[str] = "warning"
 _SERVER: Final[str] = SELECTORS["lots.fields.server_text"]
 _DESCRIPTION: Final[str] = SELECTORS["lots.fields.description_text"]
 _PRICE_CELL: Final[str] = SELECTORS["lots.fields.price_cell"]
@@ -79,6 +90,12 @@ class OwnLot:
         price_text (Observed[str]): Цена без знака валюты, как показана.
         currency_symbol_text (Observed[str]): Знак валюты.
         sort_value (Observed[str]): Значение сортировки из атрибута ячейки цены.
+        is_active (bool): Показывается ли лот в выдаче.
+
+            ЧИТАЕТСЯ НАЛИЧИЕМ КЛАССА warning у строки, и появилось это поле
+            31.08.2026 - исправлением нашей же ошибки. Три недели модель
+            утверждала, что признака на странице нет вовсе; строки одинаковы,
+            пока все лоты включены, а у владельца все и были включены.
         row_index (int): Место строки на странице, считая с нуля.
     """
 
@@ -89,6 +106,7 @@ class OwnLot:
     price_text: Observed[str]
     currency_symbol_text: Observed[str]
     sort_value: Observed[str]
+    is_active: bool
     row_index: int
 
 
@@ -241,6 +259,10 @@ def _row(node: Node, index: int) -> tuple[OwnLot, list[Defect]]:
             price_text=_own_text(node.css_first(_PRICE_TEXT), "price_text"),
             currency_symbol_text=_text(node.css_first(_CURRENCY), "currency_symbol_text"),
             sort_value=_attribute(price_cell, _SORT_VALUE, "sort_value"),
+            # Читается НАЛИЧИЕМ класса: включённая строка его не несёт вовсе.
+            # Тот же идиом, что у флажка в форме правки, и по той же причине -
+            # отсутствие здесь значимо.
+            is_active=_OFF_CLASS not in ((node.attributes or {}).get("class") or "").split(),
             row_index=index,
         ),
         defects,
