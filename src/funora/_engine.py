@@ -42,6 +42,12 @@ from urllib.parse import urlparse
 
 from ._account import BalancePage, parse_balance_page
 from ._budget import Budget
+from ._calc import (
+    CHIPS_CALC_PATH,
+    LOTS_CALC_PATH,
+    PriceCalculation,
+    parse_calculation,
+)
 from ._catalog import CatalogPage, parse_catalog
 from ._chats import ChatsPage, parse_chats_page
 from ._chips import ChipsPage, parse_chips
@@ -516,6 +522,8 @@ IMPLEMENTED: Final[frozenset[Capability]] = frozenset(
         Capability.CHATS_SEND_IMAGE,
         Capability.REVIEWS_LEAVE,
         Capability.REVIEWS_REMOVE,
+        Capability.LOTS_CALCULATE_PRICES,
+        Capability.CHIPS_CALCULATE_PRICES,
     }
 )
 
@@ -1935,6 +1943,75 @@ class Engine:
             else CapabilityState.DEGRADED
         )
         return page
+
+    def calculate_prices(
+        self, *, node_id: str | None = None, game_id: str | None = None, price: str
+    ) -> Generator[Request, Reply, PriceCalculation]:
+        """Считает, сколько заплатит покупатель за названную цену продавца.
+
+        ЧТЕНИЕ, И СОГЛАСИЯ НЕ СПРАШИВАЕТ, хотя и стоит на вторичном источнике.
+        Правило требует согласия у операций ЗАПИСИ: чтение на чужом знании
+        ошибётся видимо - вернёт не то либо не вернёт ничего, - а запись
+        ошибётся необратимо.
+
+        ДВА АДРЕСА И ДВА РАЗНЫХ ДОВОДА. Обычные разделы спрашиваются по разделу,
+        рынок по количеству - по ИГРЕ. Который из двух передан, тот и решает,
+        куда уйдёт запрос; передать оба нельзя.
+
+        Args:
+            node_id (str | None): Раздел - для обычных лотов.
+            game_id (str | None): Игра - для рынка по количеству.
+            price (str): Цена продавца, как её пишут в поле.
+
+        Yields:
+            Request: Просьбы о вводе-выводе.
+
+        Returns:
+            PriceCalculation: Способы оплаты и цены покупателя при них.
+
+        Raises:
+            ValidationError: Если довод не один либо цена пуста.
+            FunoraError: Если ответ непригоден.
+        """
+        given = [one for one in (node_id, game_id) if one is not None]
+        if len(given) != 1:
+            raise ValidationError(
+                "нужен ровно один довод: node_id для обычного раздела либо "
+                f"game_id для рынка по количеству, передано {len(given)}. Адреса "
+                "у них разные, и угадывать, какой имелся в виду, мы не станем"
+            )
+        cleaned = price.strip()
+        if not cleaned:
+            raise ValidationError("цена пуста: спрашивать расчёт не о чем")
+
+        if node_id is not None:
+            capability = Capability.LOTS_CALCULATE_PRICES
+            path = LOTS_CALC_PATH
+            fields = {"nodeId": _digits(node_id, "раздела"), "price": cleaned}
+        else:
+            capability = Capability.CHIPS_CALCULATE_PRICES
+            path = CHIPS_CALC_PATH
+            fields = {"game": _digits(game_id or "", "игры"), "price": cleaned}
+
+        check_capability(
+            capability,
+            state=self._state.capabilities[capability],
+            opted_in=capability in self._state.opted_in,
+        )
+
+        yield from self.spend_budget(_class_of(capability), cost=1.0)
+        reply = yield Submit(path, fields, dict(RUNNER_HEADERS))
+        if not isinstance(reply, Observation):
+            raise TypeError(f"на просьбу Submit ожидалось наблюдение, получено {type(reply)}")
+
+        try:
+            payload = json.loads(reply.html)
+        except ValueError as exc:
+            raise ProtocolChangedError("ответ расчёта не разобрался как JSON") from exc
+
+        result = parse_calculation(payload, asked_price=cleaned, observed_at=datetime.now(UTC))
+        self._state.capabilities[capability] = CapabilityState.SUPPORTED
+        return result
 
     def _write_review(
         self, order_id: str, *, rating: int | None, body: str

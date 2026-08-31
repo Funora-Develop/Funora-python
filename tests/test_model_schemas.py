@@ -251,6 +251,7 @@ def test_every_returned_field_is_described() -> None:
     Returns:
         None
     """
+    from funora._calc import PaymentMethod, PriceCalculation
     from funora._chats import ChatListEntry
     from funora._lot_form import LotForm
     from funora._market import MarketOffer
@@ -273,6 +274,8 @@ def test_every_returned_field_is_described() -> None:
         (SnapshotEntry, "market-snapshot-entry"),
         (RaiseResult, "raise-result"),
         (ReviewResult, "review-result"),
+        (PriceCalculation, "price-calculation"),
+        (PaymentMethod, "payment-method"),
     )
     for cls, name in pairs:
         declared = set(_schema(name).get("properties", {}))
@@ -310,6 +313,9 @@ def test_unbuildable_models_say_so() -> None:
         "market-offer",
         # Собирается с 31.08.2026: funora._review_write.ReviewResult. Объявлена
         # тогда же, когда написаны reviews.leave и reviews.remove.
+        # Собираются с 31.08.2026: funora._calc.PriceCalculation и PaymentMethod.
+        "price-calculation",
+        "payment-method",
         "review-result",
         "market-page",
         # Собираются с 31.08.2026: funora._snapshot.MarketSnapshot и
