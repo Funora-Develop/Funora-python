@@ -1,0 +1,39 @@
+{
+  "codes": {},
+  "lang": "ru",
+  "page": {
+    "origin": "https://funpay.com",
+    "path": "/users/{n}/",
+    "query": []
+  },
+  "pairs": {},
+  "switcher": [],
+  "symbols": {
+    "₽": {
+      "count": 165,
+      "near": [
+        {
+          "attrs": [
+            "class"
+          ],
+          "class": "badge badge-balance",
+          "tag": "span"
+        },
+        {
+          "attrs": [
+            "class"
+          ],
+          "class": "unit",
+          "tag": "span"
+        },
+        {
+          "attrs": [
+            "class"
+          ],
+          "class": "unit",
+          "tag": "span"
+        }
+      ]
+    }
+  }
+}

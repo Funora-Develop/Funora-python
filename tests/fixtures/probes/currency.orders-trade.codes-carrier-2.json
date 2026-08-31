@@ -1,0 +1,100 @@
+{
+  "codes": [],
+  "lang": "ru",
+  "page": {
+    "origin": "https://funpay.com",
+    "path": "/orders/trade",
+    "query": []
+  },
+  "pairs": [],
+  "switcher": [
+    {
+      "active": false,
+      "attribute": "data-cy",
+      "class": "user-cy-switcher menu-item-currency",
+      "code": "RUB",
+      "tag": "a",
+      "text": "T5:c"
+    },
+    {
+      "active": false,
+      "attribute": "data-cy",
+      "class": "user-cy-switcher menu-item-currency",
+      "code": "EUR",
+      "tag": "a",
+      "text": "T4:c"
+    },
+    {
+      "active": false,
+      "attribute": "data-cy",
+      "class": "user-cy-switcher menu-item-currency",
+      "code": "RUB",
+      "tag": "a",
+      "text": "T5:c"
+    },
+    {
+      "active": false,
+      "attribute": "data-cy",
+      "class": "user-cy-switcher menu-item-currency",
+      "code": "EUR",
+      "tag": "a",
+      "text": "T4:c"
+    }
+  ],
+  "symbols": [
+    {
+      "count": 34,
+      "near": [
+        {
+          "attrs": [
+            "class"
+          ],
+          "class": "unit",
+          "tag": "span"
+        },
+        {
+          "attrs": [
+            "class"
+          ],
+          "class": "unit",
+          "tag": "span"
+        },
+        {
+          "attrs": [
+            "class"
+          ],
+          "class": "unit",
+          "tag": "span"
+        }
+      ],
+      "symbol": "₽"
+    },
+    {
+      "count": 3,
+      "near": [
+        {
+          "attrs": [
+            "class"
+          ],
+          "class": "unit",
+          "tag": "span"
+        },
+        {
+          "attrs": [
+            "class"
+          ],
+          "class": "unit",
+          "tag": "span"
+        },
+        {
+          "attrs": [
+            "class"
+          ],
+          "class": "unit",
+          "tag": "span"
+        }
+      ],
+      "symbol": "$"
+    }
+  ]
+}

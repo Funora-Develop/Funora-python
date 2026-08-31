@@ -47,7 +47,7 @@ from ._gate import check_capability
 from ._host import host_of, is_safe_hop, same_host
 from ._lot_form import LotForm, parse_lot_form
 from ._market import MarketOffer, MarketPage
-from ._money import Money
+from ._money import CURRENCY_BY_SYMBOL, Money, currency_of_symbol
 from ._observed import Confidence, Observed, Presence
 from ._order import OrderParam, OrderView
 from ._orders import (
@@ -150,6 +150,8 @@ __all__ = [
     "MarketDiff",
     "SnapshotEntry",
     "Money",
+    "CURRENCY_BY_SYMBOL",
+    "currency_of_symbol",
     "Observed",
     "Presence",
     "Confidence",

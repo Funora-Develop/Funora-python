@@ -1,0 +1,26 @@
+{
+  "codes": {},
+  "lang": "ru",
+  "page": {
+    "origin": "https://funpay.com",
+    "path": "/chat/",
+    "query": [
+      "node"
+    ]
+  },
+  "pairs": {},
+  "symbols": {
+    "₽": {
+      "count": 1,
+      "near": [
+        {
+          "attrs": [
+            "class"
+          ],
+          "class": "contact-item-message",
+          "tag": "div"
+        }
+      ]
+    }
+  }
+}

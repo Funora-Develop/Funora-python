@@ -1,0 +1,102 @@
+{
+  "lang": "ru",
+  "page": {
+    "origin": "https://funpay.com",
+    "path": "/orders/trade",
+    "query": []
+  },
+  "symbols": {
+    "GTA": {
+      "count": 4,
+      "near": [
+        {
+          "attrs": [
+            "data-data",
+            "value"
+          ],
+          "class": "",
+          "tag": "option"
+        },
+        {
+          "attrs": [
+            "data-data",
+            "value"
+          ],
+          "class": "",
+          "tag": "option"
+        },
+        {
+          "attrs": [
+            "data-data",
+            "value"
+          ],
+          "class": "",
+          "tag": "option"
+        }
+      ]
+    },
+    "MIR": {
+      "count": 1,
+      "near": [
+        {
+          "attrs": [
+            "data-data",
+            "value"
+          ],
+          "class": "",
+          "tag": "option"
+        }
+      ]
+    },
+    "NBA": {
+      "count": 1,
+      "near": [
+        {
+          "attrs": [
+            "data-data",
+            "value"
+          ],
+          "class": "",
+          "tag": "option"
+        }
+      ]
+    },
+    "XKO": {
+      "count": 1,
+      "near": [
+        {
+          "attrs": [
+            "data-data",
+            "value"
+          ],
+          "class": "",
+          "tag": "option"
+        }
+      ]
+    },
+    "ZVV": {
+      "count": 1,
+      "near": [
+        {
+          "attrs": [
+            "class"
+          ],
+          "class": "tc-order",
+          "tag": "div"
+        }
+      ]
+    },
+    "₽": {
+      "count": 1,
+      "near": [
+        {
+          "attrs": [
+            "class"
+          ],
+          "class": "badge badge-balance",
+          "tag": "span"
+        }
+      ]
+    }
+  }
+}

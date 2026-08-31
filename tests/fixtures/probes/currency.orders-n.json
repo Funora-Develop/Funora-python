@@ -1,0 +1,22 @@
+{
+  "lang": "ru",
+  "page": {
+    "origin": "https://funpay.com",
+    "path": "/orders/{n}/",
+    "query": []
+  },
+  "symbols": {
+    "₽": {
+      "count": 1,
+      "near": [
+        {
+          "attrs": [
+            "class"
+          ],
+          "class": "badge badge-balance",
+          "tag": "span"
+        }
+      ]
+    }
+  }
+}
