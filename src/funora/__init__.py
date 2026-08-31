@@ -63,6 +63,7 @@ from ._poll import Deduplicator, Schedule
 from ._proxies import Proxy
 from ._raise import RaiseResult
 from ._retry import Attempt, Safety, plan_attempt, policy_for
+from ._review_write import ReviewResult
 from ._reviews import Review, ReviewsPage
 from ._runner import SendResult
 from ._secret import (
@@ -184,6 +185,7 @@ __all__ = [
     "Review",
     "OwnLotsPage",
     "RaiseResult",
+    "ReviewResult",
     "OwnLot",
     "LotForm",
     "parse_lot_form",

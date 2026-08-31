@@ -27,7 +27,7 @@
 There is no released package and nothing to install yet. The contract is not
 stabilised and still changes.
 
-Twenty-four operations work: seventeen reads and seven writes - sending text and images, marking a chat read, changing a lot price, raising offers, and activating or deactivating a lot.
+Twenty-six operations work: seventeen reads and nine writes - sending text and images, marking a chat read, leaving and removing a review, changing a lot price, raising offers, and activating or deactivating a lot.
 
 **The guide lives in [docs/index.md](docs/index.md).** It builds into a site
 (`mkdocs serve`) and is checked by the same run as the code: examples are parsed
@@ -85,6 +85,8 @@ async with AsyncClient(EnvSecretProvider()) as client:
 | `client.market.snapshot(node_id)` | a snapshot of the listing, for comparing over time |
 | `client.market.chips(node_id)` | the second marketplace: offers sold by quantity |
 | `client.reviews.get(user_id)` | reviews |
+| `client.reviews.leave(order_id, rating=..., text=...)` | a review on the order |
+| `client.reviews.remove(order_id)` | the review removed |
 | `client.account.get()` | the account identity |
 | `client.account.refresh()` | the same, re-read |
 | `client.account.health()` | whether the session is usable |

@@ -43,7 +43,7 @@ from ._result import Defect, Severity
 from .errors import ProtocolChangedError
 from .extraction import PRESENCE_BY_CLASS, SELECTORS, STATUS_BY_CELL_CLASS, OrderStatus
 
-__all__ = ["OrderParam", "OrderView", "parse_order_page"]
+__all__ = ["parse_review_block", "OrderParam", "OrderView", "parse_order_page"]
 
 _ORDER_NUMBER_CARRIER: Final[str] = SELECTORS["order.identity.order_number"]
 _STATUS_CARRIER: Final[str] = SELECTORS["order.identity.status_carrier"]
@@ -400,6 +400,25 @@ def _review(tree: HTMLParser) -> tuple[Observed[int], Observed[str], list[Defect
         )
 
     return Observed.present(int(value)), author, []
+
+
+def parse_review_block(html: str) -> tuple[Observed[int], Observed[str], tuple[Defect, ...]]:
+    """Читает отзыв из КУСКА разметки, а не из целой страницы.
+
+    ЗАЧЕМ ОТДЕЛЬНЫЙ ВХОД. Ответ площадки на написание отзыва несёт
+    перерисованный виджет - тот же самый, что лежит на странице заказа.
+    Разобрать его вторым разбором значило бы завести две дороги к одной
+    разметке, и разошлись бы они молча: селектор поправят в одной.
+
+    Аргументы:
+        html (str): Кусок разметки с виджетом отзыва.
+
+    Возвращает:
+        tuple[Observed[int], Observed[str], tuple[Defect, ...]]: Оценка, автор,
+        перечень повреждений.
+    """
+    rating, author, defects = _review(HTMLParser(html))
+    return rating, author, tuple(defects)
 
 
 def parse_order_page(html: str, observed_at: datetime) -> OrderView:
