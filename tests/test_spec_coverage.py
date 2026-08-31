@@ -314,6 +314,7 @@ OPERATION_METHOD: dict[str, tuple[str, str]] = {
     "chips.offers": ("MarketService", "chips"),
     "lots.promote": ("LotsService", "promote"),
     "chats.mark_read": ("ChatsService", "mark_read"),
+    "chats.send_image": ("ChatsService", "send_image"),
     "lots.activate": ("LotsService", "activate"),
     "lots.deactivate": ("LotsService", "deactivate"),
     "lots.update_price": ("LotsService", "update_price"),

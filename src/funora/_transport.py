@@ -510,6 +510,62 @@ class Fetcher:
             elapsed=response.elapsed.total_seconds(),
         )
 
+    def upload(
+        self,
+        path: str,
+        *,
+        field: str,
+        filename: str,
+        content: bytes,
+        content_type: str,
+        headers: dict[str, str],
+    ) -> Observation:
+        """Отправляет ФАЙЛ и возвращает ответ.
+
+        ОТДЕЛЬНЫЙ МЕТОД, А НЕ ПРИЗНАК У submit, и это не оформление. Тело здесь
+        собирается иначе - составное, с границей частей, - и правило у него своё:
+        размер тела ограничивает ПЛОЩАДКА, и предел она объявляет на странице.
+        Признак у submit означал бы, что оба правила живут в одном месте и
+        различаются условием; условие однажды упростят.
+
+        ПЕРЕХОДЫ НЕ ВЫПОЛНЯЮТСЯ, как и у submit: повторить отправку по переходу
+        значило бы отправить файл второй раз.
+
+        Args:
+            path (str): Путь обращения.
+            field (str): Имя поля, в котором уходит файл.
+            filename (str): Имя файла, как его увидит площадка.
+            content (bytes): Содержимое файла.
+            content_type (str): Тип содержимого.
+            headers (dict[str, str]): Заголовки запроса, кроме Cookie.
+
+        Returns:
+            Observation: Результат обращения. Число переходов всегда ноль.
+
+        Raises:
+            TimeoutError: Если истёк предел ожидания.
+            NetworkError: При любом другом сетевом отказе.
+            RemoteServerError: Если ответ превысил предел размера.
+        """
+        url = _start_url(self._settings, path)
+        try:
+            response = self._client.post(
+                url,
+                files={field: (filename, content, content_type)},
+                headers={**headers, **self._cookie()},
+            )
+        except httpx.HTTPError as exc:
+            raise _translate(exc, path) from exc
+
+        return _observe(
+            response,
+            settings=self._settings,
+            rejected_url=None,
+            redirects=0,
+            sent=1,
+            elapsed=response.elapsed.total_seconds(),
+        )
+
     def _cookie(self) -> dict[str, str]:
         """Собирает заголовок с сессионным секретом.
 
@@ -665,6 +721,62 @@ class AsyncFetcher:
         try:
             response = await self._client.post(
                 url, data=fields, headers={**headers, **self._cookie()}
+            )
+        except httpx.HTTPError as exc:
+            raise _translate(exc, path) from exc
+
+        return _observe(
+            response,
+            settings=self._settings,
+            rejected_url=None,
+            redirects=0,
+            sent=1,
+            elapsed=response.elapsed.total_seconds(),
+        )
+
+    async def upload(
+        self,
+        path: str,
+        *,
+        field: str,
+        filename: str,
+        content: bytes,
+        content_type: str,
+        headers: dict[str, str],
+    ) -> Observation:
+        """Отправляет ФАЙЛ и возвращает ответ.
+
+        ОТДЕЛЬНЫЙ МЕТОД, А НЕ ПРИЗНАК У submit, и это не оформление. Тело здесь
+        собирается иначе - составное, с границей частей, - и правило у него своё:
+        размер тела ограничивает ПЛОЩАДКА, и предел она объявляет на странице.
+        Признак у submit означал бы, что оба правила живут в одном месте и
+        различаются условием; условие однажды упростят.
+
+        ПЕРЕХОДЫ НЕ ВЫПОЛНЯЮТСЯ, как и у submit: повторить отправку по переходу
+        значило бы отправить файл второй раз.
+
+        Args:
+            path (str): Путь обращения.
+            field (str): Имя поля, в котором уходит файл.
+            filename (str): Имя файла, как его увидит площадка.
+            content (bytes): Содержимое файла.
+            content_type (str): Тип содержимого.
+            headers (dict[str, str]): Заголовки запроса, кроме Cookie.
+
+        Returns:
+            Observation: Результат обращения. Число переходов всегда ноль.
+
+        Raises:
+            TimeoutError: Если истёк предел ожидания.
+            NetworkError: При любом другом сетевом отказе.
+            RemoteServerError: Если ответ превысил предел размера.
+        """
+        url = _start_url(self._settings, path)
+        try:
+            response = await self._client.post(
+                url,
+                files={field: (filename, content, content_type)},
+                headers={**headers, **self._cookie()},
             )
         except httpx.HTTPError as exc:
             raise _translate(exc, path) from exc

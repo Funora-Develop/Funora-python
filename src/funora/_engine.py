@@ -127,6 +127,7 @@ from .response_classes import (
     Health,
 )
 from .retry import RETRY_POLICIES
+from .send_outcome import SendOutcome
 
 __all__ = [
     "Fetch",
@@ -138,6 +139,8 @@ __all__ = [
     "ORDERS_PATH",
     "CHATS_PATH",
     "RUNNER_PATH",
+    "Upload",
+    "UPLOAD_CHAT_PATH",
     "LOT_EDIT_PATH",
     "OWN_LOTS_PATH",
     "MARKET_PATH",
@@ -193,6 +196,13 @@ LOT_EDIT_PATH: Final[str] = "/lots/offerEdit?node={node_id}&offer={offer_id}"
 #: Канал обновлений. Тем же адресом площадка и опрашивается, и меняется.
 RUNNER_PATH: Final[str] = "/runner/"
 
+#: Адрес загрузки картинки для переписки. Наблюдён записью запроса
+#: 31.08.2026: тело формы с единственным полем file, ответ с ключом fileId.
+#:
+#: Реестр неисполненного три недели называл ДРУГОЙ адрес - /file/addImage, -
+#: и на нём же стояло утверждение, что запрос не наблюдался ни разу.
+UPLOAD_CHAT_PATH: Final[str] = "/file/addChatImage"
+
 #: Заголовки обращения к каналу.
 #:
 #: Имена наблюдены на КАЖДОМ запросе канала. Заголовок x-requested-with
@@ -231,6 +241,34 @@ class Fetch:
     """
 
     path: str
+
+
+@dataclass(frozen=True, slots=True)
+class Upload:
+    """Просьба отправить файл.
+
+    ОТДЕЛЬНАЯ ПРОСЬБА, А НЕ ПРИЗНАК У Submit, по той же причине, по которой
+    Submit отделён от Fetch. Тело здесь составное, а правило у него своё: размер
+    ограничивает ПЛОЩАДКА, и предел она объявляет на странице.
+
+    Признак у Submit означал бы, что оба правила живут в одном месте и
+    различаются условием. Условие однажды упростят.
+
+    Attributes:
+        path (str): Путь обращения.
+        field (str): Имя поля, в котором уходит файл.
+        filename (str): Имя файла, как его увидит площадка.
+        content (bytes): Содержимое файла.
+        content_type (str): Тип содержимого.
+        headers (dict[str, str]): Заголовки запроса, кроме Cookie.
+    """
+
+    path: str
+    field: str
+    filename: str
+    content: bytes
+    content_type: str
+    headers: dict[str, str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -278,8 +316,8 @@ class Deliver:
     events: tuple[Event, ...]
 
 
-#: Любая из трёх просьб.
-Request = Fetch | Submit | Pause | Deliver
+#: Любая из пяти просьб.
+Request = Fetch | Submit | Upload | Pause | Deliver
 
 #: Что ядро получает в ответ на просьбу. Наблюдение - на Fetch, результат
 #: раздачи - на Deliver, ничего - на Pause.
@@ -467,6 +505,7 @@ IMPLEMENTED: Final[frozenset[Capability]] = frozenset(
         Capability.LOTS_ACTIVATE,
         Capability.LOTS_DEACTIVATE,
         Capability.CHATS_MARK_READ,
+        Capability.CHATS_SEND_IMAGE,
     }
 )
 
@@ -877,6 +916,149 @@ class Engine:
                 for one in Capability
             },
         )
+
+    def send_image(
+        self, node_id: str, content: bytes, *, filename: str, content_type: str = "image/png"
+    ) -> Generator[Request, Reply, SendResult]:
+        """Отправляет изображение в переписку.
+
+        ДВА ШАГА, И ОБА НАБЛЮДЕНЫ НАМИ. Сперва файл уходит отдельным обращением
+        и получает взамен номер; затем номер отправляется обычным действием
+        канала - тем же, что и текст, но с image_id вместо содержимого.
+
+        ЧУЖОГО ЗНАНИЯ ЗДЕСЬ НЕТ. Обе половины лежат в наших записях, и потому
+        согласия операция не спрашивает - в отличие от отметки прочтения и
+        переключения видимости лота.
+
+        ИСКЛЮЧЕНИЕ ОЗНАЧАЕТ, ЧТО КАРТИНКА НЕ УШЛА. Всё, что случилось ПОСЛЕ
+        второго запроса, возвращается исходом.
+
+        Args:
+            node_id (str): Числовой идентификатор диалога.
+            content (bytes): Содержимое файла.
+            filename (str): Имя файла, как его увидит площадка.
+            content_type (str): Тип содержимого.
+
+        Yields:
+            Request: Просьбы о вводе-выводе.
+
+        Returns:
+            SendResult: Исход, причина и прочитанное из ответа.
+
+        Raises:
+            ValidationError: Если идентификатор, имя либо содержимое непригодны.
+            UsageError: Если файл больше объявленного площадкой предела.
+            FunoraError: Если страница непригодна либо ответ загрузки непонятен.
+        """
+        cleaned = node_id.strip()
+        if not cleaned or not cleaned.isalnum():
+            raise ValidationError(
+                "идентификатор диалога обязан состоять из букв и цифр, получено "
+                f"{len(cleaned)} знаков иного вида. Проверка идёт до сети"
+            )
+        if not content:
+            raise ValidationError(
+                "содержимое файла пусто. Отправка пустого не наблюдалась, и что с "
+                "ней сделает площадка - неизвестно"
+            )
+        safe_name = filename.strip()
+        # Имя уходит на площадку как есть, и разделитель пути в нём - не наша
+        # забота, а чужая. Отправлять «../..» в чужую файловую систему мы не
+        # станем: что с ним сделает площадка, никто не наблюдал.
+        if not safe_name or "/" in safe_name or "\\" in safe_name:
+            raise ValidationError(
+                "имя файла пусто либо несёт разделитель пути. Что площадка "
+                "сделает с таким именем, никто не наблюдал"
+            )
+
+        capability = Capability.CHATS_SEND_IMAGE
+        observation = yield from self.fetch_ok(capability, THREAD_PATH.format(node_id=cleaned))
+
+        context = parse_runner_context(observation.html)
+        if not context.can_send:
+            raise ProtocolChangedError(
+                f"страница диалога не годится для отправки: {[one.code for one in context.defects]}"
+            )
+        token = context.csrf_token
+        if token is None:  # pragma: no cover - can_send уже это проверил
+            raise ProtocolChangedError("защитного токена на странице нет")
+
+        # ПРЕДЕЛ РАЗМЕРА ОБЪЯВЛЯЕТ ПЛОЩАДКА, и объявляет на самой странице.
+        # Свой предел мы завести не вправе: он был бы догадкой, а догадка тут
+        # отвергает то, что площадка приняла бы.
+        limit = context.upload_size_max.or_none()
+        if limit is not None and len(content) > limit:
+            raise UsageError(
+                f"файл в {len(content)} байт больше предела, объявленного "
+                f"площадкой на самой странице, - {limit} байт. Предел не наш: он "
+                "прочитан, а не выдуман"
+            )
+
+        yield from self.spend_budget(_class_of(capability), cost=1.0)
+        uploaded = yield Upload(
+            UPLOAD_CHAT_PATH,
+            field="file",
+            filename=safe_name,
+            content=content,
+            content_type=content_type,
+            headers={"accept": "*/*", "x-requested-with": "XMLHttpRequest"},
+        )
+        if not isinstance(uploaded, Observation):
+            raise TypeError(f"на просьбу Upload ожидалось наблюдение, получено {type(uploaded)}")
+
+        try:
+            payload = json.loads(uploaded.html)
+        except ValueError as exc:
+            raise ProtocolChangedError(
+                "ответ на загрузку файла не разобрался как JSON. Ушёл файл или "
+                "нет - неизвестно, и отправлять по нему номер нельзя"
+            ) from exc
+
+        file_id = payload.get("fileId") if isinstance(payload, dict) else None
+        # Логическое исключается отдельно: истина в Python - это единица, и
+        # fileId=True прочиталось бы как номер файла номер один.
+        if not isinstance(file_id, int) or isinstance(file_id, bool):
+            raise ProtocolChangedError(
+                "в ответе на загрузку нет номера файла fileId. Отправлять "
+                "картинку не по чему, а выдумать номер значило бы отправить "
+                "ЧУЖОЙ файл"
+            )
+
+        data = {
+            "node": context.node_name.value,
+            "last_message": int(context.last_message.value),
+            # Содержимое пусто НАРОЧНО: наблюдено, что при картинке текста в
+            # действии нет вовсе. Положить сюда имя файла значило бы отправить
+            # покупателю строку, которой он не ждёт.
+            "content": "",
+            "image_id": file_id,
+        }
+        reply = yield Submit(
+            RUNNER_PATH,
+            {
+                "objects": json.dumps(
+                    [
+                        {
+                            "type": "chat_node",
+                            "id": context.node_name.value,
+                            "tag": context.chat_tag.value,
+                            "data": {**data, "image_id": file_id},
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+                "request": json.dumps({"action": "chat_message", "data": data}, ensure_ascii=False),
+                "csrf_token": token.reveal(),
+            },
+            dict(RUNNER_HEADERS),
+        )
+        if not isinstance(reply, Observation):
+            raise TypeError(f"на просьбу Submit ожидалось наблюдение, получено {type(reply)}")
+
+        result = classify_send_response(reply.html, sent_to=context.node_name.value)
+        if result.outcome is SendOutcome.CONFIRMED:
+            self._state.capabilities[capability] = CapabilityState.SUPPORTED
+        return result
 
     def mark_chat_read(self, node_id: str) -> Generator[Request, Reply, None]:
         """Помечает диалог прочитанным.
