@@ -313,6 +313,7 @@ OPERATION_METHOD: dict[str, tuple[str, str]] = {
     "market.snapshot": ("MarketService", "snapshot"),
     "chips.offers": ("MarketService", "chips"),
     "lots.promote": ("LotsService", "promote"),
+    "chats.mark_read": ("ChatsService", "mark_read"),
     "lots.activate": ("LotsService", "activate"),
     "lots.deactivate": ("LotsService", "deactivate"),
     "lots.update_price": ("LotsService", "update_price"),
@@ -363,7 +364,12 @@ def test_declared_return_type_matches_what_is_returned() -> None:
         method = getattr(getattr(client_module, service), method_name)
         actual = method.__annotations__.get("return")
         assert actual is not None, f"{service}.{method_name}: тип результата не объявлен"
-        assert OPERATIONS[name].returns == actual, (
+        # void контракта - это None языка, и другого имени у него нет. Пара
+        # заведена ЗДЕСЬ, а не подстановкой в порождённом контракте: void
+        # объявляет отсутствие результата, а None - объект. Совпадают они в
+        # Python, но не в шести языках, ради которых контракт и языконезависим.
+        declared = "None" if OPERATIONS[name].returns == "void" else OPERATIONS[name].returns
+        assert declared == actual, (
             f"{name}: спецификация обещает {OPERATIONS[name].returns}, "
             f"а {service}.{method_name} возвращает {actual}"
         )
