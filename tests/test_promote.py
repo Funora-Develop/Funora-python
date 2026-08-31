@@ -298,3 +298,56 @@ def test_a_blank_unlock_at_is_not_an_observed_moment(blank: str) -> None:
 
     assert result.unlock_at.or_none() is None
     assert result.unlock_at.reason == "unlock_at_not_in_response"
+
+
+def test_a_choice_url_cancels_the_success() -> None:
+    """ГЛАВНАЯ ПРОВЕРКА ЧЕТВЁРТАЯ: ответ с адресом окна выбора - не поднятие.
+
+    Площадка отвечает без признака отказа, но с адресом окна выбора
+    подкатегорий: она спрашивает, что поднимать, а не сообщает о поднятии.
+    Прочитать это успехом значило бы сказать «поднято» там, где не поднято
+    ничего, и отправить вызывающего ждать сутки впустую.
+
+    Ответа такого вида мы сами не наблюдали - знаем о нём от независимой
+    реализации того же протокола.
+
+    Возвращает:
+        None
+    """
+    result = parse_raise(
+        {"error": False, "msg": "", "url": "https://funpay.com/lots/raise?modal=1"},
+        observed_at=WHEN,
+    )
+
+    assert result.raised is False, "ответ с адресом окна выбора прочитан успехом"
+    assert result.choice_url.or_none() == "https://funpay.com/lots/raise?modal=1"
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_a_blank_url_does_not_cancel_a_success(blank: str) -> None:
+    """Требует, чтобы пустой адрес не отменял поднятия.
+
+    Обратная половина предыдущей проверки. Отменять успех по пустой строке
+    значило бы объявлять несостоявшимся то, что состоялось, - и вызывающий
+    поднял бы второй раз, потратив второй предел.
+
+    Аргументы:
+        blank (str): пустой адрес.
+
+    Возвращает:
+        None
+    """
+    result = parse_raise({"error": False, "url": blank}, observed_at=WHEN)
+
+    assert result.raised is True
+    assert result.choice_url.or_none() is None
+
+
+def test_a_refusal_with_a_url_is_still_a_refusal() -> None:
+    """Требует, чтобы признак отказа и адрес окна не спорили.
+
+    Возвращает:
+        None
+    """
+    result = parse_raise({"error": True, "url": "https://funpay.com/x"}, observed_at=WHEN)
+    assert result.raised is False
