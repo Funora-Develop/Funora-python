@@ -310,6 +310,7 @@ OPERATION_METHOD: dict[str, tuple[str, str]] = {
     "lots.list_own": ("LotsService", "list_own"),
     "lots.form": ("LotsService", "form"),
     "market.offers": ("MarketService", "offers"),
+    "market.snapshot": ("MarketService", "snapshot"),
     "lots.update_price": ("LotsService", "update_price"),
     "account.balance": ("AccountService", "balance"),
     "account.get": ("AccountService", "get"),

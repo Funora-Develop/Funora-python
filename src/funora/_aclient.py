@@ -44,6 +44,7 @@ from ._reviews import ReviewsPage
 from ._runner import SendResult
 from ._secret import Secret, SecretProvider
 from ._showcase import ShowcasePage
+from ._snapshot import MarketSnapshot
 from ._thread import Thread
 from ._transport import AsyncFetcher, TransportSettings
 from ._watch import Router, adispatch
@@ -417,6 +418,22 @@ class AsyncMarketService:
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
         return await self._client.run(self._client.engine.read_market(node_id))
+
+    async def snapshot(self, node_id: str) -> MarketSnapshot:
+        """Снимает состояние выдачи для сравнения во времени.
+
+        Args:
+            node_id (str): Номер раздела.
+
+        Returns:
+            MarketSnapshot: Снимок. Сравнивать его можно только с другим
+            снимком того же запроса - это делает `funora.market.compare`.
+
+        Raises:
+            ValidationError: Если номер непригоден для подстановки.
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        return await self._client.run(self._client.engine.read_market_snapshot(node_id))
 
 
 class AsyncCatalogService:

@@ -73,6 +73,7 @@ from ._secret import (
 )
 from ._showcase import ShowcasePage, ShowcaseSection
 from ._skeleton import SkeletonError, skeletonize
+from ._snapshot import MarketDiff, MarketSnapshot, SnapshotEntry, compare
 from ._state import StateFile
 from ._thread import Message, Origin, Thread, parse_thread
 from ._transport import AsyncFetcher, Fetcher, Observation, TransportSettings
@@ -142,6 +143,10 @@ __all__ = [
     "Observation",
     "TransportSettings",
     # наблюдаемость
+    "MarketSnapshot",
+    "compare",
+    "MarketDiff",
+    "SnapshotEntry",
     "Money",
     "Observed",
     "Presence",

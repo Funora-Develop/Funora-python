@@ -421,6 +421,10 @@ def test_implemented_capabilities_are_the_ones_actually_called() -> None:
     # две - форма под lots.form, сохранение под lots.update_price, - и вторая
     # спрашивается только так.
     called |= set(re.findall(r"check_capability\(\s*(Capability\.[A-Z_]+)", source))
+    # Запись состояния по успеху - тоже применение возможности. У снимка
+    # рынка это единственное её применение: страницу он читает чужой
+    # операцией, под её возможностью, а свою выставляет по итогу.
+    called |= set(re.findall(r"_note_success\(\s*(Capability\.[A-Z_]+)", source))
 
     declared = {f"Capability.{item.name}" for item in IMPLEMENTED}
     assert declared <= called, (
