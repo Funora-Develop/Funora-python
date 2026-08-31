@@ -284,6 +284,8 @@ def test_the_readme_counts_the_operations_it_has() -> None:
         19: ("девятнадцать", "nineteen"),
         20: ("двадцать", "twenty"),
         21: ("двадцать одна", "twenty-one"),
+        22: ("двадцать две", "twenty-two"),
+        23: ("двадцать три", "twenty-three"),
     }
     assert methods in words, f"операций {methods}, а числительного для них нет"
     assert methods - writes in words, f"чтений {methods - writes}, числительного нет"

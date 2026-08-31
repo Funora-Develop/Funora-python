@@ -27,7 +27,7 @@
 There is no released package and nothing to install yet. The contract is not
 stabilised and still changes.
 
-Twenty operations work: seventeen reads and three writes - sending text, changing a lot price and raising offers.
+Twenty-two operations work: seventeen reads and five writes - sending text, changing a lot price, raising offers, and activating or deactivating a lot.
 
 **The guide lives in [docs/index.md](docs/index.md).** It builds into a site
 (`mkdocs serve`) and is checked by the same run as the code: examples are parsed
@@ -76,6 +76,8 @@ async with AsyncClient(EnvSecretProvider()) as client:
 | `client.lots.form(node_id, offer_id)` | a lot edit form, and whether the lot is listed |
 | `client.lots.update_price(...)` | the lot with a new price and nothing else touched |
 | `client.lots.promote(game_id, node_id)` | raising every offer in a section |
+| `client.lots.activate(...)` | the lot shown in the listing |
+| `client.lots.deactivate(...)` | the lot taken off the listing |
 | `client.lots.showcase(user_id)` | a seller showcase, by section |
 | `client.market.offers(node_id)` | the public listing of a section: rivals' prices and sellers |
 | `client.market.snapshot(node_id)` | a snapshot of the listing, for comparing over time |

@@ -464,6 +464,8 @@ IMPLEMENTED: Final[frozenset[Capability]] = frozenset(
         Capability.MARKET_SNAPSHOT,
         Capability.CHIPS_OFFERS,
         Capability.LOTS_PROMOTE,
+        Capability.LOTS_ACTIVATE,
+        Capability.LOTS_DEACTIVATE,
     }
 )
 
@@ -1090,6 +1092,143 @@ class Engine:
         # это одна сущность, а не перечень. Ветка с None для того и заведена.
         self._note_success(Capability.LOTS_FORM, form.completeness, None)
         return form
+
+    def set_lot_visible(
+        self, node_id: str, offer_id: str, *, visible: bool, expected_revision: str
+    ) -> Generator[Request, Reply, LotForm]:
+        """Включает лот в выдачу либо снимает его с неё.
+
+        ОДНА ОПЕРАЦИЯ НА ДВА КОНТРАКТНЫХ ИМЕНИ, и это не экономия. Запрос у них
+        буквально один и тот же: та же форма, тот же адрес, разница в значении
+        одного флажка. Написав их порознь, мы завели бы два места, где легко
+        разойтись, - и разошлись бы в том самом поле, ради которого всё и
+        делается.
+
+        ЧАСТЬ ЭТОГО ЗАПРОСА НАМИ НЕ НАБЛЮДАЛАСЬ. Оба наших снимка сохранения
+        сняты с ОТМЕЧЕННЫМ флажком; что уходит при снятом, известно от
+        независимой реализации того же протокола - она шлёт поле всегда, пустой
+        строкой. Наше собственное рассуждение говорило обратное.
+
+        Поэтому операция спрашивает согласия. Ошибка здесь не возвращает пустой
+        результат: она включает выключенный лот либо оставляет включённым тот,
+        который просили снять, - и увидит это не разработчик, а продавец, в
+        своей же витрине.
+
+        ПОРЯДОК ТОТ ЖЕ, ЧТО У ПРАВКИ ЦЕНЫ. Форма читается заново, отпечаток
+        сверяется с ожидаемым, и отправляется ПРОЧИТАННОЕ с заменой одного
+        флажка. Собрать запрос из перечня нужных полей значило бы стереть
+        описание лота и сообщение покупателю.
+
+        Args:
+            node_id (str): Идентификатор раздела.
+            offer_id (str): Идентификатор предложения.
+            visible (bool): Требуемое состояние показа.
+            expected_revision (str): Отпечаток, полученный чтением формы.
+                Обязателен: без него параллельная правка перетирается молча, и
+                перетирается не флажком, а описанием лота.
+
+        Yields:
+            Request: Просьбы о вводе-выводе.
+
+        Returns:
+            LotForm: Форма, перечитанная ПОСЛЕ сохранения.
+
+        Raises:
+            UsageError: Если согласия на непроверенный запрос не дано.
+            PreconditionFailedError: Если лот успели изменить.
+            FunoraError: Если сохранение не состоялось.
+        """
+        # Развёрнуто, а не тернарником, и нарочно. Проверка перечня выполняемых
+        # читает ИСХОДНИК и ищет присваивание возможности построчно: из
+        # тернарника ей видна только первая, и вторая молча числилась бы
+        # объявленной, но не вызываемой.
+        #
+        # Подгонять код под проверку - плохо; здесь другое: проверка права, а
+        # тернарник вправду прятал половину сказанного.
+        if visible:
+            capability = Capability.LOTS_ACTIVATE
+            name = "lots.activate"
+        else:
+            capability = Capability.LOTS_DEACTIVATE
+            name = "lots.deactivate"
+
+        if not expected_revision:
+            raise UsageError(
+                "нужен expected_revision: без него параллельная правка - из "
+                "другого процесса, из приложения, из веб-интерфейса - будет "
+                "перетёрта молча, и перетёрта не флажком, а описанием лота. "
+                "Возьмите его чтением формы"
+            )
+
+        # СОГЛАСИЕ СПРАШИВАЕТСЯ ПО КОНТРАКТУ, а не по правилу, записанному тут
+        # отдельно. Происхождение запроса объявлено в spec/services/lots.yaml;
+        # снимут объявление - исчезнет и требование. Правило, живущее в коде
+        # само по себе, пережило бы снятие объявления и осталось бы отказывать
+        # неизвестно по чьему требованию - ровно так уже вышло с аудитом.
+        contract = OPERATIONS[name]
+        if contract.request_provenance == "third_party_report" and (
+            capability not in self._state.opted_in
+        ):
+            raise UsageError(
+                f"операция {name} стоит на непроверенном нами запросе и без "
+                f"согласия не отправляется. Непроверено вот что: "
+                f"{contract.provenance_rests_on} Источник: "
+                f"{contract.provenance_source} Если вы понимаете цену ошибки - "
+                f"включите возможность {capability.value} явно"
+            )
+
+        check_capability(
+            capability,
+            state=self._state.capabilities[capability],
+            opted_in=capability in self._state.opted_in,
+        )
+
+        before = yield from self.read_lot_form(node_id, offer_id)
+        if before.revision != expected_revision:
+            raise PreconditionFailedError(
+                f"лот изменился с тех пор, как вы его читали: ожидался отпечаток "
+                f"{expected_revision}, на странице {before.revision}. Перечитайте "
+                "форму и решите заново"
+            )
+
+        # УЖЕ В НУЖНОМ СОСТОЯНИИ - НЕ ОТПРАВЛЯЕМ НИЧЕГО. Контракт объявляет
+        # операцию идемпотентной, и дешевле всего исполнить это буквально:
+        # запрос, который ничего не меняет, всё равно отправил бы форму целиком
+        # - то есть подставил бы под непроверенное поле лот, которого не просили
+        # трогать.
+        if before.is_active == visible:
+            return before
+
+        reply = yield Submit(SAVE_PATH, before.to_request(active=visible), {})
+        if not isinstance(reply, Observation):
+            raise TypeError(f"на просьбу Submit ожидалось наблюдение, получено {type(reply)}")
+
+        # Успех виден ПЕРЕХОДОМ на список своих предложений раздела - то же
+        # самое наблюдение, на котором стоит правка цены.
+        landed = urlparse(reply.final_url).path
+        expected = OWN_LOTS_PATH.format(node_id=_digits(node_id, "раздела"))
+        if landed != expected:
+            raise UnexpectedResponseError(
+                f"сохранение привело на {landed!r}, а наблюдался переход на "
+                f"{expected!r}. Что случилось с лотом - неизвестно, и объявлять "
+                "успех по чужому адресу нельзя"
+            )
+
+        self._state.capabilities[capability] = CapabilityState.SUPPORTED
+
+        # ПЕРЕЧИТЫВАНИЕ ЗДЕСЬ ВАЖНЕЕ, ЧЕМ У ПРАВКИ ЦЕНЫ. Мы отправили поле,
+        # которого сами не наблюдали, и единственный способ узнать, что вышло, -
+        # посмотреть. Вернуть форму, собранную из наших намерений, значило бы
+        # сообщить об исполнении, ничего о нём не зная.
+        after = yield from self.read_lot_form(node_id, offer_id)
+        if after.is_active != visible:
+            raise UnexpectedResponseError(
+                f"сохранение прошло, а показ лота остался {after.is_active}. "
+                f"Просили {visible}. Вид запроса при снятом флажке нами не "
+                "наблюдался и взят у сторонней реализации - похоже, он неверен. "
+                "Лот НЕ в том состоянии, которого вы просили"
+            )
+        return after
 
     def update_price(
         self, node_id: str, offer_id: str, price: str, *, expected_revision: str

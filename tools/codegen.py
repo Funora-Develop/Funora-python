@@ -126,6 +126,55 @@ def _literal(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def _wrapped_literal(value: str, indent: int, prefix: int) -> str:
+    """Записывает длинную строку литералом, разбитым по строкам.
+
+    Порождается КОД, и он обязан проходить форматтер. Пояснения из контракта
+    длиннее сотни знаков - их там не десяток и не два, - и напечатанные одной
+    строкой они дают порождённый файл, который сразу не проходит линтер.
+
+    Укоротить пояснение нельзя: оно и написано затем, чтобы читающий понял, на
+    чём именно стоит непроверенная часть запроса. Значит переносить.
+
+    Args:
+        value (str): Строка, которую надо записать литералом.
+        indent (int): Отступ в пробелах у САМОГО ПОЛЯ. Строки продолжения
+            форматтер ставит на четыре пробела правее, а закрывающую скобку
+            вровень с полем - выравнивать их по знаку равенства он не станет,
+            и порождённый файл не прошёл бы проверку форматирования.
+        prefix (int): Длина того, что уже напечатано в строке до литерала.
+            Нужна только затем, чтобы решить, помещается ли он целиком.
+
+    Returns:
+        str: Литерал - одной строкой, если помещается, иначе несколькими в
+        скобках, склеенных соседством по правилу языка.
+    """
+    single = _literal(value)
+    if prefix + len(single) + 1 <= 100:
+        return single
+
+    pad = " " * (indent + 4)
+    # Ширина берётся с запасом на кавычки и на пробел, который допечатывается к
+    # каждому куску, кроме последнего.
+    room = 100 - len(pad) - 4
+    words = value.split(" ")
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}" if current else word
+        if len(candidate) > room and current:
+            lines.append(current + " ")
+            current = word
+        else:
+            current = candidate
+    if current:
+        lines.append(current)
+
+    body = "".join(f"\n{pad}{_literal(one)}" for one in lines)
+    tail = " " * indent
+    return f"({body}\n{tail})"
+
+
 def _load(spec: Path, relative: str) -> dict[str, Any]:
     """Читает файл спецификации.
 
@@ -2118,6 +2167,7 @@ def render_operations(spec: Path) -> str:
         "renamed_from",
         "rename_reason",
         "completeness_required",
+        "request_provenance",
     }
     safety_values = {"safe", "idempotent", "unsafe"}
     classes = set(_load(spec, "spec/runtime/budget.yaml")["classes"])
@@ -2217,6 +2267,23 @@ def render_operations(spec: Path) -> str:
     out.append("        audit_fail_closed (bool): Отказывает ли операция, когда\n")
     out.append("            сохранять некуда. Ложь означает либо отсутствие аудита,\n")
     out.append("            либо аудит, которым разрешено пренебречь.\n")
+    out.append("        request_provenance (str): Своими ли глазами мы видели тот\n")
+    out.append("            запрос, который операция отправляет.\n")
+    out.append("\n")
+    out.append("            Ось отдельная от возможности, и путать их нельзя.\n")
+    out.append("            Возможность говорит о ПЛОЩАДКЕ - есть ли у аккаунта\n")
+    out.append("            право. Происхождение говорит о НАС.\n")
+    out.append("\n")
+    out.append("            Пустая строка означает, что операция стоит целиком на\n")
+    out.append("            нашем наблюдении. Значение third_party_report означает,\n")
+    out.append("            что часть запроса известна от независимой реализации\n")
+    out.append("            того же протокола, а нашего наблюдения на ней нет.\n")
+    out.append("        provenance_source (str): Кто именно сообщил. Обязателен при\n")
+    out.append("            third_party_report: без имени сообщение неотличимо от\n")
+    out.append("            выдумки, и проверить его нечем.\n")
+    out.append("        provenance_rests_on (str): Какая ИМЕННО часть запроса не\n")
+    out.append("            проверена нами. Без этого читающий переносит недоверие\n")
+    out.append("            либо на всё сразу, либо ни на что.\n")
     out.append('    """\n\n')
     out.append("    name: str\n")
     out.append("    capability: str\n")
@@ -2226,6 +2293,9 @@ def render_operations(spec: Path) -> str:
     out.append("    errors: tuple[str, ...]\n")
     out.append('    audit: str = ""\n')
     out.append("    audit_fail_closed: bool = False\n")
+    out.append('    request_provenance: str = ""\n')
+    out.append('    provenance_source: str = ""\n')
+    out.append('    provenance_rests_on: str = ""\n')
 
     out.append("\n\n#: Операции служб по идентификатору.\n")
     out.append("OPERATIONS: Final[dict[str, Operation]] = {\n")
@@ -2265,6 +2335,45 @@ def render_operations(spec: Path) -> str:
             out.append(f'        audit="{body["audit"]}",\n')
         if rules.get("without_the_journal") == "fail_closed":
             out.append("        audit_fail_closed=True,\n")
+
+        # ПРОИСХОЖДЕНИЕ ЗАПРОСА доходит до пакета, а не остаётся прозой в
+        # контракте. Иначе повторилась бы история аудита: спецификация требует,
+        # пакет о требовании не знает, и связать отказ операции с объявлением
+        # нечем - объявление стоит и молчит.
+        #
+        # Здесь молчание стоило бы дороже: на этой оси висит вопрос, спрашивать
+        # ли у вызывающего согласие перед записью, которую нельзя отыграть.
+        prov = body.get("request_provenance") or {}
+        if prov:
+            if not isinstance(prov, dict):
+                raise SystemExit(f"spec/services: у операции {name} request_provenance не объект")
+            level = prov.get("confidence")
+            if level not in ("observed", "third_party_report"):
+                raise SystemExit(
+                    f"spec/services: у операции {name} происхождение запроса "
+                    f"{level!r} неизвестно. Допустимы observed и third_party_report"
+                )
+            if level == "third_party_report":
+                source = prov.get("source")
+                rests = prov.get("rests_on_it")
+                if not isinstance(source, str) or not source.strip():
+                    raise SystemExit(
+                        f"spec/services: у операции {name} происхождение "
+                        "third_party_report без source. Вторичный источник обязан "
+                        "назвать себя: без имени он неотличим от выдумки"
+                    )
+                if not isinstance(rests, str) or not rests.strip():
+                    raise SystemExit(
+                        f"spec/services: у операции {name} происхождение "
+                        "third_party_report без rests_on_it. Непроверенной обязана "
+                        "быть названа конкретная часть запроса"
+                    )
+                out.append(f'        request_provenance="{level}",\n')
+                source_head = "        provenance_source="
+                rests_head = "        provenance_rests_on="
+                out.append(source_head + _wrapped_literal(source, 8, len(source_head)) + ",\n")
+                out.append(rests_head + _wrapped_literal(rests, 8, len(rests_head)) + ",\n")
+
         out.append("    ),\n")
     out.append("}\n")
 
