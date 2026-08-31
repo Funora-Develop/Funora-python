@@ -1,0 +1,94 @@
+{
+  "captured_at": "2026-08-30T21:07:53.715Z",
+  "collector_build": "d6f239aa",
+  "flushed_on_unload": true,
+  "records": [
+    {
+      "method": "POST",
+      "navigation": true,
+      "origin": "https://funpay.com",
+      "path": "/lots/offerSave",
+      "query": [],
+      "request": {
+        "fields": {
+          "active": "T2:a",
+          "csrf_token": "T16:ad",
+          "deactivate_after_sale": "T2:a",
+          "deleted": "",
+          "fields[desc][en]": "T1027:adps",
+          "fields[desc][ru]": "T1342:acdops",
+          "fields[images]": "",
+          "fields[payment_msg][en]": "T630:adps",
+          "fields[payment_msg][ru]": "T455:acdops",
+          "fields[summary][en]": "T74:adps",
+          "fields[summary][ru]": "T90:acdops",
+          "form_created_at": "T10:d",
+          "location": "",
+          "node_id": "T4:d",
+          "offer_id": "T8:d",
+          "price": "T5:dp"
+        },
+        "kind": "form"
+      },
+      "response": {
+        "kind": "taken_by_the_browser"
+      }
+    },
+    {
+      "method": "POST",
+      "origin": "https://funpay.com",
+      "path": "/lots/offerSave",
+      "query": [],
+      "request": {
+        "fields": {
+          "active": "T2:a",
+          "csrf_token": {
+            "signature": "T16:ad",
+            "since_previous": "same"
+          },
+          "deactivate_after_sale[]": "T2:a",
+          "deleted": "",
+          "fields[desc][en]": "T1037:adps",
+          "fields[desc][ru]": "T1354:acdops",
+          "fields[images]": "",
+          "fields[payment_msg][en]": "T638:adps",
+          "fields[payment_msg][ru]": "T461:acdops",
+          "fields[summary][en]": "T74:adps",
+          "fields[summary][ru]": "T90:acdops",
+          "form_created_at": "T10:d",
+          "location": "",
+          "node_id": "T4:d",
+          "offer_id": "T8:d",
+          "price": "T5:dp"
+        },
+        "kind": "form"
+      },
+      "request_headers": [
+        "accept",
+        "content-type",
+        "x-requested-with"
+      ],
+      "response": {
+        "fields": {
+          "done": "boolean",
+          "error": "boolean",
+          "errors": [],
+          "url": "T34:adp"
+        },
+        "kind": "json"
+      },
+      "response_headers": [
+        "cache-control",
+        "content-encoding",
+        "content-type",
+        "date",
+        "expires",
+        "pragma",
+        "server",
+        "strict-transport-security",
+        "vary"
+      ],
+      "status": 200
+    }
+  ]
+}
