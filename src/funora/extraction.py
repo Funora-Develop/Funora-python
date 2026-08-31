@@ -103,6 +103,12 @@ SELECTORS: Final[dict[str, str]] = {
     "account.transactions.rows_container": ".dyn-table-body",
     "account.transactions.table": ".tc-finance",
     "account.withdraw.form": "form[action$='/withdraw/withdraw']",
+    "catalog.field_schema.container": ".lot-fields",
+    "catalog.field_schema.fields": ".lot-field",
+    "catalog.field_schema.input": ".lot-field-input",
+    "catalog.field_schema.kinds.choice": ".lot-field-radio-box",
+    "catalog.field_schema.kinds.range": ".lot-field-range-box",
+    "catalog.field_schema.label": ".control-label",
     "catalog.game.card": ".promo-games-all .promo-game-item",
     "catalog.game.card.within_list": ".promo-game-item",
     "catalog.game.switcher": ".promo-game-item > .btn-group > button",
@@ -240,6 +246,8 @@ SELECTORS: Final[dict[str, str]] = {
 #: Ключ выведен из пути внутри документа, как и у селекторов.
 ATTRIBUTES: Final[dict[str, str]] = {
     "account.transactions.fields.transaction_id.attributes.transaction_id": "data-transaction",
+    "catalog.field_schema.fields.attributes.field_id": "data-id",
+    "catalog.field_schema.input.attributes.input_name": "name",
     "catalog.game.switcher.attributes.variant_id": "data-id",
     "catalog.game.title.attributes.game_id": "data-id",
     "catalog.sections.link.attributes.section_href": "href",
