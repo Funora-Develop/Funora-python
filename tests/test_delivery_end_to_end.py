@@ -206,6 +206,7 @@ def _lots() -> tuple[OwnLot, ...]:
             price_text=missing,
             currency_symbol_text=missing,
             sort_value=missing,
+            is_active=True,
             row_index=0,
         )
 

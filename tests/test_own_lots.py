@@ -150,47 +150,37 @@ def test_the_price_is_separated_from_the_currency_symbol() -> None:
     )
 
 
-def test_the_page_never_claims_a_lot_is_visible_or_hidden() -> None:
-    """Требует НЕ выдумывать признак показа лота в выдаче.
+def test_the_page_does_claim_whether_a_lot_is_shown() -> None:
+    """ПРОВЕРКА ПЕРЕВЁРНУТА 31.08.2026, и переворот этот - исправление ошибки.
 
-    На странице его нет ни одного: все двадцать строк структурно одинаковы.
+    Здесь стояло обратное: модель НЕ должна обещать признака показа, потому что
+    на странице его нет. Утверждение было неверным, а проверка его сторожила -
+    то есть закрепляла неправду и не давала её заметить.
 
-    Узел .tc-visible-inside по имени похож на него, но им не является, и
-    опровергается это СЧЁТОМ: на публичной витрине он есть ровно в тех строках,
-    где есть колонка сервера, и ни в одной без неё.
+    Признак есть: выключенная строка несёт класс warning. Не наблюдался он
+    потому, что у владельца все лоты были включены и снимок вышел однородным.
 
-    Значит наличие узла определяется набором колонок таблицы, а не состоянием
-    лота: состояние лота не может зависеть от того, есть ли колонка сервера.
+    Отсутствие признака на однородном снимке не значит его отсутствия на
+    странице. Правило «отсутствие объявляется только по положительному
+    признаку» было нарушено ровно здесь.
 
-    Ошибка тут дорогая: продавец решил бы, что лот скрыт, когда он показан.
-
-    Возвращает:
+    Returns:
         None
     """
     import dataclasses
 
     from funora._own_lots import OwnLot
 
-    names = {one.name for one in dataclasses.fields(OwnLot)}
-    assert not (names & {"is_active", "visible", "hidden", "active"}), (
-        f"модель обещает признак показа: {sorted(names)}. На странице его нет"
+    names = {f.name for f in dataclasses.fields(OwnLot)}
+    assert "is_active" in names, (
+        "модель перестала обещать признак показа. Он наблюдён - класс warning у "
+        "выключенной строки, снимок lots-trade.off.logged.ru"
     )
 
-    # И довод, по которому его нельзя вывести, - СЧЁТНЫЙ, а не словесный.
-    import collections
-
-    pairs: collections.Counter[tuple[bool, bool]] = collections.Counter()
-    for page_name in (OWN, SHOWCASE):
-        for row in HTMLParser(_page(page_name)).css("a.tc-item"):
-            pairs[
-                (bool(row.css_first(".tc-server")), bool(row.css_first(".tc-visible-inside")))
-            ] += 1
-
-    assert set(pairs) <= {(True, True), (False, False)}, (
-        f"узел встречается отдельно от колонки сервера: {dict(pairs)}. Тогда он "
-        "мог бы нести и состояние лота"
+    # И признак этот обязан вправду быть на снимке, а не только в модели.
+    assert "warning" in _page("lots-trade.off.logged.ru"), (
+        "на снимке с выключенным лотом нет класса, ради которого он снят"
     )
-    assert pairs[(True, True)] == 60 and pairs[(False, False)] == 118, dict(pairs)
 
 
 def test_a_row_without_an_identifier_is_a_defect_and_not_silent() -> None:
@@ -323,3 +313,65 @@ def test_the_sort_value_is_one_and_the_same_in_every_row() -> None:
     # А идентификаторов - двадцать. Разница между атрибутами существенна, и
     # перепутать их значило бы адресовать один лот вместо двадцати.
     assert len({one.offer_id.value for one in page.lots()}) == 20
+
+
+def test_the_disabled_lot_is_told_apart_from_the_rest() -> None:
+    """ГЛАВНАЯ ПРОВЕРКА: выключенный лот отличается от включённых.
+
+    Три недели модель утверждала, что признака показа на этой странице нет
+    вовсе. Строки одинаковы, пока все лоты включены - а у владельца все и были
+    включены, и снимок вышел однородным.
+
+    Отсутствие признака на однородном снимке не значит его отсутствия на
+    странице. Это ровно тот случай, ради которого заведено правило «отсутствие
+    объявляется только по положительному признаку», и правило было нарушено.
+
+    Возвращает:
+        None
+    """
+    page = parse_own_lots(_page("lots-trade.off.logged.ru"), observed_at=WHEN)
+    lots = page.lots(accept_incomplete=True)
+
+    marks = [one.is_active for one in lots]
+    assert marks.count(False) == 1, f"выключенных строк {marks.count(False)}, а была одна"
+    assert marks.count(True) == 3, f"включённых строк {marks.count(True)}, а было три"
+
+
+def test_a_page_of_enabled_lots_says_they_are_enabled() -> None:
+    """Требует, чтобы однородный снимок давал все True, а не все False.
+
+    Иначе проверка выше проходила бы и при разборе, читающем признак наоборот.
+
+    Возвращает:
+        None
+    """
+    page = parse_own_lots(_page(OWN), observed_at=WHEN)
+    lots = page.lots(accept_incomplete=True)
+
+    assert lots, "в снимке нет строк"
+    assert all(one.is_active for one in lots), (
+        "на снимке, где все лоты включены, разбор нашёл выключенные"
+    )
+
+
+def test_the_marker_is_matched_as_a_word_not_a_substring() -> None:
+    """Требует искать класс СЛОВОМ, а не подстрокой.
+
+    На снимке разница неразличима: там класс стоит отдельным словом, и оба
+    способа дают одно. Появись у площадки класс, начинающийся с того же корня -
+    warning-soft, warnings, - и поиск подстрокой объявил бы лот выключенным на
+    ровном месте.
+
+    Разметка здесь подставная: проверяется разбор, а не площадка.
+
+    Returns:
+        None
+    """
+    html = _page("lots-trade.off.logged.ru").replace(
+        'class="tc-item warning"', 'class="tc-item warning-soft"', 1
+    )
+    lots = parse_own_lots(html, observed_at=WHEN).lots(accept_incomplete=True)
+
+    assert all(one.is_active for one in lots), (
+        "класс найден подстрокой: warning-soft прочитан как warning"
+    )

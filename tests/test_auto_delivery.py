@@ -89,6 +89,9 @@ def _lot(offer_id: str, description: str) -> OwnLot:
         price_text=missing,
         currency_symbol_text=missing,
         sort_value=missing,
+        # Подставной лот ВКЛЮЧЁН: автовыдача работает по видимым, и
+        # выключенный здесь сбивал бы с толку.
+        is_active=True,
         row_index=0,
     )
 

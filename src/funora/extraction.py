@@ -155,6 +155,7 @@ SELECTORS: Final[dict[str, str]] = {
     "lots.fields.price_text": ".tc-price > div",
     "lots.fields.server_text": ".tc-server",
     "lots.rows": "a.tc-item",
+    "lots.visibility.marker": "a.tc-item",
     "market.fields.currency_symbol_text": ".tc-price .unit",
     "market.fields.description_text": ".tc-desc-text",
     "market.fields.price_cell": ".tc-price",
