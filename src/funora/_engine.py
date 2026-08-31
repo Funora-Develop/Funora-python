@@ -71,6 +71,7 @@ from ._outbound import UNSAFE_SENDS_WITHOUT_LEDGER, OutboundGovernor, OutboundRe
 from ._own_lots import OwnLotsPage, parse_own_lots
 from ._poll import Deduplicator, Schedule
 from ._price_audit import UNSAFE_PRICE_CHANGES_WITHOUT_AUDIT, PriceAudit, PriceChange
+from ._raise import RAISE_PATH, RaiseResult, parse_raise
 from ._result import Defect, Severity
 from ._retry import RETRY_REASON_ATTR, plan_attempt
 from ._reviews import ReviewsPage, parse_reviews_page
@@ -462,6 +463,7 @@ IMPLEMENTED: Final[frozenset[Capability]] = frozenset(
         Capability.MARKET_OFFERS,
         Capability.MARKET_SNAPSHOT,
         Capability.CHIPS_OFFERS,
+        Capability.LOTS_PROMOTE,
     }
 )
 
@@ -1340,6 +1342,69 @@ class Engine:
             page = replace(page, completeness=Completeness.UNKNOWN, reason="integrity_unverified")
         self._note_success(Capability.CHIPS_OFFERS, page.completeness, None)
         return page
+
+    def promote_lots(self, game_id: str, node_id: str) -> Generator[Request, Reply, RaiseResult]:
+        """Поднимает В ВЫДАЧЕ ВСЕ предложения раздела.
+
+        НЕ ОДНО ПРЕДЛОЖЕНИЕ, А ВЕСЬ РАЗДЕЛ. Запрос несёт игру и раздел,
+        идентификатора предложения в нём нет; кнопка на странице так и
+        называется - «Поднять предложения».
+
+        НЕОБРАТИМО И ТРАТИТ СУТОЧНЫЙ ПРЕДЕЛ. Повтора здесь нет и быть не может:
+        контракт объявляет операцию небезопасной и требует сверки вместо
+        повтора. Ответ разбирается ровно один раз.
+
+        ОТКАЗ ПЛОЩАДКИ - НЕ ИСКЛЮЧЕНИЕ, А ИСХОД. Отказав по неистёкшему
+        остыванию, площадка называет и срок; бросить здесь исключение значило бы
+        выбросить этот срок вместе с ним, а он - единственное, что говорит,
+        когда пробовать снова.
+
+        Args:
+            game_id (str): Игра. Читается со страницы своих лотов - атрибут
+                data-game у кнопки поднятия.
+            node_id (str): Раздел. Атрибут data-node у той же кнопки.
+
+        Yields:
+            Request: Просьбы о вводе-выводе.
+
+        Returns:
+            RaiseResult: Исход с признаком поднятия и сроком следующего.
+
+        Raises:
+            ValidationError: Если идентификатор непригоден для подстановки.
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        game = _digits(game_id, "игры")
+        node = _digits(node_id, "раздела")
+
+        capability = Capability.LOTS_PROMOTE
+        check_capability(
+            capability,
+            state=self._state.capabilities[capability],
+            opted_in=capability in self._state.opted_in,
+        )
+
+        yield from self.spend_budget(_class_of(capability), cost=1.0)
+        reply = yield Submit(RAISE_PATH, {"game_id": game, "node_id": node}, {})
+        if not isinstance(reply, Observation):
+            raise TypeError(f"на просьбу Submit ожидалось наблюдение, получено {type(reply)}")
+
+        try:
+            payload = json.loads(reply.html)
+        except ValueError as exc:
+            raise ProtocolChangedError(
+                "ответ на поднятие не разобрался как JSON. Что случилось с "
+                "предложениями - неизвестно, а повторить, чтобы выяснить, "
+                "нельзя: повтор тратит суточный предел"
+            ) from exc
+
+        result = parse_raise(payload, observed_at=datetime.now(UTC))
+        # Состояние возможности выставляется по ЛЮБОМУ разобранному ответу:
+        # отказ по остыванию говорит, что операция доступна, - она сработала бы,
+        # приди запрос позже. Недоступной её делает не остывание, а отсутствие
+        # права поднимать.
+        self._state.capabilities[capability] = CapabilityState.SUPPORTED
+        return result
 
     def read_own_lots(self, node_id: str) -> Generator[Request, Reply, OwnLotsPage]:
         """Читает собственные лоты продавца в одном разделе.

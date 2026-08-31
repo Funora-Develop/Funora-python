@@ -37,6 +37,7 @@ from ._orders import OrdersPage
 from ._own_lots import OwnLotsPage
 from ._poll import Schedule
 from ._proxies import DEFAULT_ACCOUNT, Proxy, ProxyPool
+from ._raise import RaiseResult
 from ._reviews import ReviewsPage
 from ._runner import SendResult
 from ._secret import Secret, SecretProvider
@@ -416,6 +417,26 @@ class LotsService:
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
         return self._client.run(self._client.engine.read_showcase(user_id))
+
+    def promote(self, game_id: str, node_id: str) -> RaiseResult:
+        """Поднимает в выдаче ВСЕ предложения раздела.
+
+        НЕОБРАТИМО И ТРАТИТ СУТОЧНЫЙ ПРЕДЕЛ. Повтора нет: при неоднозначном
+        исходе положена сверка, а не второй запрос.
+
+        Args:
+            game_id (str): Игра. Атрибут data-game у кнопки поднятия.
+            node_id (str): Раздел. Атрибут data-node у той же кнопки.
+
+        Returns:
+            RaiseResult: Исход. Отказ площадки - тоже исход, и он несёт срок
+            следующего поднятия.
+
+        Raises:
+            ValidationError: Если идентификатор непригоден для подстановки.
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        return self._client.run(self._client.engine.promote_lots(game_id, node_id))
 
 
 class MarketService:

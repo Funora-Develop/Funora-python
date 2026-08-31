@@ -27,7 +27,7 @@
 There is no released package and nothing to install yet. The contract is not
 stabilised and still changes.
 
-Nineteen operations work: seventeen reads and two writes - sending text and changing a lot price.
+Twenty operations work: seventeen reads and three writes - sending text, changing a lot price and raising offers.
 
 **The guide lives in [docs/index.md](docs/index.md).** It builds into a site
 (`mkdocs serve`) and is checked by the same run as the code: examples are parsed
@@ -75,6 +75,7 @@ async with AsyncClient(EnvSecretProvider()) as client:
 | `client.lots.list_own(node_id)` | your own lots in a section, with offer ids |
 | `client.lots.form(node_id, offer_id)` | a lot edit form, and whether the lot is listed |
 | `client.lots.update_price(...)` | the lot with a new price and nothing else touched |
+| `client.lots.promote(game_id, node_id)` | raising every offer in a section |
 | `client.lots.showcase(user_id)` | a seller showcase, by section |
 | `client.market.offers(node_id)` | the public listing of a section: rivals' prices and sellers |
 | `client.market.snapshot(node_id)` | a snapshot of the listing, for comparing over time |
@@ -116,10 +117,16 @@ The public section listing is parsed too, but has no operation: the `Offer` mode
 requires an id, a price and a category, and the page carries none of the three.
 
 Sending an image, marking read, paging chat history backwards, the section field
-schema, a market snapshot and three lot write operations - activate, deactivate
-and promote - are declared by the contract and not written: nobody has observed
-the requests the marketplace makes for them. Calling them raises `NotImplementedOperationError` - a refusal from
-Funora itself, not a built-in Python error.
+schema, the account transaction history, the order event feed, the interface
+locale and two lot write operations - activate and deactivate - are declared by
+the contract and not written: nobody has observed the requests the marketplace
+makes for them. Calling them raises `NotImplementedOperationError` - a refusal
+from Funora itself, not a built-in Python error.
+
+The full list, with a reason on every row, lives in the registry at
+`spec/conformance/not-implemented.yaml`. It is not a reference but a build
+condition: an operation that is declared and silently absent does not pass the
+gate.
 
 ## Observed, but not an operation
 

@@ -297,7 +297,6 @@ OPERATIONS: Final[dict[str, Operation]] = {
         returns="RaiseResult",
         errors=(
             "funora.capability.unsupported",
-            "funora.domain.precondition_failed",
             "funora.transport.timeout",
             "funora.transport",
         ),

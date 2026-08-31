@@ -61,6 +61,7 @@ from ._orders import (
 from ._own_lots import OwnLot, OwnLotsPage
 from ._poll import Deduplicator, Schedule
 from ._proxies import Proxy
+from ._raise import RaiseResult
 from ._retry import Attempt, Safety, plan_attempt, policy_for
 from ._reviews import Review, ReviewsPage
 from ._runner import SendResult
@@ -180,6 +181,7 @@ __all__ = [
     "ReviewsPage",
     "Review",
     "OwnLotsPage",
+    "RaiseResult",
     "OwnLot",
     "LotForm",
     "parse_lot_form",

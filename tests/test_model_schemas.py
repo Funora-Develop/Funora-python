@@ -256,6 +256,7 @@ def test_every_returned_field_is_described() -> None:
     from funora._market import MarketOffer
     from funora._orders import OrderListEntry
     from funora._own_lots import OwnLot
+    from funora._raise import RaiseResult
     from funora._runner import SendResult
     from funora._snapshot import SnapshotEntry
     from funora._thread import Message
@@ -269,6 +270,7 @@ def test_every_returned_field_is_described() -> None:
         (LotForm, "lot-form"),
         (MarketOffer, "market-offer"),
         (SnapshotEntry, "market-snapshot-entry"),
+        (RaiseResult, "raise-result"),
     )
     for cls, name in pairs:
         declared = set(_schema(name).get("properties", {}))
@@ -307,6 +309,8 @@ def test_unbuildable_models_say_so() -> None:
         "market-page",
         # Собираются с 31.08.2026: funora._snapshot.MarketSnapshot и
         # SnapshotEntry. Объявлены и написаны в один заход.
+        # Собирается с 31.08.2026: funora._raise.RaiseResult.
+        "raise-result",
         "market-snapshot",
         "market-snapshot-entry",
         "order-list-entry",

@@ -312,6 +312,7 @@ OPERATION_METHOD: dict[str, tuple[str, str]] = {
     "market.offers": ("MarketService", "offers"),
     "market.snapshot": ("MarketService", "snapshot"),
     "chips.offers": ("MarketService", "chips"),
+    "lots.promote": ("LotsService", "promote"),
     "lots.update_price": ("LotsService", "update_price"),
     "account.balance": ("AccountService", "balance"),
     "account.get": ("AccountService", "get"),
