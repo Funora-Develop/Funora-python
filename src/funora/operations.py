@@ -216,6 +216,16 @@ OPERATIONS: Final[dict[str, Operation]] = {
             "funora.capability.unsupported",
             "funora.transport",
         ),
+        request_provenance="third_party_report",
+        provenance_source=(
+            "FunPayAPI (бот FunPayCardinal), account.py, send_message - флаг leave_as_unread "
+            "убирает диалог из подписки, и это единственное, чем он отличается."
+        ),
+        provenance_rests_on=(
+            "НЕ форма запроса, а ВЫВОД о его действии. Форма наша: наши записи показывают, что "
+            "страница при открытом диалоге опрашивает канал с подпиской на него. Чужое - "
+            "утверждение, что именно подписка снимает пометку непрочитанного."
+        ),
     ),
     "chats.send_image": Operation(
         name="chats.send_image",

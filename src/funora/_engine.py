@@ -466,6 +466,7 @@ IMPLEMENTED: Final[frozenset[Capability]] = frozenset(
         Capability.LOTS_PROMOTE,
         Capability.LOTS_ACTIVATE,
         Capability.LOTS_DEACTIVATE,
+        Capability.CHATS_MARK_READ,
     }
 )
 
@@ -876,6 +877,115 @@ class Engine:
                 for one in Capability
             },
         )
+
+    def mark_chat_read(self, node_id: str) -> Generator[Request, Reply, None]:
+        """Помечает диалог прочитанным.
+
+        ОТДЕЛЬНОГО ЗАПРОСА У ЭТОГО ДЕЙСТВИЯ НЕТ, и три недели мы ждали его
+        наблюдения впустую. Диалог помечается прочитанным тем, что его узел
+        попал в ПОДПИСКУ обычного опроса канала обновлений: страница, открыв
+        переписку, опрашивает канал с подпиской на неё, и подписка эта и есть
+        всё действие.
+
+        ЧТО ЗДЕСЬ НАШЕ НАБЛЮДЕНИЕ, А ЧТО ЧУЖОЕ. Наше - форма запроса: страница
+        при открытом диалоге вправду опрашивает канал с объектом chat_node и
+        пустым содержимым, и это лежит в наших записях. Чужое - сам вывод, что
+        именно подписка снимает пометку непрочитанного; проверить его мы не
+        могли, потому что состояние непрочитанности видно у ПОКУПАТЕЛЯ, а не у
+        нас.
+
+        Отсюда согласие: происхождение объявлено у операции, и без явного
+        включения возможности она не отправляет ничего.
+
+        ОТМЕНИТЬ НЕЛЬЗЯ. Пометить диалог непрочитанным обратно площадка не
+        предлагает нигде, и потому операция объявлена небезопасной.
+
+        Args:
+            node_id (str): Числовой идентификатор диалога.
+
+        Yields:
+            Request: Просьбы о вводе-выводе.
+
+        Returns:
+            None: Подтверждения площадка не даёт, и выдумывать его нечем.
+
+        Raises:
+            ValidationError: Если идентификатор непригоден.
+            UsageError: Если согласия на непроверенный запрос не дано.
+            FunoraError: Если страница диалога непригодна.
+        """
+        cleaned = node_id.strip()
+        if not cleaned or not cleaned.isalnum():
+            raise ValidationError(
+                "идентификатор диалога обязан состоять из букв и цифр, получено "
+                f"{len(cleaned)} знаков иного вида. Проверка идёт до сети"
+            )
+
+        capability = Capability.CHATS_MARK_READ
+        contract = OPERATIONS["chats.mark_read"]
+        if contract.request_provenance == "third_party_report" and (
+            capability not in self._state.opted_in
+        ):
+            raise UsageError(
+                f"операция chats.mark_read стоит на непроверенном нами выводе и "
+                f"без согласия не отправляется. Непроверено вот что: "
+                f"{contract.provenance_rests_on} Источник: "
+                f"{contract.provenance_source} Если вы понимаете цену - включите "
+                f"возможность {capability.value} явно"
+            )
+
+        observation = yield from self.fetch_ok(capability, THREAD_PATH.format(node_id=cleaned))
+        context = parse_runner_context(observation.html)
+        if not context.can_send:
+            raise ProtocolChangedError(
+                "страница диалога не годится для обращения к каналу: "
+                f"{[one.code for one in context.defects]}"
+            )
+
+        token = context.csrf_token
+        if token is None:  # pragma: no cover - can_send уже это проверил
+            raise ProtocolChangedError("защитного токена на странице нет")
+
+        # СОДЕРЖИМОЕ ПУСТОЕ, И ПОЛЯ request НЕТ ВОВСЕ. Это ровно то обращение,
+        # которое делает сама страница при открытой переписке: опрос без
+        # действия. Положить сюда действие значило бы отправить сообщение.
+        data = {
+            "node": context.node_name.value,
+            "last_message": int(context.last_message.value),
+            "content": "",
+        }
+
+        yield from self.spend_budget(_class_of(capability), cost=1.0)
+        reply = yield Submit(
+            RUNNER_PATH,
+            {
+                "objects": json.dumps(
+                    [
+                        {
+                            "type": "chat_node",
+                            "id": context.node_name.value,
+                            "tag": context.chat_tag.value,
+                            "data": data,
+                        }
+                    ],
+                    ensure_ascii=False,
+                ),
+                "csrf_token": token.reveal(),
+            },
+            dict(RUNNER_HEADERS),
+        )
+        if not isinstance(reply, Observation):
+            raise TypeError(f"на просьбу Submit ожидалось наблюдение, получено {type(reply)}")
+
+        # ПОДТВЕРЖДЕНИЯ НЕТ, И ВЫДУМЫВАТЬ ЕГО НЕЧЕМ. Ответ канала несёт состояние
+        # подписанных объектов, а пометка непрочитанного видна у ПОКУПАТЕЛЯ.
+        # Возвращать отсюда «готово» значило бы сообщить об исполнении, ничего о
+        # нём не зная, - поэтому не возвращается ничего.
+        #
+        # Возможность отмечается доступной по одному положительному признаку:
+        # обращение к каналу состоялось и разобралось.
+        self._state.capabilities[capability] = CapabilityState.SUPPORTED
+        return None
 
     def send_text(
         self, node_id: str, text: str, *, declared_cold: bool = False
