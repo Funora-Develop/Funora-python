@@ -253,6 +253,7 @@ def test_every_returned_field_is_described() -> None:
     """
     from funora._calc import PaymentMethod, PriceCalculation
     from funora._chats import ChatListEntry
+    from funora._currency_switch import CurrencySwitch
     from funora._lot_form import LotForm
     from funora._market import MarketOffer
     from funora._orders import OrderListEntry
@@ -276,6 +277,7 @@ def test_every_returned_field_is_described() -> None:
         (ReviewResult, "review-result"),
         (PriceCalculation, "price-calculation"),
         (PaymentMethod, "payment-method"),
+        (CurrencySwitch, "currency-switch"),
     )
     for cls, name in pairs:
         declared = set(_schema(name).get("properties", {}))
@@ -316,6 +318,7 @@ def test_unbuildable_models_say_so() -> None:
         # Собираются с 31.08.2026: funora._calc.PriceCalculation и PaymentMethod.
         "price-calculation",
         "payment-method",
+        "currency-switch",
         "review-result",
         "market-page",
         # Собираются с 31.08.2026: funora._snapshot.MarketSnapshot и

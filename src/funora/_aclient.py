@@ -31,6 +31,7 @@ from ._calc import PriceCalculation
 from ._catalog import CatalogPage
 from ._chats import ChatsPage
 from ._chips import ChipsPage
+from ._currency_switch import CurrencySwitch
 from ._engine import Deliver, Engine, Fetch, Pause, Reply, Request, Submit, Upload
 from ._host import host_of
 from ._identity import REGISTRY
@@ -394,6 +395,29 @@ class AsyncAccountService:
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
         return await self._client.run(self._client.engine.read_balance())
+
+    async def switch_currency(self, currency: str) -> CurrencySwitch:
+        """Меняет валюту, в которой площадка показывает суммы.
+
+        ПОБОЧНОЕ ДЕЙСТВИЕ ГЛОБАЛЬНО: после смены КАЖДАЯ страница отдаёт другие
+        числа. Снимки рынка, снятые по разные стороны от смены, сравнивать
+        нельзя - сменившейся окажется каждая цена.
+
+        ТРЕБУЕТ ЯВНОГО СОГЛАСИЯ.
+
+        Args:
+            currency (str): Код валюты по ISO 4217. Регистр не важен.
+
+        Returns:
+            CurrencySwitch: Исход. Вернула площадка окно подтверждения - смены
+            НЕ БЫЛО, и подтверждать за вас реализация не станет.
+
+        Raises:
+            ValidationError: Если код не из наблюдённого набора.
+            UsageError: Если согласия не дано.
+            FunoraError: Если страница либо ответ непригодны.
+        """
+        return await self._client.run(self._client.engine.switch_currency(currency))
 
 
 class AsyncLotsService:
