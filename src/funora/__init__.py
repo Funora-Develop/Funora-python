@@ -22,6 +22,7 @@ from __future__ import annotations
 from ._account import BalancePage, Transaction
 from ._aclient import AsyncChatsService, AsyncClient, AsyncOrdersService
 from ._budget import Budget, Reservation
+from ._calc import PaymentMethod, PriceCalculation
 from ._catalog import CatalogGame, CatalogPage
 from ._chats import ChatListEntry, ChatsPage, parse_chats_page
 from ._chips import ChipsOffer, ChipsPage
@@ -184,6 +185,8 @@ __all__ = [
     "ReviewsPage",
     "Review",
     "OwnLotsPage",
+    "PaymentMethod",
+    "PriceCalculation",
     "RaiseResult",
     "ReviewResult",
     "OwnLot",

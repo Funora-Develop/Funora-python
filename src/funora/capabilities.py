@@ -161,6 +161,10 @@ class Capability(StrEnum):
     LOTS_FORM = "lots.form"
     #: Чтение собственных предложений продавца.
     LOTS_LIST_OWN = "lots.list_own"
+    #: Расчёт цены покупателя по цене продавца.
+    LOTS_CALCULATE_PRICES = "lots.calculate_prices"
+    #: Расчёт цены покупателя на рынке по количеству.
+    CHIPS_CALCULATE_PRICES = "chips.calculate_prices"
     #: Включение лота в выдачу.
     LOTS_ACTIVATE = "lots.activate"
     #: Снятие лота с выдачи.
@@ -214,6 +218,8 @@ CAPABILITY_SOURCE: Final[dict[Capability, str]] = {
     Capability.CHIPS_OFFERS: "probe",
     Capability.LOTS_FORM: "probe",
     Capability.LOTS_LIST_OWN: "static",
+    Capability.LOTS_CALCULATE_PRICES: "probe",
+    Capability.CHIPS_CALCULATE_PRICES: "probe",
     Capability.LOTS_ACTIVATE: "probe",
     Capability.LOTS_DEACTIVATE: "probe",
     Capability.LOTS_UPDATE_PRICE: "probe",
@@ -249,6 +255,8 @@ CAPABILITY_INITIAL: Final[dict[Capability, CapabilityState]] = {
     Capability.CHIPS_OFFERS: CapabilityState.UNKNOWN,
     Capability.LOTS_FORM: CapabilityState.UNKNOWN,
     Capability.LOTS_LIST_OWN: CapabilityState.SUPPORTED,
+    Capability.LOTS_CALCULATE_PRICES: CapabilityState.UNKNOWN,
+    Capability.CHIPS_CALCULATE_PRICES: CapabilityState.UNKNOWN,
     Capability.LOTS_ACTIVATE: CapabilityState.UNKNOWN,
     Capability.LOTS_DEACTIVATE: CapabilityState.UNKNOWN,
     Capability.LOTS_UPDATE_PRICE: CapabilityState.UNKNOWN,

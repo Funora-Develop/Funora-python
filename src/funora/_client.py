@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Final, TypeVar
 
 from ._account import BalancePage
 from ._budget import Budget
+from ._calc import PriceCalculation
 from ._catalog import CatalogPage
 from ._chats import ChatsPage
 from ._chips import ChipsPage
@@ -603,6 +604,26 @@ class LotsService:
             )
         )
 
+    def calculate_prices(self, node_id: str, price: str) -> PriceCalculation:
+        """Считает, сколько заплатит покупатель за названную цену продавца.
+
+        ЦЕНА ПРОДАВЦА И ЦЕНА ПОКУПАТЕЛЯ - РАЗНЫЕ ВЕЛИЧИНЫ: между ними комиссия
+        площадки, и зависит она от способа оплаты.
+
+        Args:
+            node_id (str): Идентификатор раздела.
+            price (str): Цена продавца, как её пишут в поле.
+
+        Returns:
+            PriceCalculation: Способы оплаты и цены покупателя при них. Цены
+            текстом: разделитель дробной части нам не наблюдался.
+
+        Raises:
+            ValidationError: Если цена пуста либо раздел непригоден.
+            FunoraError: Если ответ непригоден.
+        """
+        return self._client.run(self._client.engine.calculate_prices(node_id=node_id, price=price))
+
 
 class MarketService:
     """Публичные предложения раздела.
@@ -669,6 +690,25 @@ class MarketService:
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
         return self._client.run(self._client.engine.read_chips(node_id))
+
+    def calculate_chip_prices(self, game_id: str, price: str) -> PriceCalculation:
+        """Считает цену покупателя на рынке по количеству.
+
+        ДОВОД ЗДЕСЬ - ИГРА, А НЕ РАЗДЕЛ, и это отличие от обычных лотов. У чипов
+        на странице лежат оба, и который ждёт площадка - мы не проверяли.
+
+        Args:
+            game_id (str): Идентификатор игры.
+            price (str): Цена продавца, как её пишут в поле.
+
+        Returns:
+            PriceCalculation: Способы оплаты и цены покупателя при них.
+
+        Raises:
+            ValidationError: Если цена пуста либо игра непригодна.
+            FunoraError: Если ответ непригоден.
+        """
+        return self._client.run(self._client.engine.calculate_prices(game_id=game_id, price=price))
 
 
 class CatalogService:

@@ -253,6 +253,26 @@ OPERATIONS: Final[dict[str, Operation]] = {
             "funora.transport",
         ),
     ),
+    "chips.calculate_prices": Operation(
+        name="chips.calculate_prices",
+        capability="chips.calculate_prices",
+        safety=Safety.SAFE,
+        request_class="interactive",
+        returns="PriceCalculation",
+        errors=(
+            "funora.capability.unsupported",
+            "funora.auth.session_expired",
+            "funora.protocol.changed",
+            "funora.transport",
+        ),
+        request_provenance="third_party_report",
+        provenance_source="FunPayAPI (бот FunPayCardinal), account.py, calc.",
+        provenance_rests_on=(
+            "Адрес, имена полей запроса и ключи ответа. НАБЛЮДЁН НАМИ только итог расчёта на "
+            "странице правки лота - таблица .table-buyers-prices, которую эта же точка и "
+            "перерисовывает - но на странице ЛОТА, не чипов. Здесь непроверено и то, и другое."
+        ),
+    ),
     "chips.offers": Operation(
         name="chips.offers",
         capability="chips.offers",
@@ -284,6 +304,26 @@ OPERATIONS: Final[dict[str, Operation]] = {
             "Вид запроса при СНЯТОМ флажке active. Оба наших снимка сохранения сняты с "
             "отмеченным; сторонний источник шлёт поле всегда, при выключенном лоте - пустой "
             "строкой, тогда как наше рассуждение говорило, что снятый флажок не уходит вовсе."
+        ),
+    ),
+    "lots.calculate_prices": Operation(
+        name="lots.calculate_prices",
+        capability="lots.calculate_prices",
+        safety=Safety.SAFE,
+        request_class="interactive",
+        returns="PriceCalculation",
+        errors=(
+            "funora.capability.unsupported",
+            "funora.auth.session_expired",
+            "funora.protocol.changed",
+            "funora.transport",
+        ),
+        request_provenance="third_party_report",
+        provenance_source="FunPayAPI (бот FunPayCardinal), account.py, calc.",
+        provenance_rests_on=(
+            "Адрес, имена полей запроса и ключи ответа. НАБЛЮДЁН НАМИ только итог расчёта на "
+            "странице правки лота - таблица .table-buyers-prices, которую эта же точка и "
+            "перерисовывает. То есть мы видели, ЧТО она возвращает, и не видели, КАК её спросить."
         ),
     ),
     "lots.deactivate": Operation(
