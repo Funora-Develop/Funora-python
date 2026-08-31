@@ -1,0 +1,45 @@
+{
+  "captured_at": "2026-08-31T07:17:07.669Z",
+  "collector_build": "ba78118e",
+  "records": [
+    {
+      "method": "POST",
+      "origin": "https://funpay.com",
+      "path": "/lots/raise",
+      "query": [],
+      "request": {
+        "fields": {
+          "game_id": "T3:d",
+          "node_id": "T4:d"
+        },
+        "kind": "form"
+      },
+      "request_headers": [
+        "accept",
+        "content-type",
+        "x-requested-with"
+      ],
+      "response": {
+        "fields": {
+          "error": "boolean",
+          "msg": "T25:cps",
+          "unlock_at": "T20:adp",
+          "wait": "int"
+        },
+        "kind": "json"
+      },
+      "response_headers": [
+        "cache-control",
+        "content-encoding",
+        "content-type",
+        "date",
+        "expires",
+        "pragma",
+        "server",
+        "strict-transport-security",
+        "vary"
+      ],
+      "status": 200
+    }
+  ]
+}
