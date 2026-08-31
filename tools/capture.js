@@ -7,7 +7,7 @@
  *
  * Что умеет:
  *   funora.page('имя')  - отдать структуру страницы;
- *   funora.currency('метка') - собрать символы валют без сумм;
+ *   funora.currency('метка') - собрать символы валют без сумм, коды и их НОСИТЕЛЕЙ;
  *   funora.watch()      - начать запись ФОРМЫ запросов (не значений);
  *   funora.probe()      - один опрос канала с пустой подпиской;
  *   funora.probeTag()   - опрос канала с ВЫДУМАННОЙ меткой: отвечает на
@@ -920,7 +920,34 @@
         }
         // Код сам по себе тоже записывается: страница, где валюта названа
         // кодом и не показана знаком, иначе выглядела бы пустой.
-        for (const one of codes) seen[one] = (seen[one] || 0) + 1
+        //
+        // ЗАПИСЫВАЕТСЯ И НОСИТЕЛЬ, а не только счёт. Прежде отсюда уходило
+        // «RUB: 3» - три упоминания где-то на странице, - и по такой записи
+        // прочесть код разбором нельзя: неизвестно, откуда его брать.
+        //
+        // Носитель здесь и есть ответ на вопрос, ради которого сбор делается.
+        // Знак валюты страница показывает, код называет; пары в одном узле не
+        // встретилось ни разу, и связать их можно только через место.
+        for (const one of codes) {
+          if (!seen[one]) seen[one] = { count: 0, near: [] }
+          seen[one].count += 1
+          const holder = node.parentElement
+          if (holder && seen[one].near.length < 3) {
+            seen[one].near.push({
+              tag: holder.tagName.toLowerCase(),
+              class: holder.className || '',
+              attrs: [...holder.attributes].map((one) => one.name),
+              // Сколько элементов страницы носят тот же набор классов. По
+              // этому числу видно, годится ли класс селектором: единица
+              // означает, что носитель опознаётся однозначно.
+              same_class_count: holder.className
+                ? document.querySelectorAll(
+                    holder.className.split(' ').filter(Boolean).map((one) => '.' + one).join(''),
+                  ).length
+                : 0,
+            })
+          }
+        }
 
         money.lastIndex = 0
         let match = money.exec(text)
