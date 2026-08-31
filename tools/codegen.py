@@ -2269,6 +2269,63 @@ def render_operations(spec: Path) -> str:
     return "".join(out)
 
 
+def _query_params(spec: Path) -> dict[str, str]:
+    """Собирает имена параметров строки запроса из файлов извлечения.
+
+    Четвёртая форма reads - «?имя» - объявляет, что значение лежит параметром
+    внутри того адреса, который назвал узел. Имя параметра выбирает площадка, и
+    договор это ровно такой же, как имя атрибута: живя литералом в коде, оно
+    разошлось бы с объявлением молча.
+
+    Args:
+        spec (Path): Корень рабочей копии Funora-spec.
+
+    Returns:
+        dict[str, str]: Имена параметров по ключу, выведенному из пути.
+
+    Raises:
+        SystemExit: Если два разных имени претендуют на один ключ.
+    """
+    found: dict[str, str] = {}
+
+    def walk(node: Any, path: str, origin: str) -> None:
+        """Обходит документ, собирая имена параметров.
+
+        Args:
+            node (Any): Узел документа.
+            path (str): Путь до узла.
+            origin (str): Имя файла без расширения.
+
+        Returns:
+            None
+        """
+        if isinstance(node, dict):
+            reads = node.get("reads")
+            if isinstance(reads, str) and reads.startswith("?"):
+                key = f"{origin}.{path}" if path else origin
+                name = reads[1:]
+                if found.get(key, name) != name:
+                    raise SystemExit(
+                        f"spec/extraction: ключ {key} назван двумя параметрами: "
+                        f"{found[key]!r} и {name!r}"
+                    )
+                found[key] = name
+            for key, value in node.items():
+                walk(value, f"{path}.{key}" if path else key, origin)
+        elif isinstance(node, list):
+            for index, value in enumerate(node):
+                walk(value, f"{path}[{index}]", origin)
+
+    # Перебор идёт по SOURCES, а не по каталогу: файл, прочитанный мимо
+    # реестра, оказывается вне учёта покрытия. Ровно тем же перебором идёт
+    # сборщик имён атрибутов.
+    for relative in sorted(SOURCES):
+        if not relative.startswith("spec/extraction/"):
+            continue
+        walk(_load(spec, relative), "", Path(relative).stem)
+    return found
+
+
 def _attributes(spec: Path) -> dict[str, str]:
     """Собирает имена атрибутов разметки из файлов извлечения.
 
@@ -2605,6 +2662,7 @@ def render_extraction(spec: Path) -> str:
         "CURRENCY_BY_SYMBOL",
         "AMBIGUOUS_CURRENCY_SYMBOLS",
         "ATTRIBUTES",
+        "QUERY_PARAMS",
         "SELECTORS",
         "SELECTOR_GROUPS",
     ):
@@ -2684,6 +2742,7 @@ def render_extraction(spec: Path) -> str:
     out.append("}\n")
 
     attributes = _attributes(spec)
+    query_params = _query_params(spec)
     out.append("\n\n#: Имена атрибутов разметки, объявленные спецификацией.\n")
     out.append("#:\n")
     out.append("#: Имя атрибута - такой же договор с площадкой, как и селектор, и\n")
@@ -2695,6 +2754,19 @@ def render_extraction(spec: Path) -> str:
     out.append("ATTRIBUTES: Final[dict[str, str]] = {\n")
     for key in sorted(attributes):
         out.append(f'    "{key}": {_literal(attributes[key])},\n')
+    out.append("}\n")
+
+    out.append("\n\n#: Имена параметров строки запроса, объявленные спецификацией.\n")
+    out.append("#:\n")
+    out.append("#: Четвёртая форма reads - «?имя» - объявляет, что значение лежит\n")
+    out.append("#: параметром внутри объявленного адреса. Заведена, когда формат\n")
+    out.append("#: скелета v9 перестал маскировать имена параметров: до него\n")
+    out.append("#: проверить такое объявление по снимку было нечем.\n")
+    out.append("#:\n")
+    out.append("#: Идентификатор ЧУЖОГО предложения лежит ровно там и больше нигде.\n")
+    out.append("QUERY_PARAMS: Final[dict[str, str]] = {\n")
+    for key in sorted(query_params):
+        out.append(f'    "{key}": {_literal(query_params[key])},\n')
     out.append("}\n")
 
     out.append("\n\n#: Перечни селекторов, объявленные спецификацией.\n")

@@ -102,6 +102,7 @@ nav:
       - guide/sending.md
       - guide/bot.md
       - guide/lots.md
+      - guide/market.md
       - guide/account.md
   - Долгая работа:
       - guide/events.md

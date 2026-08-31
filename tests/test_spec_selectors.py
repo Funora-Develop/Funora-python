@@ -252,7 +252,30 @@ def test_declared_absence_holds(entry: dict[str, object]) -> None:
     )
 
 
-def _attribute_claims() -> list[tuple[str, str, str, tuple[str, ...]]]:
+def _reads(node: object) -> str:
+    """Говорит, ЧТО именно роль читает из атрибута.
+
+    Пустая строка означает «атрибут целиком». Прочее - объявленная форма: имя
+    параметра строки запроса либо путь до ключа внутри JSON.
+
+    Различие существенно для запрета двум ролям читать один атрибут. Запрет
+    стоит на доводе «две роли всегда дадут одно значение»; для ролей, читающих
+    РАЗНЫЕ куски одного атрибута, довод неверен - и запрет превратился бы в
+    запрет объявлять идентификатор предложения рядом со ссылкой на него.
+
+    Аргументы:
+        node (object): узел объявления.
+
+    Возвращает:
+        str: объявленная форма чтения либо пустая строка.
+    """
+    if not isinstance(node, dict):
+        return ""
+    raw = node.get("reads")
+    return raw if isinstance(raw, str) and not raw.startswith("@") and raw != "text" else ""
+
+
+def _attribute_claims() -> list[tuple[str, str, str, tuple[str, ...], str]]:
     """Собирает объявленные имена атрибутов вместе с носителем и снимками.
 
     Носитель ищется рядом, а не сверху. Блок ``attributes`` объявлен СОСЕДОМ
@@ -275,7 +298,7 @@ def _attribute_claims() -> list[tuple[str, str, str, tuple[str, ...]]]:
 
     import yaml
 
-    out: list[tuple[str, str, str, tuple[str, ...]]] = []
+    out: list[tuple[str, str, str, tuple[str, ...], str]] = []
 
     def snapshots(node: object) -> tuple[str, ...]:
         """Приводит поле свидетельства к набору имён снимков.
@@ -327,7 +350,7 @@ def _attribute_claims() -> list[tuple[str, str, str, tuple[str, ...]]]:
                 here = f"{path}.{key}" if path else key
                 if (key == "attribute" or key.endswith("_attribute")) and isinstance(value, str):
                     holder = str(node.get("selector") or "")
-                    out.append((f"{origin}.{here}", value, holder, snapshots(node)))
+                    out.append((f"{origin}.{here}", value, holder, snapshots(node), _reads(node)))
                     continue
                 if key == "attributes" and isinstance(value, dict):
                     holder, evidence = carrier(node)
@@ -341,6 +364,7 @@ def _attribute_claims() -> list[tuple[str, str, str, tuple[str, ...]]]:
                                 str(body["name"]),
                                 str(body.get("selector") or holder),
                                 own,
+                                _reads(body),
                             )
                         )
                     continue
@@ -363,7 +387,9 @@ ATTRIBUTE_CLAIMS = _attribute_claims()
     ATTRIBUTE_CLAIMS,
     ids=[f"{one[0]} -> {one[1]}" for one in ATTRIBUTE_CLAIMS],
 )
-def test_declared_attribute_exists_in_fixture(claim: tuple[str, str, str, str]) -> None:
+def test_declared_attribute_exists_in_fixture(
+    claim: tuple[str, str, str, tuple[str, ...], str],
+) -> None:
     """Проверяет, что объявленное имя атрибута вправду есть на снимке.
 
     Имя атрибута - такой же договор с площадкой, как и селектор: разбор списка
@@ -381,7 +407,7 @@ def test_declared_attribute_exists_in_fixture(claim: tuple[str, str, str, str]) 
     Returns:
         None
     """
-    key, name, holder, evidence = claim
+    key, name, holder, evidence, _reads_form = claim
 
     assert evidence, (
         f"{key}: имя атрибута объявлено без свидетельства. Наблюдение без "
@@ -454,9 +480,13 @@ def test_declared_attributes_do_not_share_a_name() -> None:
         None
     """
     seen: dict[str, str] = {}
-    for key, name, _holder, _evidence in ATTRIBUTE_CLAIMS:
+    for key, name, _holder, _evidence, reads in ATTRIBUTE_CLAIMS:
         block = key.rsplit(".", 1)[0]
-        where = f"{block}:{name}"
+        # Способ чтения входит в ключ. Довод запрета - «две роли всегда дадут
+        # одно значение» - верен для двух ролей, читающих атрибут ЦЕЛИКОМ, и
+        # неверен для роли, читающей кусок: ссылка на предложение и
+        # идентификатор внутри её строки запроса не совпадают никогда.
+        where = f"{block}:{name}:{reads}"
         assert where not in seen, (
             f"атрибут {name!r} объявлен и у «{seen[where]}», и у «{key}». Две "
             "роли, читающие один атрибут, всегда дают одно значение: их "

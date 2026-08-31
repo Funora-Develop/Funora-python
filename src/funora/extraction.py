@@ -28,6 +28,7 @@ __all__ = [
     "CURRENCY_BY_SYMBOL",
     "AMBIGUOUS_CURRENCY_SYMBOLS",
     "ATTRIBUTES",
+    "QUERY_PARAMS",
     "SELECTORS",
     "SELECTOR_GROUPS",
 ]
@@ -244,6 +245,7 @@ ATTRIBUTES: Final[dict[str, str]] = {
     "market.markers.online.attribute": "data-online",
     "market.rows.attributes.filter_type": "data-f-type",
     "market.rows.attributes.offer_href": "href",
+    "market.rows.attributes.offer_id": "href",
     "market.rows.attributes.server_id": "data-server",
     "market.seller_trap.attribute": "data-user",
     "order.chat.full_chat_link.attributes.chat_href": "href",
@@ -272,6 +274,19 @@ ATTRIBUTES: Final[dict[str, str]] = {
     "updates.positions.attributes.last_message": "data-node-msg",
     "updates.positions.attributes.own": "data-user-msg",
     "updates.tags.carrier.attributes.orders_tag": "data-orders",
+}
+
+
+#: Имена параметров строки запроса, объявленные спецификацией.
+#:
+#: Четвёртая форма reads - «?имя» - объявляет, что значение лежит
+#: параметром внутри объявленного адреса. Заведена, когда формат
+#: скелета v9 перестал маскировать имена параметров: до него
+#: проверить такое объявление по снимку было нечем.
+#:
+#: Идентификатор ЧУЖОГО предложения лежит ровно там и больше нигде.
+QUERY_PARAMS: Final[dict[str, str]] = {
+    "market.rows.attributes.offer_id": "id",
 }
 
 
