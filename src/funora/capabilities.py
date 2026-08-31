@@ -187,6 +187,10 @@ class Capability(StrEnum):
     CHATS_SEND_IMAGE = "chats.send_image"
     #: Отметка переписки прочитанной.
     CHATS_MARK_READ = "chats.mark_read"
+    #: Написание отзыва к заказу либо ответа на чужой.
+    REVIEWS_LEAVE = "reviews.leave"
+    #: Снятие своего отзыва либо ответа.
+    REVIEWS_REMOVE = "reviews.remove"
     #: Чтение отзывов с профиля продавца.
     REVIEWS_GET = "reviews.get"
     #: Умеет ли адаптер распознавать системные тексты на той локали, которую площадка отдаёт
@@ -223,6 +227,8 @@ CAPABILITY_SOURCE: Final[dict[Capability, str]] = {
     Capability.CHATS_SEND_TEXT: "static",
     Capability.CHATS_SEND_IMAGE: "probe",
     Capability.CHATS_MARK_READ: "probe",
+    Capability.REVIEWS_LEAVE: "probe",
+    Capability.REVIEWS_REMOVE: "probe",
     Capability.REVIEWS_GET: "probe",
     Capability.PROTOCOL_LOCALE: "static",
 }
@@ -256,6 +262,8 @@ CAPABILITY_INITIAL: Final[dict[Capability, CapabilityState]] = {
     Capability.CHATS_SEND_TEXT: CapabilityState.SUPPORTED,
     Capability.CHATS_SEND_IMAGE: CapabilityState.UNKNOWN,
     Capability.CHATS_MARK_READ: CapabilityState.UNKNOWN,
+    Capability.REVIEWS_LEAVE: CapabilityState.UNKNOWN,
+    Capability.REVIEWS_REMOVE: CapabilityState.UNKNOWN,
     Capability.REVIEWS_GET: CapabilityState.UNKNOWN,
     Capability.PROTOCOL_LOCALE: CapabilityState.SUPPORTED,
 }

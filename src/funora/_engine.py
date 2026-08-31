@@ -74,6 +74,14 @@ from ._price_audit import UNSAFE_PRICE_CHANGES_WITHOUT_AUDIT, PriceAudit, PriceC
 from ._raise import RAISE_PATH, RaiseResult, parse_raise
 from ._result import Defect, Severity
 from ._retry import RETRY_REASON_ATTR, plan_attempt
+from ._review_write import (
+    RATING_MAX,
+    RATING_MIN,
+    REVIEW_PATH,
+    REVIEW_REMOVE_PATH,
+    ReviewResult,
+    parse_review_response,
+)
 from ._reviews import ReviewsPage, parse_reviews_page
 from ._runner import (
     Anchor,
@@ -90,7 +98,7 @@ from ._thread import Thread, parse_thread
 from ._transport import Observation, TransportSettings
 from ._verdicts import error_for
 from ._watch import Router, StepResult, health_changed, incomplete, loss, primed
-from ._whoami import Account, CapabilityProfile, SessionHealth, parse_account
+from ._whoami import Account, CapabilityProfile, SessionHealth, parse_account, parse_app_data
 from .budget import (
     COUNTS_REDIRECTS,
     COUNTS_RETRIES,
@@ -506,6 +514,8 @@ IMPLEMENTED: Final[frozenset[Capability]] = frozenset(
         Capability.LOTS_DEACTIVATE,
         Capability.CHATS_MARK_READ,
         Capability.CHATS_SEND_IMAGE,
+        Capability.REVIEWS_LEAVE,
+        Capability.REVIEWS_REMOVE,
     }
 )
 
@@ -1925,6 +1935,164 @@ class Engine:
             else CapabilityState.DEGRADED
         )
         return page
+
+    def _write_review(
+        self, order_id: str, *, rating: int | None, body: str
+    ) -> Generator[Request, Reply, ReviewResult]:
+        """Пишет либо снимает отзыв - одним запросом на обе задачи.
+
+        ОДНА ТОЧКА НА ТРИ ДЕЙСТВИЯ у самой площадки: написать, ПРАВИТЬ и
+        ответить на чужой. Различает их она сама. Здесь же одна дорога на две
+        наши операции по той причине, по которой видимость лота тоже одна:
+        запрос буквально тот же, разница в наличии полей.
+
+        ОТКУДА БЕРУТСЯ ДОВОДЫ. Со страницы заказа, и это наше наблюдение: номер
+        лежит в data-order у виджета отзыва, собственный идентификатор - в
+        настройках страницы. Просить их у вызывающего значило бы дать ему
+        подставить ЧУЖОЙ идентификатор автора.
+
+        Args:
+            order_id (str): Номер заказа.
+            rating (int | None): Оценка либо None для снятия.
+            body (str): Текст отзыва. При снятии не отправляется.
+
+        Yields:
+            Request: Просьбы о вводе-выводе.
+
+        Returns:
+            ReviewResult: Исход с признаком подтверждения.
+
+        Raises:
+            ValidationError: Если номер либо оценка непригодны.
+            UsageError: Если согласия на непроверенный запрос не дано.
+            FunoraError: Если страница либо ответ непригодны.
+        """
+        cleaned = order_id.strip()
+        if not cleaned or not cleaned.isalnum():
+            raise ValidationError(
+                "номер заказа обязан состоять из букв и цифр, получено "
+                f"{len(cleaned)} знаков иного вида. Проверка идёт до сети"
+            )
+        if rating is not None and not RATING_MIN <= rating <= RATING_MAX:
+            raise ValidationError(
+                f"оценка {rating} вне наблюдённого предела {RATING_MIN}..{RATING_MAX}. "
+                "Что площадка сделает с иной, никто не видел, и отправлять "
+                "непроверенное мы не станем"
+            )
+
+        if rating is None:
+            capability = Capability.REVIEWS_REMOVE
+            name = "reviews.remove"
+            path = REVIEW_REMOVE_PATH
+        else:
+            capability = Capability.REVIEWS_LEAVE
+            name = "reviews.leave"
+            path = REVIEW_PATH
+
+        contract = OPERATIONS[name]
+        if contract.request_provenance == "third_party_report" and (
+            capability not in self._state.opted_in
+        ):
+            raise UsageError(
+                f"операция {name} стоит на непроверенном нами запросе и без "
+                f"согласия не отправляется. Непроверено вот что: "
+                f"{contract.provenance_rests_on} Источник: "
+                f"{contract.provenance_source} Если вы понимаете цену ошибки - "
+                f"включите возможность {capability.value} явно"
+            )
+
+        observation = yield from self.fetch_ok(capability, ORDER_PATH.format(order_id=cleaned))
+        settings = parse_app_data(observation.html)
+        token = settings.csrf_token
+        if token is None:
+            raise ProtocolChangedError(
+                "на странице заказа нет защитного токена, и собрать запрос отзыва не из чего"
+            )
+        own = settings.user_id
+        if not own.is_observed:
+            raise ProtocolChangedError(
+                "со страницы заказа не читается собственный идентификатор. "
+                "Подставить сюда чужой значило бы написать отзыв от чужого имени"
+            )
+        # Номер заказа берётся ИЗ ЗАПРОСА, а не со страницы: запрос уходил по
+        # нему же. Взять его со страницы значило бы сверять площадку с ней самой.
+        fields = {
+            "authorId": own.value,
+            "orderId": cleaned,
+            "csrf_token": token.reveal(),
+        }
+        if rating is not None:
+            fields["rating"] = str(rating)
+            fields["text"] = body
+
+        yield from self.spend_budget(_class_of(capability), cost=1.0)
+        reply = yield Submit(path, fields, dict(RUNNER_HEADERS))
+        if not isinstance(reply, Observation):
+            raise TypeError(f"на просьбу Submit ожидалось наблюдение, получено {type(reply)}")
+
+        try:
+            payload = json.loads(reply.html)
+        except ValueError as exc:
+            raise ProtocolChangedError(
+                "ответ на отзыв не разобрался как JSON. Что случилось с отзывом - "
+                "неизвестно; прочитайте заказ и посмотрите"
+            ) from exc
+
+        result = parse_review_response(
+            payload, expected_rating=rating, observed_at=datetime.now(UTC)
+        )
+        # Состояние возможности выставляется по РАЗОБРАННОМУ ответу, а не по
+        # подтверждению: неподтверждённый исход говорит о нашем чтении, а не о
+        # праве аккаунта. Право есть - ответ пришёл и разобрался.
+        self._state.capabilities[capability] = CapabilityState.SUPPORTED
+        return result
+
+    def leave_review(
+        self, order_id: str, *, rating: int, text: str = ""
+    ) -> Generator[Request, Reply, ReviewResult]:
+        """Пишет отзыв к заказу либо правит уже написанный.
+
+        Args:
+            order_id (str): Номер заказа.
+            rating (int): Оценка от одного до пяти.
+            text (str): Текст отзыва. Пустой допустим: оценка без слов.
+
+        Yields:
+            Request: Просьбы о вводе-выводе.
+
+        Returns:
+            ReviewResult: Исход с признаком подтверждения.
+
+        Raises:
+            ValidationError: Если номер либо оценка непригодны.
+            UsageError: Если согласия не дано.
+            FunoraError: Если страница либо ответ непригодны.
+        """
+        return (yield from self._write_review(order_id, rating=rating, body=text))
+
+    def remove_review(self, order_id: str) -> Generator[Request, Reply, ReviewResult]:
+        """Снимает свой отзыв к заказу.
+
+        ПРЕЖНЕГО ТЕКСТА НИКТО НЕ ВЕРНЁТ. Прочитать отзыв перед снятием - дело
+        вызывающего; сохранять его здесь мы не станем, потому что хранить чужой
+        текст без спроса хуже, чем потерять его по просьбе.
+
+        Args:
+            order_id (str): Номер заказа.
+
+        Yields:
+            Request: Просьбы о вводе-выводе.
+
+        Returns:
+            ReviewResult: Исход. Подтверждением служит ОТСУТСТВИЕ оценки в
+            перерисованном виджете.
+
+        Raises:
+            ValidationError: Если номер непригоден.
+            UsageError: Если согласия не дано.
+            FunoraError: Если страница либо ответ непригодны.
+        """
+        return (yield from self._write_review(order_id, rating=None, body=""))
 
     def read_order(self, order_id: str) -> Generator[Request, Reply, OrderView]:
         """Читает страницу одного заказа.

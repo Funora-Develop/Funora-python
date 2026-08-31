@@ -42,6 +42,7 @@ from ._own_lots import OwnLotsPage
 from ._poll import Schedule
 from ._proxies import DEFAULT_ACCOUNT, Proxy, ProxyPool
 from ._raise import RaiseResult
+from ._review_write import ReviewResult
 from ._reviews import ReviewsPage
 from ._runner import SendResult
 from ._secret import Secret, SecretProvider
@@ -136,6 +137,51 @@ class AsyncReviewsService:
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
         return await self._client.run(self._client.engine.read_reviews(user_id))
+
+    async def leave(self, order_id: str, *, rating: int, text: str = "") -> ReviewResult:
+        """Пишет отзыв к заказу либо правит уже написанный.
+
+        ТРЕБУЕТ ЯВНОГО СОГЛАСИЯ: состав полей запроса известен от независимой
+        реализации того же протокола. Отзыв виден покупателю и всем посетителям
+        профиля.
+
+        Args:
+            order_id (str): Номер заказа.
+            rating (int): Оценка от одного до пяти.
+            text (str): Текст отзыва. Пустой допустим.
+
+        Returns:
+            ReviewResult: Исход. Поле applied означает «подтверждено», а не
+            «получилось»: ложь требует посмотреть заказ, а не повторить вслепую.
+
+        Raises:
+            ValidationError: Если номер либо оценка непригодны.
+            UsageError: Если согласия не дано.
+            FunoraError: Если страница либо ответ непригодны.
+        """
+        return await self._client.run(
+            self._client.engine.leave_review(order_id, rating=rating, text=text)
+        )
+
+    async def remove(self, order_id: str) -> ReviewResult:
+        """Снимает свой отзыв к заказу.
+
+        ПРЕЖНЕГО ТЕКСТА НИКТО НЕ ВЕРНЁТ. Прочитайте отзыв прежде, если он вам
+        нужен: реализация его не сохраняет.
+
+        Args:
+            order_id (str): Номер заказа.
+
+        Returns:
+            ReviewResult: Исход. Подтверждением служит отсутствие оценки в
+            перерисованном виджете.
+
+        Raises:
+            ValidationError: Если номер непригоден.
+            UsageError: Если согласия не дано.
+            FunoraError: Если страница либо ответ непригодны.
+        """
+        return await self._client.run(self._client.engine.remove_review(order_id))
 
 
 class AsyncChatsService:

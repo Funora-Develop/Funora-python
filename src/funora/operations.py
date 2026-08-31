@@ -435,6 +435,52 @@ OPERATIONS: Final[dict[str, Operation]] = {
             "funora.transport",
         ),
     ),
+    "reviews.leave": Operation(
+        name="reviews.leave",
+        capability="reviews.leave",
+        safety=Safety.IDEMPOTENT,
+        request_class="automation",
+        returns="ReviewResult",
+        errors=(
+            "funora.capability.unsupported",
+            "funora.domain.not_found",
+            "funora.auth.session_expired",
+            "funora.transport",
+        ),
+        request_provenance="third_party_report",
+        provenance_source=(
+            "FunPayAPI (бот FunPayCardinal), account.py, send_review и delete_review."
+        ),
+        provenance_rests_on=(
+            "Состав полей запроса и форма ответа. Два поля из четырёх - номер заказа и "
+            "идентификатор автора - наблюдены НАМИ: они лежат атрибутами data-order и data-author "
+            "на странице заказа и уже читаются разбором. Не наблюдены имена полей запроса, адрес "
+            "и то, что приходит в ответ."
+        ),
+    ),
+    "reviews.remove": Operation(
+        name="reviews.remove",
+        capability="reviews.remove",
+        safety=Safety.IDEMPOTENT,
+        request_class="automation",
+        returns="ReviewResult",
+        errors=(
+            "funora.capability.unsupported",
+            "funora.domain.not_found",
+            "funora.auth.session_expired",
+            "funora.transport",
+        ),
+        request_provenance="third_party_report",
+        provenance_source=(
+            "FunPayAPI (бот FunPayCardinal), account.py, send_review и delete_review."
+        ),
+        provenance_rests_on=(
+            "Состав полей запроса и форма ответа. Два поля из четырёх - номер заказа и "
+            "идентификатор автора - наблюдены НАМИ: они лежат атрибутами data-order и data-author "
+            "на странице заказа и уже читаются разбором. Не наблюдены имена полей запроса, адрес "
+            "и то, что приходит в ответ."
+        ),
+    ),
     "session.health": Operation(
         name="session.health",
         capability="account.profile",
