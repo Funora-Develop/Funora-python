@@ -94,6 +94,8 @@ class RunnerContext:
             видно только по явному вызову reveal и в вывод не попадает.
         node_name (Observed[str]): Составное имя диалога. Идёт в поле node.
         node_id (Observed[str]): Числовой идентификатор диалога.
+        upload_size_max (Observed[int]): Предел размера выгружаемого файла,
+            объявленный площадкой на самой странице.
         chat_tag (Observed[str]): Метка подписки на диалог.
         bookmarks_tag (Observed[str]): Метка подписки на закладки.
         orders_tag (Observed[str]): Метка подписки на счётчики продаж.
@@ -106,6 +108,7 @@ class RunnerContext:
     csrf_token: Secret | None
     node_name: Observed[str]
     node_id: Observed[str]
+    upload_size_max: Observed[int]
     chat_tag: Observed[str]
     bookmarks_tag: Observed[str]
     orders_tag: Observed[str]
@@ -279,6 +282,7 @@ def parse_runner_context(html: str) -> RunnerContext:
         csrf_token=settings.csrf_token,
         node_name=node_name,
         node_id=node_id,
+        upload_size_max=settings.upload_size_max,
         chat_tag=chat_tag,
         bookmarks_tag=_attribute(widget, _BOOKMARKS_TAG, "bookmarks_tag"),
         orders_tag=_attribute(tree.css_first(_ORDERS_TAG_CARRIER), _ORDERS_TAG, "orders_tag"),

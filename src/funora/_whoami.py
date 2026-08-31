@@ -332,12 +332,19 @@ class AppData:
         csrf_token (Secret | None): Защитный токен. None, если не прочитан.
         user_id (Observed[str]): Собственный идентификатор из объекта.
         locale (Observed[str]): Метка языка из объекта.
+        upload_size_max (Observed[int]): Наибольший размер выгружаемого файла в
+            байтах, КАК ЕГО ОБЪЯВИЛА ПЛОЩАДКА.
+
+            Читается, а не выдумывается, и в этом весь смысл поля. Свой предел
+            отверг бы то, что площадка приняла бы, - и отверг бы молча, на
+            стороне вызывающего, которому нечего было бы возразить.
         defects (tuple[Defect, ...]): Замеченные повреждения.
     """
 
     csrf_token: Secret | None
     user_id: Observed[str]
     locale: Observed[str]
+    upload_size_max: Observed[int] = field(default_factory=lambda: Observed.missing("not_read"))
     defects: tuple[Defect, ...] = ()
 
 
@@ -361,6 +368,41 @@ def _json_field(data: dict[str, object], key: str, field_name: str) -> Observed[
         return Observed.missing(f"key_not_a_string:{field_name}")
     value = value.strip()
     return Observed.present(value) if value else Observed.empty("")
+
+
+def _upload_limit(parsed: dict[str, object]) -> Observed[int]:
+    """Читает объявленный площадкой предел размера файла.
+
+    ПОЛЕ НАШЛОСЬ 31.08.2026, и до того перечень ключей этого объекта числился
+    полным из пяти. Ключей шесть, и шестой - именно этот.
+
+    Аргументы:
+        parsed (dict[str, object]): Разобранный объект настроек.
+
+    Возвращает:
+        Observed[int]: Предел в байтах либо причина отсутствия.
+    """
+    options = parsed.get("uploadOptions")
+    if not isinstance(options, dict):
+        return Observed.missing("upload_options_absent")
+
+    raw = options.get("fileSizeMax")
+    # Строкой оно приходит на настоящей странице, числом - могло бы; принимаются
+    # оба, а логическое исключается отдельно: истина в Python это единица.
+    if isinstance(raw, bool):
+        return Observed.missing("upload_size_max_not_a_number")
+    if isinstance(raw, int):
+        value = raw
+    elif isinstance(raw, str) and raw.strip().isdigit():
+        value = int(raw.strip())
+    else:
+        return Observed.missing("upload_size_max_not_a_number")
+
+    # Ноль и отрицательное отвергаются: предел, запрещающий любой файл, скорее
+    # означает, что мы прочитали не то поле, чем что площадка запретила выгрузку.
+    if value <= 0:
+        return Observed.missing("upload_size_max_not_positive")
+    return Observed.present(value)
 
 
 def parse_app_data(html: str) -> AppData:
@@ -447,5 +489,6 @@ def parse_app_data(html: str) -> AppData:
         csrf_token=token,
         user_id=_json_field(parsed, "userId", "user_id"),
         locale=_json_field(parsed, "locale", "locale"),
+        upload_size_max=_upload_limit(parsed),
         defects=tuple(defects),
     )

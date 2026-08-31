@@ -30,7 +30,7 @@ from ._budget import Budget
 from ._catalog import CatalogPage
 from ._chats import ChatsPage
 from ._chips import ChipsPage
-from ._engine import Deliver, Engine, Fetch, Pause, Reply, Request, Submit
+from ._engine import Deliver, Engine, Fetch, Pause, Reply, Request, Submit, Upload
 from ._host import host_of
 from ._identity import REGISTRY
 from ._lot_form import LotForm
@@ -231,6 +231,43 @@ class AsyncChatsService:
             FunoraError: Если страница диалога непригодна.
         """
         await self._client.run(self._client.engine.mark_chat_read(node_id))
+
+    async def send_image(
+        self,
+        node_id: str,
+        content: bytes,
+        *,
+        filename: str,
+        content_type: str = "image/png",
+    ) -> SendResult:
+        """Отправляет изображение в переписку.
+
+        ДВА ШАГА, И ОБА НАБЛЮДЕНЫ НАМИ: файл уходит отдельным обращением и
+        получает номер, затем номер отправляется обычным действием канала.
+        Чужого знания здесь нет, и согласия операция не спрашивает.
+
+        ПОБОЧНОЕ ДЕЙСТВИЕ ТО ЖЕ, ЧТО У ОТПРАВКИ ТЕКСТА: переписка помечается
+        прочитанной. Иначе ответ канала не подтвердит отправку.
+
+        Args:
+            node_id (str): Числовой идентификатор диалога.
+            content (bytes): Содержимое файла.
+            filename (str): Имя файла, как его увидит площадка.
+            content_type (str): Тип содержимого.
+
+        Returns:
+            SendResult: Исход, причина и прочитанное из ответа.
+
+        Raises:
+            ValidationError: Если идентификатор, имя либо содержимое непригодны.
+            UsageError: Если файл больше объявленного площадкой предела.
+            FunoraError: Если страница непригодна либо ответ загрузки непонятен.
+        """
+        return await self._client.run(
+            self._client.engine.send_image(
+                node_id, content, filename=filename, content_type=content_type
+            )
+        )
 
 
 class AsyncAccountService:
@@ -907,6 +944,20 @@ class AsyncClient:
                 try:
                     reply = await self._fetcher.submit(
                         request.path, request.fields, request.headers
+                    )
+                except FunoraError as exc:
+                    failure = exc
+            elif isinstance(request, Upload):
+                # Загрузка идёт мимо _fetch по той же причине, что и отправка
+                # формы: переход в ответ на запись не повторяется.
+                try:
+                    reply = await self._fetcher.upload(
+                        request.path,
+                        field=request.field,
+                        filename=request.filename,
+                        content=request.content,
+                        content_type=request.content_type,
+                        headers=request.headers,
                     )
                 except FunoraError as exc:
                     failure = exc
