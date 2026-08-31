@@ -66,6 +66,23 @@ class Operation:
         audit_fail_closed (bool): Отказывает ли операция, когда
             сохранять некуда. Ложь означает либо отсутствие аудита,
             либо аудит, которым разрешено пренебречь.
+        request_provenance (str): Своими ли глазами мы видели тот
+            запрос, который операция отправляет.
+
+            Ось отдельная от возможности, и путать их нельзя.
+            Возможность говорит о ПЛОЩАДКЕ - есть ли у аккаунта
+            право. Происхождение говорит о НАС.
+
+            Пустая строка означает, что операция стоит целиком на
+            нашем наблюдении. Значение third_party_report означает,
+            что часть запроса известна от независимой реализации
+            того же протокола, а нашего наблюдения на ней нет.
+        provenance_source (str): Кто именно сообщил. Обязателен при
+            third_party_report: без имени сообщение неотличимо от
+            выдумки, и проверить его нечем.
+        provenance_rests_on (str): Какая ИМЕННО часть запроса не
+            проверена нами. Без этого читающий переносит недоверие
+            либо на всё сразу, либо ни на что.
     """
 
     name: str
@@ -76,6 +93,9 @@ class Operation:
     errors: tuple[str, ...]
     audit: str = ""
     audit_fail_closed: bool = False
+    request_provenance: str = ""
+    provenance_source: str = ""
+    provenance_rests_on: str = ""
 
 
 #: Операции служб по идентификатору.
@@ -241,12 +261,19 @@ OPERATIONS: Final[dict[str, Operation]] = {
         capability="lots.activate",
         safety=Safety.IDEMPOTENT,
         request_class="automation",
-        returns="Lot",
+        returns="LotForm",
         errors=(
             "funora.capability.unsupported",
             "funora.domain.not_found",
             "funora.auth.session_expired",
             "funora.transport",
+        ),
+        request_provenance="third_party_report",
+        provenance_source="FunPayAPI (бот FunPayCardinal), types.py, LotFields.renew_fields.",
+        provenance_rests_on=(
+            "Вид запроса при СНЯТОМ флажке active. Оба наших снимка сохранения сняты с "
+            "отмеченным; сторонний источник шлёт поле всегда, при выключенном лоте - пустой "
+            "строкой, тогда как наше рассуждение говорило, что снятый флажок не уходит вовсе."
         ),
     ),
     "lots.deactivate": Operation(
@@ -254,12 +281,19 @@ OPERATIONS: Final[dict[str, Operation]] = {
         capability="lots.deactivate",
         safety=Safety.IDEMPOTENT,
         request_class="automation",
-        returns="Lot",
+        returns="LotForm",
         errors=(
             "funora.capability.unsupported",
             "funora.domain.not_found",
             "funora.auth.session_expired",
             "funora.transport",
+        ),
+        request_provenance="third_party_report",
+        provenance_source="FunPayAPI (бот FunPayCardinal), types.py, LotFields.renew_fields.",
+        provenance_rests_on=(
+            "Вид запроса при СНЯТОМ флажке active. Оба наших снимка сохранения сняты с "
+            "отмеченным; сторонний источник шлёт поле всегда, при выключенном лоте - пустой "
+            "строкой, тогда как наше рассуждение говорило, что снятый флажок не уходит вовсе."
         ),
     ),
     "lots.form": Operation(

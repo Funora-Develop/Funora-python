@@ -438,6 +438,64 @@ class LotsService:
         """
         return self._client.run(self._client.engine.promote_lots(game_id, node_id))
 
+    def activate(self, node_id: str, offer_id: str, *, expected_revision: str) -> LotForm:
+        """Включает лот в выдачу.
+
+        ТРЕБУЕТ ЯВНОГО СОГЛАСИЯ. Вид запроса при снятом флажке нами не
+        наблюдался - он известен от независимой реализации того же протокола.
+        Без включённой возможности `lots.activate` операция отказывает до сети.
+
+        Args:
+            node_id (str): Идентификатор раздела.
+            offer_id (str): Идентификатор предложения.
+            expected_revision (str): Отпечаток, полученный чтением формы.
+                Обязателен: уходит вся форма, и без него параллельная правка
+                перетёрла бы описание лота.
+
+        Returns:
+            LotForm: Форма, перечитанная после сохранения. Состояние показа в
+            ней сверено с тем, которого просили.
+
+        Raises:
+            UsageError: Если согласия не дано либо отпечаток не передан.
+            PreconditionFailedError: Если лот успели изменить.
+            FunoraError: Если сохранение не состоялось.
+        """
+        return self._client.run(
+            self._client.engine.set_lot_visible(
+                node_id, offer_id, visible=True, expected_revision=expected_revision
+            )
+        )
+
+    def deactivate(self, node_id: str, offer_id: str, *, expected_revision: str) -> LotForm:
+        """Снимает лот с выдачи - продажи по нему прекращаются.
+
+        ТРЕБУЕТ ЯВНОГО СОГЛАСИЯ. Вид запроса при снятом флажке нами не
+        наблюдался - он известен от независимой реализации того же протокола.
+        Без включённой возможности `lots.deactivate` операция отказывает до сети.
+
+        Args:
+            node_id (str): Идентификатор раздела.
+            offer_id (str): Идентификатор предложения.
+            expected_revision (str): Отпечаток, полученный чтением формы.
+                Обязателен: уходит вся форма, и без него параллельная правка
+                перетёрла бы описание лота.
+
+        Returns:
+            LotForm: Форма, перечитанная после сохранения. Состояние показа в
+            ней сверено с тем, которого просили.
+
+        Raises:
+            UsageError: Если согласия не дано либо отпечаток не передан.
+            PreconditionFailedError: Если лот успели изменить.
+            FunoraError: Если сохранение не состоялось.
+        """
+        return self._client.run(
+            self._client.engine.set_lot_visible(
+                node_id, offer_id, visible=False, expected_revision=expected_revision
+            )
+        )
+
 
 class MarketService:
     """Публичные предложения раздела.

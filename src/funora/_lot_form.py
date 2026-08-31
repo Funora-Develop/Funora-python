@@ -33,10 +33,17 @@ from ._result import Completeness, Defect, Severity
 from .errors import ProtocolChangedError
 from .extraction import SELECTORS
 
-__all__ = ["LotForm", "parse_lot_form", "SAVE_PATH"]
+__all__ = ["LotForm", "parse_lot_form", "SAVE_PATH", "ACTIVE_FIELD"]
 
 #: Адрес сохранения. Наблюдён дословно в атрибуте action формы.
 SAVE_PATH: Final[str] = "/lots/offerSave"
+
+#: Имя флажка показа лота в выдаче. Наблюдено и в форме, и в записи запроса.
+#:
+#: Стоит константой, а не литералом, потому что читается и пишется в двух разных
+#: местах модуля: разъехавшись, они дали бы разбор, который видит одно, и запрос,
+#: который меняет другое.
+ACTIVE_FIELD: Final[str] = "active"
 
 #: Селектор формы правки. Берётся из порождённой таблицы, а не пишется
 #: литералом: иначе спецификация и код разойдутся молча.
@@ -88,18 +95,31 @@ class LotForm:
     reason: str
     defects: tuple[Defect, ...] = field(default_factory=tuple)
 
-    def to_request(self, *, price: str | None = None) -> dict[str, str]:
+    def to_request(self, *, price: str | None = None, active: bool | None = None) -> dict[str, str]:
         """Собирает поля запроса сохранения.
 
         ОТПРАВЛЯЕТСЯ ПРОЧИТАННОЕ, а меняется ровно то, что просили. Собрать
         запрос из перечня нужных полей было бы короче и стёрло бы всё
         остальное: описание лота, сообщение покупателю, картинки.
 
-        Флажки уходят по правилу форм: отмеченный - значением «on», снятый не
-        уходит вовсе. Значение наблюдено в записи запроса.
+        Отмеченный флажок уходит значением «on» - это наблюдено в записи
+        запроса.
+
+        СНЯТЫЙ ФЛАЖОК УХОДИТ ПУСТОЙ СТРОКОЙ, и вот это НАМИ НЕ НАБЛЮДАЛОСЬ.
+        Оба наших снимка сохранения сняты с отмеченным флажком; вид запроса при
+        снятом известен от независимой реализации того же протокола, которая
+        шлёт поле всегда. Наше собственное рассуждение говорило обратное - что
+        снятый флажок по устройству форм не уходит вовсе.
+
+        Различие не косметическое: «поля нет» и «поле есть, но пустое» - разные
+        запросы, и который из двух выключает лот, решается на стороне площадки.
+        Поэтому обе операции видимости объявлены стоящими на вторичном источнике
+        и спрашивают согласия.
 
         Аргументы:
             price (str | None): Новая цена либо None, чтобы оставить прежнюю.
+            active (bool | None): Требуемое состояние показа либо None, чтобы
+                оставить как прочитано.
 
         Возвращает:
             dict[str, str]: Поля запроса.
@@ -107,7 +127,17 @@ class LotForm:
         out = dict(self.fields)
         if price is not None:
             out["price"] = price
-        for name in sorted(self.checked):
+
+        checked = set(self.checked)
+        if active is True:
+            checked.add(ACTIVE_FIELD)
+        elif active is False:
+            checked.discard(ACTIVE_FIELD)
+            # Пустая строка, а не отсутствие ключа. См. пояснение выше: это
+            # единственное место всего пакета, где уходит непроверенное нами.
+            out[ACTIVE_FIELD] = ""
+
+        for name in sorted(checked):
             out[name] = "on"
         return out
 
@@ -223,7 +253,7 @@ def parse_lot_form(html: str, *, observed_at: datetime) -> LotForm:
         ),
         # Единственный носитель признака во всём проекте, и читается он
         # НАЛИЧИЕМ пометки, а не значением.
-        is_active="active" in checked,
+        is_active=ACTIVE_FIELD in checked,
         revision=_revision_of(fields, frozenset(checked)),
         fields=fields,
         checked=frozenset(checked),
