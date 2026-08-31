@@ -131,6 +131,15 @@ SELECTORS: Final[dict[str, str]] = {
     "chats.sending.form": ".chat-form form",
     "chats.unread_badge": "span.badge-chat",
     "chats.widget": ".chat-contacts",
+    "chips.fields.amount_text": ".tc-amount",
+    "chips.fields.amount_unit_text": ".tc-amount .unit",
+    "chips.fields.currency_symbol_text": ".tc-price .unit",
+    "chips.fields.price_text": ".tc-price > div",
+    "chips.fields.seller_link": ".avatar-photo",
+    "chips.fields.seller_name": ".media-user-name",
+    "chips.fields.server_text": ".tc-server",
+    "chips.markers.online": "a.tc-item",
+    "chips.rows": "a.tc-item",
     "lot-edit.fields.currency_symbol": ".form-control-feedback",
     "lot-edit.form": "form.form-offer-editor",
     "lots.controls.raise_button": "button.js-lot-raise",
@@ -238,6 +247,11 @@ ATTRIBUTES: Final[dict[str, str]] = {
     "chats.contact_list.attributes.last_message_position": "data-node-msg",
     "chats.contact_list.attributes.node_id": "data-id",
     "chats.contact_list.attributes.own_position": "data-user-msg",
+    "chips.fields.seller_link.attributes.seller_href": "data-href",
+    "chips.markers.online.attribute": "data-online",
+    "chips.rows.attributes.offer_href": "href",
+    "chips.rows.attributes.offer_id": "href",
+    "chips.rows.attributes.server_id": "data-server",
     "lots.controls.raise_button.attributes.game_id": "data-game",
     "lots.controls.raise_button.attributes.node_id": "data-node",
     "lots.fields.price_cell.attributes.sort_value": "data-s",
@@ -289,6 +303,7 @@ ATTRIBUTES: Final[dict[str, str]] = {
 #:
 #: Идентификатор ЧУЖОГО предложения лежит ровно там и больше нигде.
 QUERY_PARAMS: Final[dict[str, str]] = {
+    "chips.rows.attributes.offer_id": "id",
     "market.rows.attributes.offer_id": "id",
 }
 

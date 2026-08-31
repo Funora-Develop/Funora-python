@@ -44,6 +44,7 @@ from ._account import BalancePage, parse_balance_page
 from ._budget import Budget
 from ._catalog import CatalogPage, parse_catalog
 from ._chats import ChatsPage, parse_chats_page
+from ._chips import ChipsPage, parse_chips
 from ._classify import DEFAULT_IDENTITY_CSS, ResponseClass, Verdict, classify
 from ._delivered import DeliveryLedger
 from ._diff import (
@@ -139,6 +140,7 @@ __all__ = [
     "LOT_EDIT_PATH",
     "OWN_LOTS_PATH",
     "MARKET_PATH",
+    "CHIPS_PATH",
     "PROFILE_PATH",
     "ORDER_PATH",
     "BALANCE_PATH",
@@ -177,6 +179,12 @@ OWN_LOTS_PATH: Final[str] = "/lots/{node_id}/trade"
 #: всеми ценами и продавцами. Операция ходит по ней под сессией - отдельной
 #: дорожки public_read у реализации пока нет, и это записано в реестре.
 MARKET_PATH: Final[str] = "/lots/{node_id}/"
+
+#: Второй рынок - предложения по количеству.
+#:
+#: Страница отдаётся и без сессии: наблюдено 31.08.2026 гостем, сто
+#: семнадцать строк со всеми ценами и продавцами.
+CHIPS_PATH: Final[str] = "/chips/{node_id}/"
 
 #: Форма правки одного предложения.
 LOT_EDIT_PATH: Final[str] = "/lots/offerEdit?node={node_id}&offer={offer_id}"
@@ -453,6 +461,7 @@ IMPLEMENTED: Final[frozenset[Capability]] = frozenset(
         Capability.LOTS_UPDATE_PRICE,
         Capability.MARKET_OFFERS,
         Capability.MARKET_SNAPSHOT,
+        Capability.CHIPS_OFFERS,
     }
 )
 
@@ -1297,6 +1306,40 @@ class Engine:
         snapshot = snapshot_of(page, node_id=_digits(node_id, "раздела"))
         self._note_success(Capability.MARKET_SNAPSHOT, snapshot.completeness, None)
         return snapshot
+
+    def read_chips(self, node_id: str) -> Generator[Request, Reply, ChipsPage]:
+        """Читает публичный список предложений раздела чипов.
+
+        ВТОРОЙ РЫНОК, отдельный от рынка лотов. Здесь продаётся не вещь, а
+        количество: игровая валюта, ресурсы, внутриигровые единицы, и цена стоит
+        за единицу.
+
+        Сессия не нужна - страница отдаётся гостю целиком, как и список лотов.
+
+        Args:
+            node_id (str): Номер раздела чипов.
+
+        Yields:
+            Request: Просьбы о вводе-выводе.
+
+        Returns:
+            ChipsPage: Разобранный список.
+
+        Raises:
+            ValidationError: Если номер непригоден для подстановки.
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        node = _digits(node_id, "раздела")
+        observation = yield from self.fetch_ok(
+            Capability.CHIPS_OFFERS,
+            CHIPS_PATH.format(node_id=node),
+            session_required=False,
+        )
+        page = parse_chips(observation.html, observed_at=datetime.now(UTC))
+        if not integrity_verified(observation):
+            page = replace(page, completeness=Completeness.UNKNOWN, reason="integrity_unverified")
+        self._note_success(Capability.CHIPS_OFFERS, page.completeness, None)
+        return page
 
     def read_own_lots(self, node_id: str) -> Generator[Request, Reply, OwnLotsPage]:
         """Читает собственные лоты продавца в одном разделе.

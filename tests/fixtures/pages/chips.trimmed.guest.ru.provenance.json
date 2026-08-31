@@ -1,0 +1,40 @@
+{
+  "captured_at": "2026-08-31T02:00:36.123215+00:00",
+  "captured_format": "structural-skeleton-v9",
+  "classification": "guest",
+  "classification_provisional": false,
+  "classification_reason": "public_page_no_session",
+  "content_length": 151075,
+  "converted": false,
+  "derived": true,
+  "derived_by": ".venv\\Scripts\\python.exe tools/trim_skeleton.py observations/chips_n.guest.ru.skeleton.txt \"a.tc-item\" tests/fixtures/pages/chips.trimmed.guest.ru.skeleton.txt",
+  "derived_from": "chips_n.guest.ru",
+  "derived_note": "ОБРЕЗАННЫЙ СНИМОК, А НЕ НАБЛЮДЕНИЕ. Годится, чтобы проверять разбор, и НЕ годится, чтобы утверждать о площадке: числа остались за самим наблюдением и лежат в original_counts.",
+  "elapsed_ms": 883,
+  "final_url": "https://funpay.com/lots/{n}/",
+  "format": "structural-skeleton-v9",
+  "http_status": 200,
+  "locale": "ru",
+  "note": "Структурный скелет: текст заменён подписями, значения строки запроса обезличены, имена параметров сохранены. Сырой HTML не сохраняется. Страница ПУБЛИЧНАЯ - снята без сессии и без секрета.",
+  "original_counts": {
+    "characters": 151075,
+    "distinct_seller_links": 58,
+    "lazyload_hidden": 0,
+    "offer_promo": 0,
+    "offer_promoted": 0,
+    "offline": 0,
+    "online": 0,
+    "rows": 117,
+    "rows_with_currency_unit": 117,
+    "rows_with_offer_id": 117
+  },
+  "path": "/chips/{n}/",
+  "redirects": 0,
+  "trimmed_counts": {
+    "characters": 63124,
+    "row_shapes": 2,
+    "rows": 12
+  },
+  "what": "второй рынок площадки - предложения по количеству",
+  "why_this_snapshot_exists": "Раздел чипов не был снят ни разу, и контракт о втором рынке не знал ничего. Снят гостем: страница отдаётся без сессии целиком."
+}

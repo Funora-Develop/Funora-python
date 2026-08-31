@@ -24,6 +24,7 @@ from ._aclient import AsyncChatsService, AsyncClient, AsyncOrdersService
 from ._budget import Budget, Reservation
 from ._catalog import CatalogGame, CatalogPage
 from ._chats import ChatListEntry, ChatsPage, parse_chats_page
+from ._chips import ChipsOffer, ChipsPage
 from ._classify import (
     DEFAULT_CONTENT_MARKERS,
     DEFAULT_IDENTITY_CSS,
@@ -186,6 +187,8 @@ __all__ = [
     "ShowcaseSection",
     "CatalogPage",
     "CatalogGame",
+    "ChipsPage",
+    "ChipsOffer",
     "MarketPage",
     "MarketOffer",
     # канал обновлений

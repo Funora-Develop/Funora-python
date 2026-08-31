@@ -1,0 +1,1329 @@
+<html lang="ru"><head>
+    <meta charset="T5:adp#1">
+    <title>
+      T52:acdps
+    </title>
+    <link href="https://funpay.com/{n1}/css/main.css" media="T3:a#1" rel="T10:a#1">
+    <script src="https://funpay.com/{n2}/js/app.bundle.js"></script>
+    <script src="https://funpay.com/{n2}/js/tablesort.min.js"></script>
+    <meta content="T154:acdps#1" name="description">
+    <meta content="T35:adps#2" name="viewport">
+    <link href="https://funpay.com/chips/{n3}/" rel="T9:a#2">
+    <link href="https://funpay.com/chips/{n3}/" hreflang="ru" rel="T9:a#3">
+    <link href="https://funpay.com/chips/{n3}/" hreflang="uk" rel="T9:a#3">
+    <link href="https://funpay.com/en/chips/{n3}/" hreflang="en" rel="T9:a#3">
+    <link href="https://funpay.com/en/chips/{n3}/" hreflang="T9:ap#1" rel="T9:a#3">
+    <script type="T19:ap#1"></script>
+    <link as="T4:a#1" crossorigin="" href="/{n1}/fonts/{n4}" rel="T7:a#4" type="T10:adp#2">
+    <link as="T4:a#1" crossorigin="" href="/{n1}/fonts/{n5}" rel="T7:a#4" type="T10:adp#2">
+    <link href="/manifest.json" rel="T8:a#5">
+  </head>
+  <body data-app-data="{&quot;csrf-token&quot;: &quot;T16:ad&quot;, &quot;locale&quot;: &quot;T2:a&quot;, &quot;runnerCoordId&quot;: &quot;T1:a&quot;, &quot;userId&quot;: &quot;T1:d&quot;}">
+    <script></script>
+    <script type="T15:ap#3"></script>
+    <div class="wrapper">
+      <div class="wrapper-content">
+        <header id="T6:a#1">
+          <div class="container">
+            <div id="T13:ap#2"></div>
+            <nav class="navbar navbar-default">
+              <div class="hide-navbar"></div>
+              <div class="container-fluid">
+                <div class="navbar-header">
+                  <button aria-expanded="T5:a#1" class="collapsed navbar-toggle navbar-toggle-guest" data-target="T7:ap#1" data-toggle="T8:a#1" type="button">
+                    <span class="sr-only">
+                      T17:as
+                    </span>
+                    <span class="icon-bar"></span>
+                    <span class="icon-bar"></span>
+                    <span class="icon-bar"></span>
+                  </button>
+                  <a class="navbar-brand" href="https://funpay.com/">
+                    <img alt="T6:a#1" class="logo-color" src="/img/layout/logo-funpay.svg">
+                  </a>
+                  <form action="https://funpay.com/games/promoFilter" class="navbar-form navbar-left dropdown promo-games-filter" method="T4:a#1">
+                    <div class="form-group">
+                      <input autocomplete="T3:a#1" class="form-control dropdown-toggle" data-toggle="T8:a#2" name="query" placeholder="T18:cds#1" role="T9:a#1" type="text">
+                      <div class="dropdown-menu dropdown-autocomplete hidden"></div>
+                    </div>
+                    <button class="btn btn-link" type="submit">
+                      <i class="fa fa-search"></i>
+                    </button>
+                  </form>
+                </div>
+                <div class="nav-container">
+                  <div class="collapse navbar-collapse no-transition" id="T6:a#3">
+                    <ul class="nav navbar-nav">
+                      <li class="dropdown">
+                        <a aria-expanded="T5:a#1" aria-haspopup="T4:a#1" class="menu-item-info dropdown-toggle" data-toggle="T8:a#2" href="https://funpay.com/" role="T6:a#2">
+                          T6:c
+                          <span class="caret"></span>
+                        </a>
+                        <ul class="dropdown-menu">
+                          <li>
+                            <a class="menu-item-trade_info" href="https://funpay.com/trade/info">
+                              T7:c
+                            </a>
+                          </li>
+                          <li>
+                            <a class="menu-item-support" href="https://support.funpay.com/" target="T6:ap#1">
+                              T12:cs
+                            </a>
+                          </li>
+                          <li>
+                            <a class="menu-item-request" href="https://support.funpay.com/tickets/new" target="T6:ap#1">
+                              T16:cs
+                            </a>
+                          </li>
+                        </ul>
+                      </li>
+                      <li>
+                        <a class="menu-item-lootery" href="https://funpay.com/promo/lootery">
+                          T7:c
+                        </a>
+                      </li>
+                    </ul>
+                    <ul class="nav navbar-nav navbar-right">
+                      <li>
+                        <a class="menu-item-login" href="https://funpay.com/account/login">
+                          T5:c
+                        </a>
+                      </li>
+                      <li>
+                        <a class="menu-item-register" href="https://funpay.com/account/register">
+                          T18:c
+                        </a>
+                      </li>
+                      <li class="dropdown">
+                        <a class="dropdown-toggle menu-item-langs" data-toggle="T8:a#2" href="{n6}">
+                          T9:cp
+                          <i class="menu-icon menu-icon-lang-ru"></i>
+                          <span class="caret"></span>
+                        </a>
+                        <ul class="dropdown-menu">
+                          <li>
+                            <a class="menu-item-lang" href="https://funpay.com/chips/{n3}/?setlocale={q1}">
+                              T7:a
+                              <i class="menu-icon menu-icon-lang-en"></i>
+                            </a>
+                          </li>
+                        </ul>
+                      </li>
+                      <li class="dropdown">
+                        <a class="dropdown-toggle menu-item-currencies" data-toggle="T8:a#2" href="{n6}">
+                          T4:c
+                          <span class="caret"></span>
+                        </a>
+                        <ul class="dropdown-menu">
+                          <li>
+                            <a class="user-cy-switcher menu-item-currency" data-cy="T3:a#1" href="{n6}">
+                              T5:c
+                            </a>
+                          </li>
+                          <li>
+                            <a class="user-cy-switcher menu-item-currency" data-cy="T3:a#2" href="{n6}">
+                              T7:c
+                            </a>
+                          </li>
+                        </ul>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </nav>
+          </div>
+        </header>
+        <section id="T12:ap#4">
+          <div class="search-fade"></div>
+          <div class="content-chips content-chips-chip" id="T7:a#5">
+            <div class="promo-cd">
+              <div class="page-content-full pb0">
+                <div class="container">
+                  <div class="content-with-cd">
+                    <ul class="list-inline text-bold">
+                      <li class="active">
+                        T2:a
+                      </li>
+                      <li>
+                        <a href="https://funpay.com/chips/{n7}/">
+                          T6:aps
+                        </a>
+                      </li>
+                      <li>
+                        <a href="https://funpay.com/chips/{n8}/">
+                          T4:a
+                        </a>
+                      </li>
+                    </ul>
+                    <div>
+                      <h1>
+                        T20:acdps
+                      </h1>
+                      <div class="block-info">
+                        <p>
+                          T153:acdps
+                          <strong>
+                            T56:cs
+                          </strong>
+                          T22:cops
+                          <a href="https://support.funpay.com/knowledge-base/articles/{n9}" target="T6:ap#1">
+                            T6:c
+                          </a>
+                          T3:op
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="cd-container">
+                <div class="cd">
+                  <div class="spacer"></div>
+                  <img alt="" src="https://sfunpay.com/{t}/{t}/{t}/{t}/{t}">
+                  <svg viewBox="T11:ds#1">
+                    <defs>
+                      <path d="T50:adps#1" id="T9:ap#6"></path>
+                    </defs>
+                    <g class="text-main" font-size="T4:ad#1">
+                      <text class="no-select" text-anchor="T3:a#1">
+                        <textPath href="#text_path" startOffset="T4:dp#1">
+                          T14:adps
+                        </textPath>
+                      </text>
+                    </g>
+                    <g font-size="T5:adp#2">
+                      <text class="no-select" text-anchor="T5:a#2">
+                        <textPath href="#text_path" startOffset="T2:dp#2">
+                          T43:cs
+                        </textPath>
+                      </text>
+                    </g>
+                  </svg>
+                </div>
+              </div>
+              <div class="container">
+                <div class="cd-forward">
+                  <div class="counter-list counter-list-circles">
+                    <a class="counter-item active" href="https://funpay.com/chips/{n3}/" style="T28:adps#1">
+                      <div class="inside">
+                        <div class="counter-param">
+                          T5:c
+                        </div>
+                        <div class="counter-value">
+                          T3:d
+                        </div>
+                      </div>
+                    </a>
+                    <a class="counter-item" href="https://funpay.com/lots/{n10}/" style="T28:adps#2">
+                      <div class="inside">
+                        <div class="counter-param">
+                          T8:c
+                        </div>
+                        <div class="counter-value">
+                          T3:d
+                        </div>
+                      </div>
+                    </a>
+                    <a class="counter-item" href="https://funpay.com/lots/{n3}/" style="T28:adps#3">
+                      <div class="inside">
+                        <div class="counter-param">
+                          T8:c
+                        </div>
+                        <div class="counter-value">
+                          T3:d
+                        </div>
+                      </div>
+                    </a>
+                    <a class="counter-item" href="https://funpay.com/lots/{n11}/" style="T28:adps#4">
+                      <div class="inside">
+                        <div class="counter-param">
+                          T8:c
+                        </div>
+                        <div class="counter-value">
+                          T2:d
+                        </div>
+                      </div>
+                    </a>
+                    <a class="counter-item" href="https://funpay.com/lots/{n12}/" style="T28:adps#5">
+                      <div class="inside">
+                        <div class="counter-param">
+                          T6:c
+                        </div>
+                        <div class="counter-value">
+                          T3:d
+                        </div>
+                      </div>
+                    </a>
+                  </div>
+                  <div class="layout-swap layout-swap-disabled">
+                    <div class="with-tbl-footer">
+                      <div class="row">
+                        <div class="col-lg-7 col-md-10">
+                          <div class="content-with-cd-wide showcase" data-game="T1:d#1" data-section="T6:adp#1">
+                            <div class="filter-container">
+                              <div class="row row-10 filter-btn-container visible-xs">
+                                <div class="col-xs-6">
+                                  <a class="btn btn-default wfull visible-xs clearfix showcase-filters-toggle active">
+                                    <span class="pull-left">
+                                      T7:c
+                                    </span>
+                                    <span class="pull-right">
+                                      <i class="fas fa-sliders-h"></i>
+                                    </span>
+                                  </a>
+                                </div>
+                                <div class="col-xs-6">
+                                  <div class="offer-btn">
+                                    <a class="btn btn-default wfull" href="https://funpay.com/chips/{n3}/trade">
+                                      T22:cs
+                                    </a>
+                                  </div>
+                                </div>
+                              </div>
+                              <div class="row">
+                                <div class="col-sm-8">
+                                  <div class="showcase-filters">
+                                    <form action="{n6}" class="form-inline form-inline-long form-inline-margins">
+                                      <div class="form-group">
+                                        <div class="note-choose-server"></div>
+                                        <select class="form-control showcase-filter-input" name="server">
+                                          <option value="">
+                                            T6:c
+                                          </option>
+                                          <option value="T1:d#1">
+                                            T17:aps
+                                          </option>
+                                          <option value="T1:d#2">
+                                            T6:a
+                                          </option>
+                                          <option value="T3:d#3">
+                                            T17:aps
+                                          </option>
+                                          <option value="T4:d#4">
+                                            T5:a
+                                          </option>
+                                        </select>
+                                      </div>
+                                      <div class="form-group">
+                                        <label class="form-control-box switch">
+                                          <span>
+                                            T22:cs
+                                          </span>
+                                          <span class="checkbox checkbox-switch pull-right">
+                                            <input class="showcase-filter-input" name="online" type="checkbox">
+                                            <i></i>
+                                          </span>
+                                        </label>
+                                      </div>
+                                    </form>
+                                  </div>
+                                </div>
+                                <div class="col-sm-4 hidden-xs">
+                                  <div class="pull-right">
+                                    <a class="btn btn-default btn-wide" href="https://funpay.com/chips/{n3}/trade">
+                                      T22:cs
+                                    </a>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                            <div class="tc table-hover table-clickable showcase-table tc-sortable" data-section-type="T4:a#1">
+                              <div class="tc-header">
+                                <div class="tc-server hidden-xxs">
+                                  T6:c
+                                </div>
+                                <div class="tc-server visible-xxs">
+                                  T8:c
+                                </div>
+                                <div class="tc-user hidden-xxs">
+                                  T8:c
+                                </div>
+                                <div class="tc-amount text-right sort" data-sort-dir="T4:a#1" data-sort-field="T9:ap#1" data-sort-type="T3:a#1">
+                                  T7:c
+                                  <i class="fa"></i>
+                                </div>
+                                <div class="tc-price text-right sort ascending" data-sort-field="T8:ap#2" data-sort-type="T3:a#1">
+                                  T8:cdp
+                                  <i class="fa"></i>
+                                </div>
+                              </div>
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              
+                              <a class="tc-item" data-server="T3:d#2" href="https://funpay.com/chips/offer?id={q100}">
+                                <div class="tc-server hidden-xxs">
+                                  T17:aps
+                                </div>
+                                <div class="tc-user">
+                                  <div class="tc-visible-inside visible-xxs">
+                                    <div class="tc-server-inside">
+                                      T17:aps
+                                    </div>
+                                  </div>
+                                  <div class="media media-user offline style-circle">
+                                    <div class="media-left">
+                                      <div class="avatar-photo" data-href="https://funpay.com/users/{n64}/" style="T83:adps#39" tabindex="T1:d#1"></div>
+                                    </div>
+                                    <div class="media-body">
+                                      <div class="media-user-name">
+                                        T10:ad
+                                      </div>
+                                      <div class="media-user-reviews">
+                                        <div class="rating-stars rating-5">
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                        </div>
+                                        <span class="rating-mini-count">
+                                          T3:d
+                                        </span>
+                                      </div>
+                                      <div class="media-user-info">
+                                        T14:cds
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                                <div class="tc-amount" data-s="T6:d#170">
+                                  T7:ds
+                                  <span class="unit">
+                                    T2:c
+                                  </span>
+                                </div>
+                                <div class="tc-price" data-s="T2:d#171">
+                                  <div>
+                                    T6:dp
+                                    <span class="unit">
+                                      T1:o
+                                    </span>
+                                  </div>
+                                </div>
+                              </a>
+                              
+                              
+                              
+                              
+                              
+                              <a class="tc-item" data-server="T1:d#4" href="https://funpay.com/chips/offer?id={q106}">
+                                <div class="tc-server hidden-xxs">
+                                  T6:a
+                                </div>
+                                <div class="tc-user">
+                                  <div class="tc-visible-inside visible-xxs">
+                                    <div class="tc-server-inside">
+                                      T6:a
+                                    </div>
+                                  </div>
+                                  <div class="media media-user offline style-circle">
+                                    <div class="media-left">
+                                      <div class="avatar-photo" data-href="https://funpay.com/users/{n67}/" style="T46:aps#6" tabindex="T1:d#1"></div>
+                                    </div>
+                                    <div class="media-body">
+                                      <div class="media-user-name">
+                                        T7:ad
+                                      </div>
+                                      <div class="media-user-reviews">
+                                        T11:cs
+                                      </div>
+                                      <div class="media-user-info">
+                                        T14:cds
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                                <div class="tc-amount" data-s="T5:d#15">
+                                  T6:ds
+                                  <span class="unit">
+                                    T2:c
+                                  </span>
+                                </div>
+                                <div class="tc-price" data-s="T3:d#181">
+                                  <div>
+                                    T6:dp
+                                    <span class="unit">
+                                      T1:o
+                                    </span>
+                                  </div>
+                                </div>
+                              </a>
+                              <a class="tc-item" data-server="T1:d#4" href="https://funpay.com/chips/offer?id={q107}">
+                                <div class="tc-server hidden-xxs">
+                                  T6:a
+                                </div>
+                                <div class="tc-user">
+                                  <div class="tc-visible-inside visible-xxs">
+                                    <div class="tc-server-inside">
+                                      T6:a
+                                    </div>
+                                  </div>
+                                  <div class="media media-user offline style-circle">
+                                    <div class="media-left">
+                                      <div class="avatar-photo" data-href="https://funpay.com/users/{n68}/" style="T83:adps#41" tabindex="T1:d#1"></div>
+                                    </div>
+                                    <div class="media-body">
+                                      <div class="media-user-name">
+                                        T9:ad
+                                      </div>
+                                      <div class="media-user-reviews">
+                                        <div class="rating-stars rating-4">
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                          <i class="far"></i>
+                                        </div>
+                                        <span class="rating-mini-count">
+                                          T2:d
+                                        </span>
+                                      </div>
+                                      <div class="media-user-info">
+                                        T15:cds
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                                <div class="tc-amount" data-s="T2:d#24">
+                                  T2:d
+                                  <span class="unit">
+                                    T2:c
+                                  </span>
+                                </div>
+                                <div class="tc-price" data-s="T3:d#182">
+                                  <div>
+                                    T6:dp
+                                    <span class="unit">
+                                      T1:o
+                                    </span>
+                                  </div>
+                                </div>
+                              </a>
+                              <a class="tc-item" data-server="T3:d#2" href="https://funpay.com/chips/offer?id={q108}">
+                                <div class="tc-server hidden-xxs">
+                                  T17:aps
+                                </div>
+                                <div class="tc-user">
+                                  <div class="tc-visible-inside visible-xxs">
+                                    <div class="tc-server-inside">
+                                      T17:aps
+                                    </div>
+                                  </div>
+                                  <div class="media media-user offline style-circle">
+                                    <div class="media-left">
+                                      <div class="avatar-photo" data-href="https://funpay.com/users/{n68}/" style="T83:adps#41" tabindex="T1:d#1"></div>
+                                    </div>
+                                    <div class="media-body">
+                                      <div class="media-user-name">
+                                        T9:ad
+                                      </div>
+                                      <div class="media-user-reviews">
+                                        <div class="rating-stars rating-4">
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                          <i class="far"></i>
+                                        </div>
+                                        <span class="rating-mini-count">
+                                          T2:d
+                                        </span>
+                                      </div>
+                                      <div class="media-user-info">
+                                        T15:cds
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                                <div class="tc-amount" data-s="T1:d#4">
+                                  T1:d
+                                  <span class="unit">
+                                    T2:c
+                                  </span>
+                                </div>
+                                <div class="tc-price" data-s="T3:d#183">
+                                  <div>
+                                    T6:dp
+                                    <span class="unit">
+                                      T1:o
+                                    </span>
+                                  </div>
+                                </div>
+                              </a>
+                              <a class="tc-item" data-server="T4:d#3" href="https://funpay.com/chips/offer?id={q109}">
+                                <div class="tc-server hidden-xxs">
+                                  T5:a
+                                </div>
+                                <div class="tc-user">
+                                  <div class="tc-visible-inside visible-xxs">
+                                    <div class="tc-server-inside">
+                                      T5:a
+                                    </div>
+                                  </div>
+                                  <div class="media media-user offline style-circle">
+                                    <div class="media-left">
+                                      <div class="avatar-photo" data-href="https://funpay.com/users/{n68}/" style="T83:adps#41" tabindex="T1:d#1"></div>
+                                    </div>
+                                    <div class="media-body">
+                                      <div class="media-user-name">
+                                        T9:ad
+                                      </div>
+                                      <div class="media-user-reviews">
+                                        <div class="rating-stars rating-4">
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                          <i class="far"></i>
+                                        </div>
+                                        <span class="rating-mini-count">
+                                          T2:d
+                                        </span>
+                                      </div>
+                                      <div class="media-user-info">
+                                        T15:cds
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                                <div class="tc-amount" data-s="T1:d#4">
+                                  T1:d
+                                  <span class="unit">
+                                    T2:c
+                                  </span>
+                                </div>
+                                <div class="tc-price" data-s="T3:d#184">
+                                  <div>
+                                    T6:dp
+                                    <span class="unit">
+                                      T1:o
+                                    </span>
+                                  </div>
+                                </div>
+                              </a>
+                              
+                              
+                              <a class="tc-item" data-online="T1:d#1" data-server="T4:d#3" href="https://funpay.com/chips/offer?id={q112}">
+                                <div class="tc-server hidden-xxs">
+                                  T5:a
+                                </div>
+                                <div class="tc-user">
+                                  <div class="tc-visible-inside visible-xxs">
+                                    <div class="tc-server-inside">
+                                      T5:a
+                                    </div>
+                                  </div>
+                                  <div class="media media-user online style-circle">
+                                    <div class="media-left">
+                                      <div class="avatar-photo" data-href="https://funpay.com/users/{n62}/" style="T83:adps#37" tabindex="T1:d#1"></div>
+                                    </div>
+                                    <div class="media-body">
+                                      <div class="media-user-name">
+                                        T15:a
+                                      </div>
+                                      <div class="media-user-reviews">
+                                        <div class="rating-stars rating-5">
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                        </div>
+                                        <span class="rating-mini-count">
+                                          T4:d
+                                        </span>
+                                      </div>
+                                      <div class="media-user-info">
+                                        T12:cs
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                                <div class="tc-amount" data-s="T7:d#158">
+                                  T9:ds
+                                  <span class="unit">
+                                    T2:c
+                                  </span>
+                                </div>
+                                <div class="tc-price" data-s="T3:d#187">
+                                  <div>
+                                    T6:dp
+                                    <span class="unit">
+                                      T1:o
+                                    </span>
+                                  </div>
+                                </div>
+                              </a>
+                              <a class="tc-item" data-online="T1:d#1" data-server="T1:d#1" href="https://funpay.com/chips/offer?id={q113}">
+                                <div class="tc-server hidden-xxs">
+                                  T17:aps
+                                </div>
+                                <div class="tc-user">
+                                  <div class="tc-visible-inside visible-xxs">
+                                    <div class="tc-server-inside">
+                                      T17:aps
+                                    </div>
+                                  </div>
+                                  <div class="media media-user online style-circle">
+                                    <div class="media-left">
+                                      <div class="avatar-photo" data-href="https://funpay.com/users/{n69}/" style="T84:adps#42" tabindex="T1:d#1"></div>
+                                    </div>
+                                    <div class="media-body">
+                                      <div class="media-user-name">
+                                        T7:ad
+                                      </div>
+                                      <div class="media-user-reviews">
+                                        <div class="rating-stars rating-5">
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                        </div>
+                                        <span class="rating-mini-count">
+                                          T5:d
+                                        </span>
+                                      </div>
+                                      <div class="media-user-info">
+                                        T14:cds
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                                <div class="tc-amount" data-s="T9:d#188">
+                                  T11:ds
+                                  <span class="unit">
+                                    T2:c
+                                  </span>
+                                </div>
+                                <div class="tc-price" data-s="T3:d#189">
+                                  <div>
+                                    T6:dp
+                                    <span class="unit">
+                                      T1:o
+                                    </span>
+                                  </div>
+                                </div>
+                              </a>
+                              <a class="tc-item" data-online="T1:d#1" data-server="T1:d#4" href="https://funpay.com/chips/offer?id={q114}">
+                                <div class="tc-server hidden-xxs">
+                                  T6:a
+                                </div>
+                                <div class="tc-user">
+                                  <div class="tc-visible-inside visible-xxs">
+                                    <div class="tc-server-inside">
+                                      T6:a
+                                    </div>
+                                  </div>
+                                  <div class="media media-user online style-circle">
+                                    <div class="media-left">
+                                      <div class="avatar-photo" data-href="https://funpay.com/users/{n69}/" style="T84:adps#42" tabindex="T1:d#1"></div>
+                                    </div>
+                                    <div class="media-body">
+                                      <div class="media-user-name">
+                                        T7:ad
+                                      </div>
+                                      <div class="media-user-reviews">
+                                        <div class="rating-stars rating-5">
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                        </div>
+                                        <span class="rating-mini-count">
+                                          T5:d
+                                        </span>
+                                      </div>
+                                      <div class="media-user-info">
+                                        T14:cds
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                                <div class="tc-amount" data-s="T9:d#188">
+                                  T11:ds
+                                  <span class="unit">
+                                    T2:c
+                                  </span>
+                                </div>
+                                <div class="tc-price" data-s="T3:d#190">
+                                  <div>
+                                    T6:dp
+                                    <span class="unit">
+                                      T1:o
+                                    </span>
+                                  </div>
+                                </div>
+                              </a>
+                              <a class="tc-item" data-online="T1:d#1" data-server="T3:d#2" href="https://funpay.com/chips/offer?id={q115}">
+                                <div class="tc-server hidden-xxs">
+                                  T17:aps
+                                </div>
+                                <div class="tc-user">
+                                  <div class="tc-visible-inside visible-xxs">
+                                    <div class="tc-server-inside">
+                                      T17:aps
+                                    </div>
+                                  </div>
+                                  <div class="media media-user online style-circle">
+                                    <div class="media-left">
+                                      <div class="avatar-photo" data-href="https://funpay.com/users/{n69}/" style="T84:adps#42" tabindex="T1:d#1"></div>
+                                    </div>
+                                    <div class="media-body">
+                                      <div class="media-user-name">
+                                        T7:ad
+                                      </div>
+                                      <div class="media-user-reviews">
+                                        <div class="rating-stars rating-5">
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                        </div>
+                                        <span class="rating-mini-count">
+                                          T5:d
+                                        </span>
+                                      </div>
+                                      <div class="media-user-info">
+                                        T14:cds
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                                <div class="tc-amount" data-s="T9:d#188">
+                                  T11:ds
+                                  <span class="unit">
+                                    T2:c
+                                  </span>
+                                </div>
+                                <div class="tc-price" data-s="T3:d#191">
+                                  <div>
+                                    T6:dp
+                                    <span class="unit">
+                                      T1:o
+                                    </span>
+                                  </div>
+                                </div>
+                              </a>
+                              <a class="tc-item" data-online="T1:d#1" data-server="T4:d#3" href="https://funpay.com/chips/offer?id={q116}">
+                                <div class="tc-server hidden-xxs">
+                                  T5:a
+                                </div>
+                                <div class="tc-user">
+                                  <div class="tc-visible-inside visible-xxs">
+                                    <div class="tc-server-inside">
+                                      T5:a
+                                    </div>
+                                  </div>
+                                  <div class="media media-user online style-circle">
+                                    <div class="media-left">
+                                      <div class="avatar-photo" data-href="https://funpay.com/users/{n69}/" style="T84:adps#42" tabindex="T1:d#1"></div>
+                                    </div>
+                                    <div class="media-body">
+                                      <div class="media-user-name">
+                                        T7:ad
+                                      </div>
+                                      <div class="media-user-reviews">
+                                        <div class="rating-stars rating-5">
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                        </div>
+                                        <span class="rating-mini-count">
+                                          T5:d
+                                        </span>
+                                      </div>
+                                      <div class="media-user-info">
+                                        T14:cds
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                                <div class="tc-amount" data-s="T9:d#188">
+                                  T11:ds
+                                  <span class="unit">
+                                    T2:c
+                                  </span>
+                                </div>
+                                <div class="tc-price" data-s="T3:d#192">
+                                  <div>
+                                    T6:dp
+                                    <span class="unit">
+                                      T1:o
+                                    </span>
+                                  </div>
+                                </div>
+                              </a>
+                              <a class="tc-item" data-online="T1:d#1" data-server="T1:d#1" href="https://funpay.com/chips/offer?id={q117}">
+                                <div class="tc-server hidden-xxs">
+                                  T17:aps
+                                </div>
+                                <div class="tc-user">
+                                  <div class="tc-visible-inside visible-xxs">
+                                    <div class="tc-server-inside">
+                                      T17:aps
+                                    </div>
+                                  </div>
+                                  <div class="media media-user online style-circle">
+                                    <div class="media-left">
+                                      <div class="avatar-photo" data-href="https://funpay.com/users/{n70}/" style="T46:aps#6" tabindex="T1:d#1"></div>
+                                    </div>
+                                    <div class="media-body">
+                                      <div class="media-user-name">
+                                        T11:ad
+                                      </div>
+                                      <div class="media-user-reviews">
+                                        T11:cs
+                                      </div>
+                                      <div class="media-user-info">
+                                        T15:cds
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                                <div class="tc-amount" data-s="T8:d#193">
+                                  T10:ds
+                                  <span class="unit">
+                                    T2:c
+                                  </span>
+                                </div>
+                                <div class="tc-price" data-s="T3:d#194">
+                                  <div>
+                                    T5:dp
+                                    <span class="unit">
+                                      T1:o
+                                    </span>
+                                  </div>
+                                </div>
+                              </a>
+                              <a class="tc-item" data-server="T1:d#1" href="https://funpay.com/chips/offer?id={q118}">
+                                <div class="tc-server hidden-xxs">
+                                  T17:aps
+                                </div>
+                                <div class="tc-user">
+                                  <div class="tc-visible-inside visible-xxs">
+                                    <div class="tc-server-inside">
+                                      T17:aps
+                                    </div>
+                                  </div>
+                                  <div class="media media-user offline style-circle">
+                                    <div class="media-left">
+                                      <div class="avatar-photo" data-href="https://funpay.com/users/{n68}/" style="T83:adps#41" tabindex="T1:d#1"></div>
+                                    </div>
+                                    <div class="media-body">
+                                      <div class="media-user-name">
+                                        T9:ad
+                                      </div>
+                                      <div class="media-user-reviews">
+                                        <div class="rating-stars rating-4">
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                          <i class="fas"></i>
+                                          <i class="far"></i>
+                                        </div>
+                                        <span class="rating-mini-count">
+                                          T2:d
+                                        </span>
+                                      </div>
+                                      <div class="media-user-info">
+                                        T15:cds
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                                <div class="tc-amount" data-s="T1:d#4">
+                                  T1:d
+                                  <span class="unit">
+                                    T2:c
+                                  </span>
+                                </div>
+                                <div class="tc-price" data-s="T3:d#195">
+                                  <div>
+                                    T5:dp
+                                    <span class="unit">
+                                      T1:o
+                                    </span>
+                                  </div>
+                                </div>
+                              </a>
+                            </div>
+                            <p class="lead showcase-empty margin-top pb20 hidden">
+                              T16:cps
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div>
+                      <div class="content-with-cd-wide tbl-footer">
+                        <div class="game-about">
+                          <div class="block-info">
+                            <p>
+                              T513:acdops
+                            </p>
+                            <p>
+                              T41:cps
+                            </p>
+                            <p>
+                              T206:acdps
+                            </p>
+                            <p>
+                              T708:acdps
+                            </p>
+                            <p>
+                              T139:acdps
+                            </p>
+                            <h2>
+                              T20:cs
+                            </h2>
+                            <ol>
+                              <li>
+                                T15:cps
+                              </li>
+                              <li>
+                                T53:cps
+                              </li>
+                              <li>
+                                T58:cps
+                              </li>
+                              <li>
+                                T35:cps
+                              </li>
+                            </ol>
+                            <p>
+                              T83:cps
+                            </p>
+                            <ul>
+                              <li>
+                                T17:cps
+                              </li>
+                              <li>
+                                T13:cps
+                              </li>
+                              <li>
+                                T29:cps
+                              </li>
+                              <li>
+                                T53:cps
+                              </li>
+                            </ul>
+                            <p>
+                              T46:acps
+                            </p>
+                            <ul>
+                              <li>
+                                T54:cs
+                              </li>
+                              <li>
+                                T36:cps
+                              </li>
+                              <li>
+                                T38:acps
+                              </li>
+                              <li>
+                                T52:cs
+                              </li>
+                            </ul>
+                            <p>
+                              T397:acdops
+                            </p>
+                            <p>
+                              T98:acdps
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+      <div class="wrapper-footer">
+        <div class="container">
+          <footer id="T6:a#7">
+            <div class="footer-block footer-block-strings">
+              <span>
+                T18:ados
+              </span>
+              <a href="https://funpay.com/pages/privacyPolicy">
+                T27:cs
+              </a>
+              <a href="https://funpay.com/pages/cookiePolicy">
+                T15:acs
+              </a>
+              <a href="https://funpay.com/contacts.html" rel="T8:a#6" target="T6:ap#1">
+                T8:c
+              </a>
+            </div>
+            <div class="footer-block footer-block-social">
+              <a class="btn btn-gray btn-round" href="https://telegram.me/{t}" rel="T8:a#6" target="T6:ap#1">
+                <svg height="T2:d#1" width="T2:d#1">
+                  <use href="/{n71}/img/layout/sprites.svg#social-logo-telegram"></use>
+                </svg>
+              </a>
+              <a class="btn btn-gray btn-round" href="https://www.youtube.com/{t}/{t}" rel="T8:a#6" target="T6:ap#1">
+                <i class="fab fa-youtube"></i>
+              </a>
+              <a class="btn btn-gray btn-round" href="https://vk.com/{t}" rel="T8:a#6" target="T6:ap#1">
+                <i class="fab fa-vk"></i>
+              </a>
+            </div>
+            <div class="footer-block footer-block-als">
+              <img alt="" src="/img/layout/als-logo.svg">
+              <div>
+                T11:c
+                <br>
+                T1:c
+                <a href="https://www.artlebedev.ru/{t}/" target="T6:ap#1">
+                  T14:cs
+                  <br>
+                  T8:c
+                </a>
+              </div>
+            </div>
+          </footer>
+        </div>
+      </div>
+    </div>
+    <div class="container">
+      <div class="banner-cookie-consent">
+        <div class="cc-text">
+          T296:acps
+          <a href="https://funpay.com/pages/cookiePolicy" target="T6:ap#1">
+            T16:acs
+          </a>
+          T1:p
+        </div>
+        <div class="cc-buttons">
+          <button class="btn btn-primary btn-block-mobile cc-accept-all" type="button">
+            T11:cs
+          </button>
+          <button class="btn btn-gray btn-block-mobile cc-options" type="button">
+            T9:c
+          </button>
+        </div>
+      </div>
+    </div>
+    <div aria-hidden="T4:a#1" class="modal fade modal-cookie-consent" role="T6:a#3" tabindex="T2:dp#2">
+      <div class="modal-dialog">
+        <button aria-label="T5:a#1" class="close" data-dismiss="T5:a#1" type="button">
+          <i class="fas fa-times"></i>
+        </button>
+        <div class="modal-content">
+          <div class="modal-header">
+            <h4 class="h1 modal-title">
+              T23:acs
+            </h4>
+          </div>
+          <div class="modal-body">
+            <p>
+              T575:acps
+            </p>
+            <p>
+              T130:acps
+              <a href="https://funpay.com/pages/cookiePolicy" target="T6:ap#1">
+                T15:acs
+              </a>
+              T1:c
+              <a href="https://funpay.com/pages/privacyPolicy" target="T6:ap#1">
+                T27:cs
+              </a>
+              T77:cps
+              <a href="https://funpay.com/pages/dsar" target="T6:ap#1">
+                T55:cs
+              </a>
+              T1:p
+            </p>
+            <hr>
+            <div class="checkbox">
+              <label>
+                <input checked="" disabled="" name="cc-option-essential" type="checkbox">
+                <i></i>
+                <strong>
+                  T25:acs
+                </strong>
+              </label>
+            </div>
+            <div class="checkbox-indent">
+              <p>
+                T213:acps
+              </p>
+              <div class="panel panel-default">
+                <div class="panel-heading">
+                  <h4 class="panel-title">
+                    <a data-toggle="T8:a#1" href="#cookie-details-essential" role="T6:a#2">
+                      T33:cps
+                    </a>
+                  </h4>
+                </div>
+                <div class="panel-collapse collapse" id="T24:ap#8">
+                  <div class="panel-body">
+                    <p>
+                      T1:o
+                      <strong>
+                        T9:a
+                      </strong>
+                      T348:acops
+                    </p>
+                    <p>
+                      T1:o
+                      <strong>
+                        T10:ap
+                      </strong>
+                      T211:acdops
+                    </p>
+                    <p>
+                      T1:o
+                      <strong>
+                        T6:a
+                      </strong>
+                      T5:cos
+                      <strong>
+                        T2:a
+                      </strong>
+                      T195:acdops
+                    </p>
+                    <p>
+                      T1:o
+                      <strong>
+                        T12:ap
+                      </strong>
+                      T142:acdops
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="checkbox">
+              <label>
+                <input name="cc-option-analytics" type="checkbox">
+                <i></i>
+                <strong>
+                  T38:acs
+                </strong>
+              </label>
+            </div>
+            <div class="checkbox-indent">
+              <p class="mb0">
+                T508:acps
+              </p>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-gray cc-save" data-dismiss="T5:a#1" type="button">
+              T9:c
+            </button>
+            <button class="btn btn-primary cc-accept-all" data-dismiss="T5:a#1" type="button">
+              T11:cs
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  
+
+</body></html>
