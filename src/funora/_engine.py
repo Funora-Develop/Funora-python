@@ -82,6 +82,7 @@ from ._runner import (
     take_anchor,
 )
 from ._showcase import ShowcasePage, parse_showcase
+from ._snapshot import MarketSnapshot, snapshot_of
 from ._state import StateFile
 from ._thread import Thread, parse_thread
 from ._transport import Observation, TransportSettings
@@ -451,6 +452,7 @@ IMPLEMENTED: Final[frozenset[Capability]] = frozenset(
         Capability.LOTS_FORM,
         Capability.LOTS_UPDATE_PRICE,
         Capability.MARKET_OFFERS,
+        Capability.MARKET_SNAPSHOT,
     }
 )
 
@@ -1265,6 +1267,36 @@ class Engine:
             page = replace(page, completeness=Completeness.UNKNOWN, reason="integrity_unverified")
         self._note_success(Capability.MARKET_OFFERS, page.completeness, None)
         return page
+
+    def read_market_snapshot(self, node_id: str) -> Generator[Request, Reply, MarketSnapshot]:
+        """Снимает состояние выдачи раздела для последующего сравнения.
+
+        ЧИТАЕТ ТУ ЖЕ СТРАНИЦУ, ЧТО И market.offers, и это надо сказать вслух:
+        второго запроса здесь нет. Отличается результат - не строки в порядке
+        показа, а предложения по идентификатору, с отпечатком запроса и
+        полнотой.
+
+        Сравнивать снимок можно только с другим снимком ТОГО ЖЕ запроса.
+        Сравнение делает funora._snapshot.compare, и оно отвергает снимки с
+        разными отпечатками.
+
+        Args:
+            node_id (str): Номер раздела.
+
+        Yields:
+            Request: Просьбы о вводе-выводе.
+
+        Returns:
+            MarketSnapshot: Снимок, пригодный для сравнения.
+
+        Raises:
+            ValidationError: Если номер непригоден для подстановки.
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        page = yield from self.read_market(node_id)
+        snapshot = snapshot_of(page, node_id=_digits(node_id, "раздела"))
+        self._note_success(Capability.MARKET_SNAPSHOT, snapshot.completeness, None)
+        return snapshot
 
     def read_own_lots(self, node_id: str) -> Generator[Request, Reply, OwnLotsPage]:
         """Читает собственные лоты продавца в одном разделе.
