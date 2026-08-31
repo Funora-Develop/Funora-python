@@ -223,6 +223,19 @@ OPERATIONS: Final[dict[str, Operation]] = {
             "funora.transport",
         ),
     ),
+    "chips.offers": Operation(
+        name="chips.offers",
+        capability="chips.offers",
+        safety=Safety.SAFE,
+        request_class="monitoring",
+        returns="ChipsPage",
+        errors=(
+            "funora.capability.unsupported",
+            "funora.protocol.changed",
+            "funora.transport.rate_limited",
+            "funora.transport",
+        ),
+    ),
     "lots.activate": Operation(
         name="lots.activate",
         capability="lots.activate",

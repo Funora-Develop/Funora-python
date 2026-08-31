@@ -27,7 +27,7 @@
 There is no released package and nothing to install yet. The contract is not
 stabilised and still changes.
 
-Eighteen operations work: sixteen reads and two writes - sending text and changing a lot price.
+Nineteen operations work: seventeen reads and two writes - sending text and changing a lot price.
 
 **The guide lives in [docs/index.md](docs/index.md).** It builds into a site
 (`mkdocs serve`) and is checked by the same run as the code: examples are parsed
@@ -78,6 +78,7 @@ async with AsyncClient(EnvSecretProvider()) as client:
 | `client.lots.showcase(user_id)` | a seller showcase, by section |
 | `client.market.offers(node_id)` | the public listing of a section: rivals' prices and sellers |
 | `client.market.snapshot(node_id)` | a snapshot of the listing, for comparing over time |
+| `client.market.chips(node_id)` | the second marketplace: offers sold by quantity |
 | `client.reviews.get(user_id)` | reviews |
 | `client.account.get()` | the account identity |
 | `client.account.refresh()` | the same, re-read |

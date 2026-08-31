@@ -25,6 +25,7 @@ from ._account import BalancePage
 from ._budget import Budget
 from ._catalog import CatalogPage
 from ._chats import ChatsPage
+from ._chips import ChipsPage
 from ._engine import Deliver, Engine, Fetch, Pause, Reply, Request, Submit
 from ._host import host_of
 from ._identity import REGISTRY
@@ -464,6 +465,24 @@ class MarketService:
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
         return self._client.run(self._client.engine.read_market_snapshot(node_id))
+
+    def chips(self, node_id: str) -> ChipsPage:
+        """Читает публичные предложения раздела ЧИПОВ - второго рынка.
+
+        Здесь продаётся количество, а не вещь: цена стоит за единицу, описания
+        у предложения нет.
+
+        Args:
+            node_id (str): Номер раздела чипов.
+
+        Returns:
+            ChipsPage: Разобранный список.
+
+        Raises:
+            ValidationError: Если номер непригоден для подстановки.
+            FunoraError: Если ответ непригоден либо разметка изменилась.
+        """
+        return self._client.run(self._client.engine.read_chips(node_id))
 
 
 class CatalogService:
