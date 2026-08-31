@@ -1,0 +1,856 @@
+<html lang="ru">
+  <head>
+    <meta charset="T5:adp#1"/>
+    <title>
+      T24:acps
+    </title>
+    <link href="https://funpay.com/{n1}/css/main.css" media="T3:a#1" rel="T10:a#1"/>
+    <script src="https://funpay.com/{n2}/js/app.bundle.js"></script>
+    <script src="https://funpay.com/{n2}/js/starrr.min.js"></script>
+    <meta content="T35:adps#1" name="viewport"/>
+    <link href="https://funpay.com/orders/{n3}/" rel="T9:a#2"/>
+    <link href="https://funpay.com/orders/{n3}/" hreflang="ru" rel="T9:a#3"/>
+    <link href="https://funpay.com/orders/{n3}/" hreflang="uk" rel="T9:a#3"/>
+    <link href="https://funpay.com/en/orders/{n3}/" hreflang="en" rel="T9:a#3"/>
+    <link href="https://funpay.com/en/orders/{n3}/" hreflang="T9:ap#1" rel="T9:a#3"/>
+    <script type="T19:ap#1"></script>
+    <link as="T4:a#1" crossorigin href="/{n1}/fonts/{n4}" rel="T7:a#4" type="T10:adp#2"/>
+    <link as="T4:a#1" crossorigin href="/{n1}/fonts/{n5}" rel="T7:a#4" type="T10:adp#2"/>
+    <link href="/manifest.json" rel="T8:a#5"/>
+  </head>
+  <body class="bg-light-color" data-app-data="{&quot;csrf-token&quot;: &quot;T16:ad&quot;, &quot;locale&quot;: &quot;T2:a&quot;, &quot;runnerCoordId&quot;: &quot;T35:adp&quot;, &quot;userId&quot;: &quot;T8:d&quot;, &quot;webpush&quot;: {&quot;app&quot;: &quot;T11:adp&quot;}}">
+    <script></script>
+    <script type="T15:ap#3"></script>
+    <div class="wrapper">
+      <div class="wrapper-content">
+        <header id="T6:a#1">
+          <div class="container">
+            <div id="T13:ap#2"></div>
+            <nav class="navbar navbar-default">
+              <div class="hide-navbar"></div>
+              <div class="container-fluid">
+                <div class="navbar-header">
+                  <button aria-expanded="T5:a#1" class="collapsed navbar-toggle navbar-toggle-logged" data-target="T7:ap#1" data-toggle="T8:a#1" type="button">
+                    <span class="user-link-photo">
+                      <img alt src="https://sfunpay.com/{t}/{t}/{t}/{t}/{t}"/>
+                    </span>
+                    <span class="caret"></span>
+                  </button>
+                  <a class="navbar-xs-icon icon-chat" href="https://funpay.com/chat/">
+                    <svg viewBox="T9:ds#1">
+                      <circle cx="T2:d#1" cy="T2:d#1" r="T2:d#1"></circle>
+                      <polygon points="T19:dps#1"></polygon>
+                    </svg>
+                    <span></span>
+                  </a>
+                  <a class="navbar-brand" href="https://funpay.com/">
+                    <img alt="T6:a#1" class="logo-color" src="/img/layout/logo-funpay.svg"/>
+                  </a>
+                  <form action="https://funpay.com/games/promoFilter" class="navbar-form navbar-left dropdown promo-games-filter" method="T4:a#1">
+                    <div class="form-group">
+                      <input autocomplete="T3:a#1" class="form-control dropdown-toggle" data-toggle="T8:a#2" name="query" placeholder="T18:cds#1" role="T9:a#1" type="text"/>
+                      <div class="dropdown-menu dropdown-autocomplete hidden"></div>
+                    </div>
+                    <button class="btn btn-link" type="submit">
+                      <i class="fa fa-search"></i>
+                    </button>
+                  </form>
+                </div>
+                <div class="nav-container">
+                  <div class="collapse navbar-collapse no-transition" id="T6:a#3">
+                    <ul class="nav navbar-nav">
+                      <li class="visible-xs visible-sm">
+                        <a class="user-link-dropdown" href="https://funpay.com/users/{n6}/">
+                          <div class="user-link-name">
+                            T8:a
+                          </div>
+                          <div class="user-link-desc">
+                            T7:c
+                          </div>
+                        </a>
+                      </li>
+                      <li class="dropdown">
+                        <a aria-expanded="T5:a#1" aria-haspopup="T4:a#1" class="menu-item-info dropdown-toggle" data-toggle="T8:a#2" href="https://funpay.com/" role="T6:a#2">
+                          T6:c
+                          <span class="caret"></span>
+                        </a>
+                        <ul class="dropdown-menu">
+                          <li>
+                            <a class="menu-item-trade_info" href="https://funpay.com/trade/info">
+                              T7:c
+                            </a>
+                          </li>
+                          <li>
+                            <a class="menu-item-support" href="https://support.funpay.com/" target="T6:ap#1">
+                              T12:cs
+                            </a>
+                          </li>
+                          <li>
+                            <a class="menu-item-request" href="https://support.funpay.com/tickets/new" target="T6:ap#1">
+                              T16:cs
+                            </a>
+                          </li>
+                          <li>
+                            <a class="menu-item-requests" href="https://support.funpay.com/tickets" target="T6:ap#1">
+                              T11:cs
+                            </a>
+                          </li>
+                        </ul>
+                      </li>
+                      <li>
+                        <a class="menu-item-lootery" href="https://funpay.com/promo/lootery">
+                          T7:c
+                        </a>
+                      </li>
+                    </ul>
+                    <ul class="nav navbar-nav navbar-right logged">
+                      <li>
+                        <a class="menu-item-orders" href="https://funpay.com/orders/">
+                          T7:c
+                          <span class="badge badge-orders hidden">
+                            T1:d
+                          </span>
+                        </a>
+                      </li>
+                      <li class="active">
+                        <a class="menu-item-trade" href="https://funpay.com/orders/trade">
+                          T7:c
+                          <span class="badge badge-trade">
+                            T2:d
+                          </span>
+                        </a>
+                      </li>
+                      <li>
+                        <a class="menu-item-chat" href="https://funpay.com/chat/">
+                          T9:c
+                          <span class="badge badge-chat hidden">
+                            T1:d
+                          </span>
+                        </a>
+                      </li>
+                      <li>
+                        <a class="menu-item-balance" href="https://funpay.com/account/balance">
+                          T7:c
+                          <span class="badge badge-balance">
+                            T4:dos
+                          </span>
+                        </a>
+                      </li>
+                      <li class="dropdown hidden-sm hidden-xs">
+                        <a aria-expanded="T5:a#1" aria-haspopup="T4:a#1" class="dropdown-toggle user-link" data-toggle="T8:a#2" href="{n7}" role="T6:a#2">
+                          <div class="user-link-photo">
+                            <img alt src="https://sfunpay.com/{t}/{t}/{t}/{t}/{t}"/>
+                          </div>
+                          <span class="caret"></span>
+                        </a>
+                        <ul class="dropdown-menu">
+                          <li>
+                            <a class="user-link-dropdown" href="https://funpay.com/users/{n6}/">
+                              <div class="user-link-name">
+                                T8:a
+                              </div>
+                              <div class="user-link-desc">
+                                T7:c
+                              </div>
+                            </a>
+                          </li>
+                          <li>
+                            <a class="menu-item-settings" href="https://funpay.com/account/settings">
+                              T9:c
+                            </a>
+                          </li>
+                          <li class="dropdown">
+                            <a class="dropdown-toggle menu-item-langs" data-toggle="T8:a#2" href="{n7}">
+                              T9:cp
+                              <i class="menu-icon menu-icon-lang-ru"></i>
+                              <span class="caret"></span>
+                            </a>
+                            <ul class="dropdown-menu">
+                              <li>
+                                <a class="menu-item-lang" href="https://funpay.com/orders/{n3}/?setlocale={q1}">
+                                  T7:a
+                                  <i class="menu-icon menu-icon-lang-en"></i>
+                                </a>
+                              </li>
+                            </ul>
+                          </li>
+                          <li class="dropdown">
+                            <a class="dropdown-toggle menu-item-currencies" data-toggle="T8:a#2" href="{n7}">
+                              T5:c
+                              <span class="caret"></span>
+                            </a>
+                            <ul class="dropdown-menu">
+                              <li>
+                                <a class="user-cy-switcher menu-item-currency" data-cy="T3:a#1" href="{n7}">
+                                  T7:c
+                                </a>
+                              </li>
+                              <li>
+                                <a class="user-cy-switcher menu-item-currency" data-cy="T3:a#2" href="{n7}">
+                                  T4:c
+                                </a>
+                              </li>
+                            </ul>
+                          </li>
+                          <li>
+                            <a class="menu-item-logout" href="https://funpay.com/account/logout?token={q2}">
+                              T5:c
+                            </a>
+                          </li>
+                        </ul>
+                      </li>
+                      <li class="visible-xs visible-sm">
+                        <a class="menu-item-settings" href="https://funpay.com/account/settings">
+                          T9:c
+                        </a>
+                      </li>
+                      <li class="visible-xs visible-sm dropdown">
+                        <a class="dropdown-toggle menu-item-langs" data-toggle="T8:a#2" href="{n7}">
+                          T9:cp
+                          <i class="menu-icon menu-icon-lang-ru"></i>
+                          <span class="caret"></span>
+                        </a>
+                        <ul class="dropdown-menu">
+                          <li>
+                            <a class="menu-item-lang" href="https://funpay.com/orders/{n3}/?setlocale={q1}">
+                              T7:a
+                              <i class="menu-icon menu-icon-lang-en"></i>
+                            </a>
+                          </li>
+                        </ul>
+                      </li>
+                      <li class="visible-xs visible-sm dropdown">
+                        <a class="dropdown-toggle menu-item-currencies" data-toggle="T8:a#2" href="{n7}">
+                          T5:c
+                          <span class="caret"></span>
+                        </a>
+                        <ul class="dropdown-menu">
+                          <li>
+                            <a class="user-cy-switcher menu-item-currency" data-cy="T3:a#1" href="{n7}">
+                              T7:c
+                            </a>
+                          </li>
+                          <li>
+                            <a class="user-cy-switcher menu-item-currency" data-cy="T3:a#2" href="{n7}">
+                              T4:c
+                            </a>
+                          </li>
+                        </ul>
+                      </li>
+                      <li class="visible-xs visible-sm">
+                        <a class="menu-item-logout" href="https://funpay.com/account/logout?token={q2}">
+                          T5:c
+                        </a>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </nav>
+            <div class="hidden" data-message="T1:d#1" id="T17:ap#4">
+              <audio class="loud">
+                <source src="/audio/{n8}" type="T10:ap#4"/>
+              </audio>
+              <audio class="quiet">
+                <source src="/audio/{n9}" type="T10:ap#4"/>
+              </audio>
+            </div>
+            <div class="hidden" data-chat="T8:ad#1" data-orders="T8:ad#1" id="T13:ap#5"></div>
+          </div>
+        </header>
+        <section id="T12:ap#6">
+          <div class="search-fade"></div>
+          <div class="content-orders content-orders-order" id="T7:a#7">
+            <div class="container">
+              <div class="product-page product-page-with-chat">
+                <div class="row">
+                  <div class="col-md-2 col-sm-3"></div>
+                  <div class="col-md-5 col-sm-9">
+                    <div class="page-content">
+                      <h1 class="page-header page-header-no-hr page-header-params">
+                        T15:acps
+                      </h1>
+                      <div class="param-list">
+                        <div class="row">
+                          <div class="col-xs-6">
+                            <div class="param-item">
+                              <h5>
+                                T4:c
+                              </h5>
+                              <div class="text-bold">
+                                T5:a
+                              </div>
+                            </div>
+                          </div>
+                          <div class="col-xs-6">
+                            <div class="param-item">
+                              <h5>
+                                T9:c
+                              </h5>
+                              <div class="text-bold">
+                                <a href="https://funpay.com/lots/{n10}/">
+                                  T6:c
+                                </a>
+                              </div>
+                            </div>
+                          </div>
+                          <div class="col-xs-6">
+                            <div class="param-item">
+                              <h5>
+                                T15:cs
+                              </h5>
+                              <div class="text-bold">
+                                T6:c
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        <div class="param-item">
+                          <h5>
+                            T16:cs
+                          </h5>
+                          <div>
+                            T95:acdops
+                          </div>
+                        </div>
+                        <div class="param-item">
+                          <h5>
+                            T18:cs
+                          </h5>
+                          <div>
+                            T343:cdps
+                            <br/>
+                            <br/>
+                            T132:cdops
+                            <br/>
+                            <br/>
+                            T229:cops
+                            <br/>
+                            <br/>
+                            T154:cdops
+                            <br/>
+                            <br/>
+                            T134:cops
+                            <br/>
+                            <br/>
+                            T189:cdops
+                            <br/>
+                            <br/>
+                            T135:cops
+                          </div>
+                        </div>
+                        <hr/>
+                        <div class="row">
+                          <div class="col-xs-6">
+                            <div class="param-item">
+                              <h5>
+                                T6:c
+                              </h5>
+                              <div>
+                                <strong>
+                                  T12:cdps
+                                  <span class="text-nowrap">
+                                    T16:cdps
+                                  </span>
+                                </strong>
+                              </div>
+                            </div>
+                          </div>
+                          <div class="col-xs-6">
+                            <div class="param-item">
+                              <h5>
+                                T5:c
+                              </h5>
+                              <div>
+                                <span class="h1 mr4 text-bold">
+                                  T4:dp
+                                </span>
+                                <strong>
+                                  T1:o
+                                </strong>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        <hr/>
+                        <div class="param-item">
+                          <h5 class="mb10">
+                            T8:c
+                          </h5>
+                          <button class="btn btn-warning btn-block mb5 btn-refund" data-target="T13:ap#2" data-toggle="T5:a#3" type="button">
+                            T25:cs
+                          </button>
+                          <div class="help-form">
+                            T47:cs
+                            <a href="https://support.funpay.com/knowledge-base/articles/{n11}" target="T6:ap#1">
+                              <i class="fa fa-question-circle"></i>
+                            </a>
+                          </div>
+                          <div aria-hidden="T4:a#1" class="modal fade modal-refund" role="T6:a#3" tabindex="T2:dp#1">
+                            <div class="modal-dialog">
+                              <button aria-label="T5:a#1" class="close" data-dismiss="T5:a#1" type="button">
+                                <i class="fas fa-times"></i>
+                              </button>
+                              <div class="modal-content">
+                                <div class="modal-header">
+                                  <h4 class="h1 modal-title">
+                                    T24:cs
+                                  </h4>
+                                </div>
+                                <div class="modal-body">
+                                  <form action="https://funpay.com/orders/refund" class="form-ajax-simple" method="T4:a#1">
+                                    <div>
+                                      T46:cps
+                                    </div>
+                                    <input name="csrf_token" type="hidden" value="T16:ad#1"/>
+                                    <input name="id" type="hidden" value="T8:a#2"/>
+                                    <div class="modal-actions">
+                                      <button class="btn btn-danger btn-block-mobile" type="submit">
+                                        T14:cs
+                                      </button>
+                                      <button class="btn btn-default btn-block-mobile" data-dismiss="T5:a#1" type="button">
+                                        T8:c
+                                      </button>
+                                    </div>
+                                  </form>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="chat-float-container">
+                        <div class="js-chat-top"></div>
+                        <div class="chat chat-float mb35 a-affix" data-id="T9:d#1" data-name="T23:adp#1" data-tag="T8:a#1" data-user="T8:d#1">
+                          <div class="chat-header">
+                            <div class="media media-user offline">
+                              <div class="media-left">
+                                <a href="https://funpay.com/users/{n12}/">
+                                  <img alt class="img-circle" src="/img/layout/avatar.png" width="T2:d#1"/>
+                                </a>
+                              </div>
+                              <div class="media-body">
+                                <div class="media-user-name">
+                                  <a href="https://funpay.com/users/{n12}/">
+                                    T12:a
+                                  </a>
+                                </div>
+                                <div class="media-user-status">
+                                  T18:cds
+                                </div>
+                              </div>
+                            </div>
+                            <div class="chat-header-controls">
+                              <a class="btn btn-info-icon btn-info-sm btn-gray chat-control" href="https://funpay.com/chat/?node={q3}">
+                                <i class="far fa-clone icon"></i>
+                              </a>
+                              <span class="notice-button-container chat-control" data-color="T4:a#1">
+                                <button class="btn btn-info-icon btn-info-sm btn-success" type="button">
+                                  <i class="fa fa-check icon"></i>
+                                  <span class="inside hidden-md hidden-xs">
+                                    T8:c
+                                    <br/>
+                                    T10:c
+                                  </span>
+                                </button>
+                              </span>
+                              <div class="dropdown inline-block">
+                                <button class="btn btn-info-icon btn-info-sm btn-gray" data-toggle="T8:a#2" type="button">
+                                  <i class="fa fa-ellipsis-h icon"></i>
+                                </button>
+                                <ul class="dropdown-menu dropdown-menu-right">
+                                  <li>
+                                    <a href="https://support.funpay.com/tickets/new" target="T6:ap#1">
+                                      T12:c
+                                    </a>
+                                  </li>
+                                  <li>
+                                    <a class="form-ajax-simple" data-action="T28:ap#1" data-fields="{&quot;mute&quot;: &quot;T1:d&quot;, &quot;node_id&quot;: &quot;T9:d&quot;}" href="{n7}">
+                                      T13:c
+                                    </a>
+                                  </li>
+                                </ul>
+                              </div>
+                            </div>
+                          </div>
+                          <div class="chat-message-container">
+                            <div class="chat-message-list">
+                              <div class="chat-msg-item chat-msg-with-head" id="T18:adp#8">
+                                <div class="chat-message-list-date">
+                                  <span class="inside">
+                                    T10:cds
+                                  </span>
+                                </div>
+                                <div class="chat-message">
+                                  <div class="media-user-name">
+                                    T6:a
+                                    <span class="chat-msg-author-label label label-primary">
+                                      T10:c
+                                    </span>
+                                    <div class="chat-msg-date" title="T19:cdps#1">
+                                      T8:dp
+                                    </div>
+                                  </div>
+                                  <div class="chat-msg-body">
+                                    <div class="alert alert-with-icon alert-info" role="T5:a#4">
+                                      <i class="fas fa-info-circle alert-icon"></i>
+                                      <div class="chat-msg-text">
+                                        T10:c
+                                        <a href="https://funpay.com/users/{n12}/">
+                                          T12:a
+                                        </a>
+                                        T7:c
+                                        <a href="https://funpay.com/orders/{n3}/">
+                                          T15:acps
+                                        </a>
+                                        T121:acdops
+                                        <a href="https://funpay.com/users/{n12}/">
+                                          T12:a
+                                        </a>
+                                        T66:cops
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                              <div class="chat-msg-item chat-msg-with-head" id="T18:adp#9">
+                                <div class="chat-message">
+                                  <div class="media-user-name">
+                                    <a class="chat-msg-author-link" href="https://funpay.com/users/{n6}/">
+                                      T8:a
+                                    </a>
+                                    <span class="chat-msg-author-label label label-default">
+                                      T9:c
+                                    </span>
+                                    <div class="chat-msg-date" title="T19:cdps#1">
+                                      T8:dp
+                                    </div>
+                                  </div>
+                                  <div class="chat-msg-body">
+                                    <div class="chat-msg-text">
+                                      T30:cps
+                                      <a href="https://telegra.ph/{t}" rel="T17:as#6" target="T6:ap#1">
+                                        T94:adp
+                                      </a>
+                                      T324:cops
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                              <div class="chat-msg-item chat-msg-with-head" id="T18:adp#10">
+                                <div class="chat-message">
+                                  <div class="media-user-name">
+                                    T6:a
+                                    <span class="chat-msg-author-label label label-primary">
+                                      T10:c
+                                    </span>
+                                    <div class="chat-msg-date" title="T19:cdps#1">
+                                      T8:dp
+                                    </div>
+                                  </div>
+                                  <div class="chat-msg-body">
+                                    <div class="alert alert-with-icon alert-info" role="T5:a#4">
+                                      <i class="fas fa-info-circle alert-icon"></i>
+                                      <div class="chat-msg-text">
+                                        T9:cs
+                                        <a href="https://funpay.com/discord/channel?id={q4}" rel="T17:as#6" target="T6:ap#1">
+                                          T17:acs
+                                        </a>
+                                        T293:acops
+                                        <a href="https://funpay.com/trade/info" rel="T17:as#6" target="T6:ap#1">
+                                          T6:c
+                                        </a>
+                                        T1:p
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                              <div class="chat-msg-item chat-msg-with-head" id="T18:adp#11">
+                                <div class="chat-message">
+                                  <div class="media-user-name">
+                                    <a class="chat-msg-author-link" href="https://funpay.com/users/{n6}/">
+                                      T8:a
+                                    </a>
+                                    <div class="chat-msg-date" title="T19:cdps#2">
+                                      T8:dp
+                                    </div>
+                                  </div>
+                                  <div class="chat-msg-body">
+                                    <div class="chat-msg-text">
+                                      T55:cops
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                              <div class="chat-msg-item chat-msg-with-head" id="T18:adp#12">
+                                <div class="chat-message">
+                                  <div class="media-user-name">
+                                    <a class="chat-msg-author-link" href="https://funpay.com/users/{n12}/">
+                                      T12:a
+                                    </a>
+                                    <div class="chat-msg-date" title="T19:cdps#3">
+                                      T8:dp
+                                    </div>
+                                  </div>
+                                  <div class="chat-msg-body">
+                                    <div class="chat-msg-text">
+                                      T21:cs
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                              <div class="chat-msg-item chat-msg-with-head" id="T18:adp#13">
+                                <div class="chat-message">
+                                  <div class="media-user-name">
+                                    <a class="chat-msg-author-link" href="https://funpay.com/users/{n6}/">
+                                      T8:a
+                                    </a>
+                                    <div class="chat-msg-date" title="T19:cdps#4">
+                                      T8:dp
+                                    </div>
+                                  </div>
+                                  <div class="chat-msg-body">
+                                    <div class="chat-msg-text">
+                                      T197:cops
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                          <div class="chat-form">
+                            <form action="https://funpay.com/chat/message" method="T4:a#1">
+                              <div class="chat-form-input">
+                                <div class="form-group" id="T8:a#14">
+                                  <textarea class="form-control" cols="T2:d#1" name="content" placeholder="T11:cp#2" rows="T1:d#1"></textarea>
+                                </div>
+                              </div>
+                              <div class="chat-form-attach">
+                                <button class="btn btn-default chat-btn-image" data-size-max="T7:d#1" data-size-max-str="T4:cds#1" type="button">
+                                  <i class="fa fa-paperclip"></i>
+                                </button>
+                              </div>
+                              <div class="chat-form-btn">
+                                <button class="btn btn-gray btn-round" type="submit">
+                                  <i class="fa fa-arrow-right"></i>
+                                </button>
+                              </div>
+                            </form>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="review-list bg-light-style">
+                        <div class="order-review">
+                          <h5 class="mb10">
+                            <span>
+                              T5:c
+                            </span>
+                          </h5>
+                          <div class="review-container" data-order="T8:a#1" data-rating data-rating-max="T1:d#1">
+                            <div class="review-item">
+                              <div class="review-item-row" data-author="T8:d#1" data-row="T6:a#1">
+                                <div class="review-compiled-review">
+                                  <div class="review-item-text">
+                                    <span class="text-muted review-empty-text">
+                                      T12:cp
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+      <div class="wrapper-footer">
+        <div class="container">
+          <footer id="T6:a#15">
+            <div class="footer-block footer-block-strings">
+              <span>
+                T18:ados
+              </span>
+              <a href="https://funpay.com/pages/privacyPolicy">
+                T27:cs
+              </a>
+              <a href="https://funpay.com/pages/cookiePolicy">
+                T15:acs
+              </a>
+              <a href="https://funpay.com/contacts.html" rel="T8:a#7" target="T6:ap#1">
+                T8:c
+              </a>
+            </div>
+            <div class="footer-block footer-block-social">
+              <a class="btn btn-gray btn-round" href="https://telegram.me/{t}" rel="T8:a#7" target="T6:ap#1">
+                <svg height="T2:d#1" width="T2:d#2">
+                  <use href="/{n13}/img/layout/sprites.svg#social-logo-telegram"></use>
+                </svg>
+              </a>
+              <a class="btn btn-gray btn-round" href="https://www.youtube.com/{t}/{t}" rel="T8:a#7" target="T6:ap#1">
+                <i class="fab fa-youtube"></i>
+              </a>
+              <a class="btn btn-gray btn-round" href="https://vk.com/{t}" rel="T8:a#7" target="T6:ap#1">
+                <i class="fab fa-vk"></i>
+              </a>
+            </div>
+            <div class="footer-block footer-block-als">
+              <img alt src="/img/layout/als-logo.svg"/>
+              <div>
+                T11:c
+                <br/>
+                T1:c
+                <a href="https://www.artlebedev.ru/{t}/" target="T6:ap#1">
+                  T14:cs
+                  <br/>
+                  T8:c
+                </a>
+              </div>
+            </div>
+          </footer>
+        </div>
+      </div>
+    </div>
+    <div class="container">
+      <div class="banner-cookie-consent">
+        <div class="cc-text">
+          T296:acps
+          <a href="https://funpay.com/pages/cookiePolicy" target="T6:ap#1">
+            T16:acs
+          </a>
+          T1:p
+        </div>
+        <div class="cc-buttons">
+          <button class="btn btn-primary btn-block-mobile cc-accept-all" type="button">
+            T11:cs
+          </button>
+          <button class="btn btn-gray btn-block-mobile cc-options" type="button">
+            T9:c
+          </button>
+        </div>
+      </div>
+    </div>
+    <div aria-hidden="T4:a#1" class="modal fade modal-cookie-consent" role="T6:a#3" tabindex="T2:dp#1">
+      <div class="modal-dialog">
+        <button aria-label="T5:a#1" class="close" data-dismiss="T5:a#1" type="button">
+          <i class="fas fa-times"></i>
+        </button>
+        <div class="modal-content">
+          <div class="modal-header">
+            <h4 class="h1 modal-title">
+              T23:acs
+            </h4>
+          </div>
+          <div class="modal-body">
+            <p>
+              T575:acps
+            </p>
+            <p>
+              T130:acps
+              <a href="https://funpay.com/pages/cookiePolicy" target="T6:ap#1">
+                T15:acs
+              </a>
+              T1:c
+              <a href="https://funpay.com/pages/privacyPolicy" target="T6:ap#1">
+                T27:cs
+              </a>
+              T77:cps
+              <a href="https://funpay.com/pages/dsar" target="T6:ap#1">
+                T55:cs
+              </a>
+              T1:p
+            </p>
+            <hr/>
+            <div class="checkbox">
+              <label>
+                <input checked disabled name="cc-option-essential" type="checkbox"/>
+                <i></i>
+                <strong>
+                  T25:acs
+                </strong>
+              </label>
+            </div>
+            <div class="checkbox-indent">
+              <p>
+                T213:acps
+              </p>
+              <div class="panel panel-default">
+                <div class="panel-heading">
+                  <h4 class="panel-title">
+                    <a data-toggle="T8:a#1" href="#cookie-details-essential" role="T6:a#2">
+                      T33:cps
+                    </a>
+                  </h4>
+                </div>
+                <div class="panel-collapse collapse" id="T24:ap#16">
+                  <div class="panel-body">
+                    <p>
+                      T1:o
+                      <strong>
+                        T9:a
+                      </strong>
+                      T348:acops
+                    </p>
+                    <p>
+                      T1:o
+                      <strong>
+                        T10:ap
+                      </strong>
+                      T211:acdops
+                    </p>
+                    <p>
+                      T1:o
+                      <strong>
+                        T6:a
+                      </strong>
+                      T5:cos
+                      <strong>
+                        T2:a
+                      </strong>
+                      T195:acdops
+                    </p>
+                    <p>
+                      T1:o
+                      <strong>
+                        T12:ap
+                      </strong>
+                      T142:acdops
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="checkbox">
+              <label>
+                <input name="cc-option-analytics" type="checkbox"/>
+                <i></i>
+                <strong>
+                  T38:acs
+                </strong>
+              </label>
+            </div>
+            <div class="checkbox-indent">
+              <p class="mb0">
+                T508:acps
+              </p>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-gray cc-save" data-dismiss="T5:a#1" type="button">
+              T9:c
+            </button>
+            <button class="btn btn-primary cc-accept-all" data-dismiss="T5:a#1" type="button">
+              T11:cs
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

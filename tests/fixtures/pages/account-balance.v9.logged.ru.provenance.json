@@ -1,0 +1,20 @@
+{
+  "captured_at": "2026-08-31T01:17:24+00:00",
+  "captured_format": "structural-skeleton-v9",
+  "classification": "ok",
+  "classification_provisional": false,
+  "classification_reason": "identity_confirmed",
+  "content_length": 115718,
+  "converted": false,
+  "derived": false,
+  "elapsed_ms": 318,
+  "final_url": "https://funpay.com/account/balance",
+  "format": "structural-skeleton-v9",
+  "http_status": 200,
+  "locale": "ru",
+  "note": "Структурный скелет: текст заменён подписями, сегменты путей с идентификаторами обезличены. Сырой HTML не сохраняется.",
+  "path": "/account/balance",
+  "redirects": 0,
+  "what": "страница баланса и вывода средств",
+  "why_this_snapshot_exists": "Снят форматом v9 - первым, который сохраняет имена полей формы дословно и не маскирует строку запроса целиком.\n\nРАДИ ИМЁН ПОЛЕЙ И СНЯТ. На снимке прежнего формата видны АДРЕСА точек записи и не видны их поля, а по адресу без полей запроса не собрать. Соседний снимок той же страницы прежнего формата оставлен: он снят в свою минуту и вторым таким же не будет."
+}
