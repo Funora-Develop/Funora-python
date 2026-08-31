@@ -113,10 +113,26 @@ chapter](docs/guide/bot.md).
 The public section listing is parsed too, but has no operation: the `Offer` model
 requires an id, a price and a category, and the page carries none of the three.
 
-Sending an image, marking read and three lot write operations - activate,
-deactivate and promote - are declared by the contract and not written: nobody has
-observed the requests the marketplace makes for them. Calling them raises `NotImplementedOperationError` - a refusal from
+Sending an image, marking read, paging chat history backwards, the section field
+schema, a market snapshot and three lot write operations - activate, deactivate
+and promote - are declared by the contract and not written: nobody has observed
+the requests the marketplace makes for them. Calling them raises `NotImplementedOperationError` - a refusal from
 Funora itself, not a built-in Python error.
+
+## Observed, but not an operation
+
+Three of the marketplace's write endpoints have been observed as **forms** - the
+address and the fields are visible, but nobody has sent the request:
+
+| Endpoint | What it is | What is missing |
+|---|---|---|
+| `POST /orders/refund` | refunding an order | the response |
+| `POST /withdraw/withdraw` | withdrawing funds | the response; needs 2FA |
+| `POST /users/transactions` | paging the account ledger | the meaning of `continue` |
+
+A write operation that cannot tell success from refusal will not be added here:
+it would report success always. Refunds and withdrawals are also irreversible and
+both are about money.
 
 ## What the SDK cannot do, and why that is stated here
 
