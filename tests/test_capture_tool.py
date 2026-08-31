@@ -2180,3 +2180,80 @@ def test_the_query_name_rule_matches_between_the_two_languages() -> None:
             "запроса скажут о площадке разное"
         )
     assert "75289502" not in ours, "значение параметра попало в снимок"
+
+
+def test_the_currency_payload_passes_the_receiver_guard() -> None:
+    """ЛОВИТ РАЗРЫВ МЕЖДУ ДВУМЯ НАШИМИ ЖЕ ПРАВИЛАМИ.
+
+    Приёмник пишет ключи ДОСЛОВНО - на том основании, что ключ есть имя поля,
+    то есть протокол, а не человек. Сбор валюты клал в ключ САМ ЗНАК - «₽», -
+    и ворота его отвергали.
+
+    Обе стороны были правы порознь и несовместимы вместе. Обнаружилось это не
+    проверкой, а живым сбором: человек открыл консоль, позвал funora.currency и
+    получил отказ. Проверок на стыке сборщика и приёмника не было ни одной.
+
+    Ворота остались absolute - изменилась форма записи: знак и код переехали из
+    ключа в значение.
+
+    Returns:
+        None
+    """
+    import sys
+
+    sys.path.insert(0, str(ROOT / "tools"))
+    from capture import _looks_like_a_secret
+
+    # Форма, которую сборщик отдаёт теперь.
+    payload = {
+        "page": {"origin": "https://funpay.com", "path": "/orders/", "query": []},
+        "lang": "ru",
+        "symbols": [{"symbol": "₽", "count": 17, "near": [{"tag": "span", "class": "unit"}]}],
+        "codes": [{"code": "RUB", "count": 3, "near": [{"tag": "a", "class": "menu-item"}]}],
+        "pairs": [{"symbol": "₽", "code": "RUB", "count": 1}],
+        "switcher": [{"code": "USD", "attribute": "data-cy", "tag": "a", "active": False}],
+    }
+    assert _looks_like_a_secret(payload) is None, _looks_like_a_secret(payload)
+
+
+def test_the_old_currency_shape_is_still_refused() -> None:
+    """Требует, чтобы прежняя форма по-прежнему отвергалась.
+
+    Иначе проверка выше доказывала бы только то, что ворота ослабли.
+
+    Returns:
+        None
+    """
+    import sys
+
+    sys.path.insert(0, str(ROOT / "tools"))
+    from capture import _looks_like_a_secret
+
+    # Знак валюты КЛЮЧОМ - ровно то, из-за чего сбор и отвергался.
+    refused = _looks_like_a_secret({"symbols": {"₽": {"count": 17, "near": []}}})
+    assert refused is not None, "ключ из данных прошёл ворота"
+    assert "ключ" in refused
+
+
+def test_the_collector_never_builds_a_key_from_page_data() -> None:
+    """Требует, чтобы сборщик не собирал ключей из данных страницы.
+
+    Проверяется грубо и по исходнику: присваивание в словарь по вычисленному
+    ключу. Грубо - но именно эта форма и приводила к отказу, а заметить её
+    глазами в тысяче строк не удалось трижды.
+
+    Returns:
+        None
+    """
+    source = SNIPPET.read_text(encoding="utf-8")
+
+    forbidden = [
+        "found[symbol]",
+        "seen[one]",
+        "pairs[pair]",
+    ]
+    left = [one for one in forbidden if one in source]
+    assert not left, (
+        f"сборщик кладёт данные страницы в ключ: {left}. Приёмник пишет ключи "
+        "дословно, и такой ключ утечёт целиком"
+    )
