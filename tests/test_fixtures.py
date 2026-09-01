@@ -39,6 +39,13 @@ _SPEC_DIR = os.environ.get("FUNORA_SPEC_DIR")
 EXPECTED = {
     "order.logged.ru": ResponseClass.OK,
     "orders-trade.logged.ru": ResponseClass.OK,
+    # Тот же список, снятый ДЕВЯТЬЮ ДНЯМИ ПОЗЖЕ и вчетверо длиннее: тридцать
+    # четыре строки вместо восьми. В нём нашлось ТРЕТЬЕ состояние заказа -
+    # одна строка с модификатором warning, - о котором прежняя запись три
+    # недели утверждала, что в снимок оно не попало.
+    #
+    # И форма фильтров, которой в старом снимке нет вовсе.
+    "orders-trade.v8.logged.ru": ResponseClass.OK,
     "chat.logged.ru": ResponseClass.OK,
     "chat-thread.logged.ru": ResponseClass.OK,
     "orders-trade.guest.ru": ResponseClass.LOGIN_REQUIRED,

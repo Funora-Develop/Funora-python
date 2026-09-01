@@ -42,12 +42,14 @@ class OrderStatus(StrEnum):
     """
 
     PAID = "paid"
+    REFUNDED = "refunded"
     CLOSED = "closed"
 
 
 #: Статус по цветовому классу ячейки.
 STATUS_BY_CELL_CLASS: Final[dict[str, OrderStatus]] = {
     "text-primary": OrderStatus.PAID,  # Оплачен
+    "text-warning": OrderStatus.REFUNDED,  # Возврат
     "text-success": OrderStatus.CLOSED,  # Закрыт
 }
 
@@ -60,6 +62,7 @@ STATUS_BY_CELL_CLASS: Final[dict[str, OrderStatus]] = {
 #: берётся из класса ячейки.
 ROW_MARKER_BY_STATUS: Final[dict[OrderStatus, str]] = {
     OrderStatus.PAID: "info",  # Оплачен
+    OrderStatus.REFUNDED: "warning",  # Возврат
 }
 
 #: Присутствие контрагента по классу карточки пользователя.
@@ -199,6 +202,7 @@ SELECTORS: Final[dict[str, str]] = {
     "orders.fields.seller_sum_text": ".tc-seller-sum",
     "orders.fields.time_ago_text": ".tc-date-left",
     "orders.fields.time_text": ".tc-date-time",
+    "orders.filters.form": "form.orders-filter",
     "orders.row": "a.tc-item",
     "orders.rows_container": ".dyn-table-body",
     "reviews.fields.author_href": ".media-user-name a",
