@@ -149,6 +149,8 @@ SELECTORS: Final[dict[str, str]] = {
     "chips.fields.seller_name": ".media-user-name",
     "chips.fields.server_text": ".tc-server",
     "chips.markers.online": "a.tc-item",
+    "chips.numeric_carriers.amount": "div.tc-amount[data-s]",
+    "chips.numeric_carriers.price": "div.tc-price[data-s]",
     "chips.rows": "a.tc-item",
     "lot-edit.fields.currency_symbol": ".form-control-feedback",
     "lot-edit.form": "form.form-offer-editor",
