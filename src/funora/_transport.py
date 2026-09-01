@@ -510,6 +510,48 @@ class Fetcher:
             elapsed=response.elapsed.total_seconds(),
         )
 
+    def query(self, path: str, payload: object, headers: dict[str, str]) -> Observation:
+        """Спрашивает СТРУКТУРНО: тело JSON, ответ JSON.
+
+        ОТДЕЛЬНЫЙ МЕТОД, А НЕ ПРИЗНАК У submit, и правило у него своё - причём
+        обратное. Отправка формы не повторяется по переходу, потому что запись
+        повторять нельзя. Здесь ЧТЕНИЕ, выполненное методом POST: повтор
+        безвреден, и переходы выполняются как у обычного чтения.
+
+        Защитного токена здесь нет вовсе - это отличает семейство /api/ от форм.
+
+        Args:
+            path (str): Путь обращения.
+            payload (object): Тело запроса. Кодируется в JSON.
+            headers (dict[str, str]): Заголовки, кроме Cookie и Content-Type.
+
+        Returns:
+            Observation: Результат обращения.
+
+        Raises:
+            TimeoutError: Если истёк предел ожидания.
+            NetworkError: При любом другом сетевом отказе.
+            RemoteServerError: Если ответ превысил предел размера.
+        """
+        url = _start_url(self._settings, path)
+        try:
+            response = self._client.post(
+                url,
+                json=payload,
+                headers={**headers, **self._cookie()},
+            )
+        except httpx.HTTPError as exc:
+            raise _translate(exc, path) from exc
+
+        return _observe(
+            response,
+            settings=self._settings,
+            rejected_url=None,
+            redirects=0,
+            sent=1,
+            elapsed=response.elapsed.total_seconds(),
+        )
+
     def upload(
         self,
         path: str,
@@ -721,6 +763,48 @@ class AsyncFetcher:
         try:
             response = await self._client.post(
                 url, data=fields, headers={**headers, **self._cookie()}
+            )
+        except httpx.HTTPError as exc:
+            raise _translate(exc, path) from exc
+
+        return _observe(
+            response,
+            settings=self._settings,
+            rejected_url=None,
+            redirects=0,
+            sent=1,
+            elapsed=response.elapsed.total_seconds(),
+        )
+
+    async def query(self, path: str, payload: object, headers: dict[str, str]) -> Observation:
+        """Спрашивает СТРУКТУРНО: тело JSON, ответ JSON.
+
+        ОТДЕЛЬНЫЙ МЕТОД, А НЕ ПРИЗНАК У submit, и правило у него своё - причём
+        обратное. Отправка формы не повторяется по переходу, потому что запись
+        повторять нельзя. Здесь ЧТЕНИЕ, выполненное методом POST: повтор
+        безвреден, и переходы выполняются как у обычного чтения.
+
+        Защитного токена здесь нет вовсе - это отличает семейство /api/ от форм.
+
+        Args:
+            path (str): Путь обращения.
+            payload (object): Тело запроса. Кодируется в JSON.
+            headers (dict[str, str]): Заголовки, кроме Cookie и Content-Type.
+
+        Returns:
+            Observation: Результат обращения.
+
+        Raises:
+            TimeoutError: Если истёк предел ожидания.
+            NetworkError: При любом другом сетевом отказе.
+            RemoteServerError: Если ответ превысил предел размера.
+        """
+        url = _start_url(self._settings, path)
+        try:
+            response = await self._client.post(
+                url,
+                json=payload,
+                headers={**headers, **self._cookie()},
             )
         except httpx.HTTPError as exc:
             raise _translate(exc, path) from exc

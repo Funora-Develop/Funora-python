@@ -177,6 +177,8 @@ class Capability(StrEnum):
     LOTS_PROMOTE = "lots.promote"
     #: Чтение списка заказов.
     ORDERS_LIST = "orders.list"
+    #: Структурное чтение подробностей заказов пачкой.
+    ORDERS_DETAILS = "orders.details"
     #: Чтение конкретного заказа.
     ORDERS_GET = "orders.get"
     #: Распознавание событий заказа из канала обновлений.
@@ -228,6 +230,7 @@ CAPABILITY_SOURCE: Final[dict[Capability, str]] = {
     Capability.LOTS_UPDATE_PRICE: "probe",
     Capability.LOTS_PROMOTE: "probe",
     Capability.ORDERS_LIST: "static",
+    Capability.ORDERS_DETAILS: "probe",
     Capability.ORDERS_GET: "static",
     Capability.ORDERS_EVENTS: "probe",
     Capability.CHATS_LIST: "static",
@@ -266,6 +269,7 @@ CAPABILITY_INITIAL: Final[dict[Capability, CapabilityState]] = {
     Capability.LOTS_UPDATE_PRICE: CapabilityState.UNKNOWN,
     Capability.LOTS_PROMOTE: CapabilityState.UNKNOWN,
     Capability.ORDERS_LIST: CapabilityState.SUPPORTED,
+    Capability.ORDERS_DETAILS: CapabilityState.UNKNOWN,
     Capability.ORDERS_GET: CapabilityState.SUPPORTED,
     Capability.ORDERS_EVENTS: CapabilityState.UNKNOWN,
     Capability.CHATS_LIST: CapabilityState.SUPPORTED,

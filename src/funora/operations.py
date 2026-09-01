@@ -457,6 +457,27 @@ OPERATIONS: Final[dict[str, Operation]] = {
             "funora.transport",
         ),
     ),
+    "orders.details": Operation(
+        name="orders.details",
+        capability="orders.details",
+        safety=Safety.SAFE,
+        request_class="interactive",
+        returns="OrderDetailsBatch",
+        errors=(
+            "funora.capability.unsupported",
+            "funora.auth.session_expired",
+            "funora.protocol.changed",
+            "funora.transport",
+        ),
+        request_provenance="third_party_report",
+        provenance_source="FunPayAPI (бот FunPayCardinal), account.py, get_orders_by_ids.",
+        provenance_rests_on=(
+            "ВСЁ. Ни адреса, ни полей запроса, ни ключей ответа мы не наблюдали ни разу - ни в "
+            "снимках, ни в записях запросов, ни в пробах.\nЭто отличает точку от прочих на "
+            "вторичном источнике: у поднятия наблюдён запрос, у отзыва - два поля из четырёх, у "
+            "расчёта цены - итог на странице. Здесь не наблюдено ничего."
+        ),
+    ),
     "orders.get": Operation(
         name="orders.get",
         capability="orders.get",
