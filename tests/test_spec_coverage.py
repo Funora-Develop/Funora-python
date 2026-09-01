@@ -316,6 +316,7 @@ OPERATION_METHOD: dict[str, tuple[str, str]] = {
     "lots.calculate_prices": ("LotsService", "calculate_prices"),
     "account.switch_currency": ("AccountService", "switch_currency"),
     "orders.details": ("OrdersService", "details"),
+    "orders.refund": ("OrdersService", "refund"),
     "lots.promote": ("LotsService", "promote"),
     "chats.buyer_viewing": ("ChatsService", "buyer_viewing"),
     "chats.mark_read": ("ChatsService", "mark_read"),

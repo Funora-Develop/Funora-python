@@ -261,6 +261,7 @@ def test_every_returned_field_is_described() -> None:
     from funora._orders import OrderListEntry
     from funora._own_lots import OwnLot
     from funora._raise import RaiseResult
+    from funora._refund import RefundResult
     from funora._review_write import ReviewResult
     from funora._runner import SendResult
     from funora._snapshot import SnapshotEntry
@@ -286,6 +287,7 @@ def test_every_returned_field_is_described() -> None:
         (OrderDetails, "order-details"),
         (OrderDetailsBatch, "order-details-batch"),
         (BuyerViewing, "buyer-viewing"),
+        (RefundResult, "refund-result"),
     )
     for cls, name in pairs:
         declared = set(_schema(name).get("properties", {}))
@@ -339,6 +341,7 @@ def test_unbuildable_models_say_so() -> None:
         # Собирается с 31.08.2026: funora._viewing.BuyerViewing. Подписка наша,
         # ответ - от стороннего источника.
         "buyer-viewing",
+        "refund-result",
         "review-result",
         "market-page",
         # Собираются с 31.08.2026: funora._snapshot.MarketSnapshot и
