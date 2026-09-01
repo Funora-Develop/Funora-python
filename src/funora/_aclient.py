@@ -45,6 +45,7 @@ from ._own_lots import OwnLotsPage
 from ._poll import Schedule
 from ._proxies import DEFAULT_ACCOUNT, Proxy, ProxyPool
 from ._raise import RaiseResult
+from ._refund import RefundResult
 from ._review_write import ReviewResult
 from ._reviews import ReviewsPage
 from ._runner import SendResult
@@ -139,6 +140,35 @@ class AsyncOrdersService:
         return await self._client.run(
             self._client.engine.read_order_details(tuple(order_ids), include=include)
         )
+
+    async def refund(self, order_id: str) -> RefundResult:
+        """Возвращает средства покупателю по заказу.
+
+        ДЕНЬГИ УХОДЯТ ПОКУПАТЕЛЮ, И ВЕРНУТЬ ИХ ОБРАТНО ПЛОЩАДКА НЕ ПРЕДЛАГАЕТ
+        НИЧЕМ. Требует явного согласия.
+
+        Перед отправкой читается страница заказа: не показывает площадка формы
+        возврата - запрос не уходит вовсе.
+
+        ПОВТОРА НЕТ. При неоднозначном исходе положена сверка - прочитайте
+        заказ и посмотрите, - а не второй запрос: второй запрос это второй
+        возврат.
+
+        Args:
+            order_id (str): Номер заказа.
+
+        Returns:
+            RefundResult: Исход. Отказ площадки - тоже исход, и он несёт
+            причину текстом. Суммы здесь нет: её не называет ни запрос, ни
+            ответ.
+
+        Raises:
+            ValidationError: Если номер заказа непригоден.
+            UsageError: Если согласия не дано.
+            PreconditionFailedError: Если площадка возврата не предлагает.
+            FunoraError: Если страница либо ответ непригодны.
+        """
+        return await self._client.run(self._client.engine.refund_order(order_id))
 
 
 class AsyncReviewsService:

@@ -529,6 +529,28 @@ OPERATIONS: Final[dict[str, Operation]] = {
             "funora.transport",
         ),
     ),
+    "orders.refund": Operation(
+        name="orders.refund",
+        capability="orders.refund",
+        safety=Safety.UNSAFE,
+        request_class="automation",
+        returns="RefundResult",
+        errors=(
+            "funora.capability.unsupported",
+            "funora.domain.precondition_failed",
+            "funora.domain.not_found",
+            "funora.auth.session_expired",
+            "funora.transport",
+        ),
+        request_provenance="third_party_report",
+        provenance_source="FunPayAPI (бот FunPayCardinal), account.py, refund.",
+        provenance_rests_on=(
+            "НЕ ЗАПРОС, А ЧТЕНИЕ ОТВЕТА. Оба поля запроса наблюдены НАМИ: форма возврата лежит на "
+            "странице заказа, и в ней csrf_token и id. Адрес - в её же атрибуте action.\nНе "
+            "наблюдено, ЧЕМ площадка отвечает. Известно от независимой реализации: объект с "
+            "признаком отказа error и сообщением msg."
+        ),
+    ),
     "reviews.get": Operation(
         name="reviews.get",
         capability="reviews.get",

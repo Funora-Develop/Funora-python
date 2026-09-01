@@ -65,6 +65,7 @@ from ._own_lots import OwnLot, OwnLotsPage
 from ._poll import Deduplicator, Schedule
 from ._proxies import Proxy
 from ._raise import RaiseResult
+from ._refund import RefundResult
 from ._retry import Attempt, Safety, plan_attempt, policy_for
 from ._review_write import ReviewResult
 from ._reviews import Review, ReviewsPage
@@ -197,6 +198,7 @@ __all__ = [
     "PaymentMethod",
     "PriceCalculation",
     "RaiseResult",
+    "RefundResult",
     "ReviewResult",
     "OwnLot",
     "LotForm",

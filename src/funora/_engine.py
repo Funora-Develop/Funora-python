@@ -40,6 +40,8 @@ from time import monotonic
 from typing import Any, Final, TypeVar
 from urllib.parse import urlparse
 
+from selectolax.parser import HTMLParser
+
 from ._account import BalancePage, parse_balance_page
 from ._budget import Budget
 from ._calc import (
@@ -92,6 +94,7 @@ from ._own_lots import OwnLotsPage, parse_own_lots
 from ._poll import Deduplicator, Schedule
 from ._price_audit import UNSAFE_PRICE_CHANGES_WITHOUT_AUDIT, PriceAudit, PriceChange
 from ._raise import RAISE_PATH, RaiseResult, parse_raise
+from ._refund import REFUND_PATH, RefundResult, parse_refund
 from ._result import Defect, Severity
 from ._retry import RETRY_REASON_ATTR, plan_attempt
 from ._review_write import (
@@ -147,6 +150,7 @@ from .errors import (
     UsageError,
     ValidationError,
 )
+from .extraction import SELECTORS
 from .operations import OPERATIONS, Safety
 from .reconciliation import RECONCILE_DELAYS_MS, ReconcileVerdict
 from .response_classes import (
@@ -199,6 +203,10 @@ PROFILE_PATH: Final[str] = "/users/{user_id}/"
 
 #: Страница одного заказа.
 ORDER_PATH: Final[str] = "/orders/{order_id}/"
+
+#: Форма возврата на странице заказа. НАШЕ наблюдение, и на нём стоит
+#: единственный предохранитель возврата, не заимствованный ни у кого.
+REFUND_FORM: Final[str] = SELECTORS["order.identity.refund_available"]
 
 #: Страница баланса. Несёт и балансы по валютам, и операции по счёту.
 BALANCE_PATH: Final[str] = "/account/balance"
@@ -565,6 +573,7 @@ IMPLEMENTED: Final[frozenset[Capability]] = frozenset(
         Capability.ACCOUNT_SWITCH_CURRENCY,
         Capability.ORDERS_DETAILS,
         Capability.CHATS_BUYER_VIEWING,
+        Capability.ORDERS_REFUND,
     }
 )
 
@@ -2388,6 +2397,117 @@ class Engine:
             FunoraError: Если страница либо ответ непригодны.
         """
         return (yield from self._write_review(order_id, rating=None, body=""))
+
+    def refund_order(self, order_id: str) -> Generator[Request, Reply, RefundResult]:
+        """Возвращает средства покупателю по заказу.
+
+        САМАЯ ОПАСНАЯ ИЗ НАПИСАННЫХ ОПЕРАЦИЙ. Деньги уходят покупателю, и
+        площадка не предлагает вернуть их обратно ничем.
+
+        ТРИ ПРЕДОХРАНИТЕЛЯ, И ПЕРВЫЙ ИЗ НИХ - НАШ.
+
+        Первый: страница заказа читается ДО отправки, и если площадка формы
+        возврата на ней не показывает, запрос не уходит вовсе. Признак наш и
+        наблюдён. Лишний запрос здесь дешевле ошибочного возврата на порядок.
+
+        Второй: согласие. Чтение ответа взято у независимой реализации того же
+        протокола, и без явного включения возможности операция отказывает.
+
+        Третий: ответ без признака отказа ОТВЕРГАЕТСЯ. Молчаливое «получилось»
+        здесь означало бы деньги, о судьбе которых вызывающий не узнает.
+
+        ПОВТОРА НЕТ И БЫТЬ НЕ МОЖЕТ. Контракт объявляет операцию небезопасной и
+        требует сверки вместо повтора: повтор здесь - второй возврат.
+
+        Args:
+            order_id (str): Номер заказа. Тот же, что стоит в адресе страницы.
+
+        Yields:
+            Request: Просьбы о вводе-выводе.
+
+        Returns:
+            RefundResult: Исход. Отказ площадки - тоже исход, и он несёт
+            причину текстом.
+
+        Raises:
+            ValidationError: Если номер заказа непригоден.
+            UsageError: Если согласия не дано.
+            PreconditionFailedError: Если площадка возврата по этому заказу не
+                предлагает.
+            FunoraError: Если страница либо ответ непригодны.
+        """
+        cleaned = order_id.strip()
+        if not cleaned or not cleaned.isalnum():
+            raise ValidationError(
+                "номер заказа обязан состоять из букв и цифр, получено "
+                f"{len(cleaned)} знаков иного вида. Проверка идёт до сети"
+            )
+
+        capability = Capability.ORDERS_REFUND
+        contract = OPERATIONS["orders.refund"]
+        if contract.request_provenance == "third_party_report" and (
+            capability not in self._state.opted_in
+        ):
+            raise UsageError(
+                "операция orders.refund возвращает ДЕНЬГИ ПОКУПАТЕЛЮ, и вернуть "
+                "их обратно площадка не предлагает ничем. Без явного согласия "
+                f"она не отправляется. Непроверено вот что: "
+                f"{contract.provenance_rests_on} Источник: "
+                f"{contract.provenance_source} Если вы понимаете цену ошибки - "
+                f"включите возможность {capability.value} явно"
+            )
+
+        # ПЕРВЫЙ ПРЕДОХРАНИТЕЛЬ, И ОН НА НАШЕМ НАБЛЮДЕНИИ. Присутствие формы
+        # возврата на странице заказа читается с 24.08.2026. Нет её - площадка
+        # возврата по этому заказу не предлагает, и слать запрос вслепую незачем.
+        observation = yield from self.fetch_ok(capability, ORDER_PATH.format(order_id=cleaned))
+        # ЧИТАЕТСЯ ТОЛЬКО ПРИЗНАК, А НЕ ВСЯ СТРАНИЦА, и это не мелочь.
+        #
+        # Полный разбор страницы заказа отказывает, не найдя перечня параметров.
+        # Позови мы его здесь - возврат стал бы невозможен по постороннему
+        # поводу: параметры к деньгам отношения не имеют, а отказ выглядел бы
+        # как «возврат нельзя».
+        #
+        # Предохранителю нужен один признак, и он его и читает.
+        if HTMLParser(observation.html).css_first(REFUND_FORM) is None:
+            raise PreconditionFailedError(
+                f"площадка не показывает формы возврата на странице заказа "
+                f"{cleaned}. Значит возврата по нему она не предлагает - либо "
+                "заказ чужой, либо возврат уже сделан, либо срок вышел. Запрос "
+                "не отправлен"
+            )
+
+        settings = parse_app_data(observation.html)
+        token = settings.csrf_token
+        if token is None:
+            raise ProtocolChangedError(
+                "на странице заказа нет защитного токена, и собрать запрос возврата не из чего"
+            )
+
+        yield from self.spend_budget(_class_of(capability), cost=1.0)
+        reply = yield Submit(
+            REFUND_PATH,
+            # Оба поля наблюдены НАМИ, в форме на странице заказа. Номер берётся
+            # ИЗ ЗАПРОСА, а не со страницы: запрос уходил по нему же, и брать
+            # его со страницы значило бы сверять площадку с ней самой.
+            {"id": cleaned, "csrf_token": token.reveal()},
+            dict(RUNNER_HEADERS),
+        )
+        if not isinstance(reply, Observation):
+            raise TypeError(f"на просьбу Submit ожидалось наблюдение, получено {type(reply)}")
+
+        try:
+            payload = json.loads(reply.html)
+        except ValueError as exc:
+            raise ProtocolChangedError(
+                f"ответ на возврат по заказу {cleaned} не разобрался как JSON. "
+                "Деньги МОГЛИ уйти покупателю: прочитайте заказ и посмотрите, а "
+                "повторять не надо - повтор здесь второй возврат"
+            ) from exc
+
+        result = parse_refund(payload, order_id=cleaned, observed_at=datetime.now(UTC))
+        self._state.capabilities[capability] = CapabilityState.SUPPORTED
+        return result
 
     def read_order_details(
         self, order_ids: tuple[str, ...], *, include: tuple[str, ...] = DEFAULT_INCLUDE
