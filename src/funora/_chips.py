@@ -45,6 +45,23 @@ _SERVER: Final[str] = SELECTORS["chips.fields.server_text"]
 _AMOUNT: Final[str] = SELECTORS["chips.fields.amount_text"]
 _AMOUNT_UNIT: Final[str] = SELECTORS["chips.fields.amount_unit_text"]
 _PRICE: Final[str] = SELECTORS["chips.fields.price_text"]
+
+#: Числовой носитель количества. Атрибут data-s у той же ячейки.
+#:
+#: ЧТО ОН ЗНАЧИТ - ВЫВЕДЕНО АРИФМЕТИКОЙ, а не предположено. Подпись скелета
+#: хранит длину значения; сверив длины атрибута и текста по всем строкам,
+#: получаем без исключений: разница равна числу разделителей тысяч, и число
+#: это ровно такое, каким ему положено быть при такой длине.
+#:
+#: Значит атрибут - то же самое число, что и в тексте, но БЕЗ разделителей.
+_AMOUNT_VALUE: Final[str] = SELECTORS["chips.numeric_carriers.amount"]
+
+#: Числовой носитель у ячейки цены.
+#:
+#: У ЦЕНЫ ТА ЖЕ АРИФМЕТИКА НЕ СХОДИТСЯ: атрибут две-три цифры при тексте в
+#: пять-шесть знаков, и разделителей тысяч в цене за единицу быть не может.
+#: Что это за число, не установлено, и потому имя поля цены не обещает.
+_PRICE_SORT: Final[str] = SELECTORS["chips.numeric_carriers.price"]
 _CURRENCY: Final[str] = SELECTORS["chips.fields.currency_symbol_text"]
 
 _OFFER_HREF: Final[str] = ATTRIBUTES["chips.rows.attributes.offer_href"]
@@ -68,6 +85,24 @@ class ChipsOffer:
         server_id (Observed[str]): Идентификатор сервера из атрибута.
         amount_text (Observed[str]): Количество вместе с единицей измерения.
         amount_unit_text (Observed[str]): Единица измерения количества.
+        amount (Observed[int]): Количество ЧИСЛОМ.
+
+            Читается из атрибута data-s той же ячейки, и связь его с текстом
+            ВЫВЕДЕНА АРИФМЕТИКОЙ: длина текста минус длина атрибута равна числу
+            разделителей тысяч на всех строках снимка без исключений.
+
+            Ради этого поля страница и перечитывалась: перемножить количество на
+            цену за единицу - то, за чем покупатель приходит на рынок по
+            количеству.
+        price_sort (Observed[str]): Числовой носитель у ячейки цены, КАК ЕСТЬ.
+
+            ЦЕНОЙ НЕ НАЗВАН НАРОЧНО. Та же арифметика на нём не сходится:
+            атрибут две-три цифры при тексте в пять-шесть, а разделителей тысяч
+            в цене за единицу быть не может.
+
+            Что это за число - цена в иных единицах, ключ сортировки,
+            округление - не установлено. Назвать его ценой значило бы приписать
+            смысл ДЕНЬГАМ, не проверив.
         price_text (Observed[str]): Цена ЗА ЕДИНИЦУ, без знака валюты.
         currency_symbol_text (Observed[str]): Знак валюты.
         row_index (int): Место строки, считая с нуля.
@@ -82,6 +117,8 @@ class ChipsOffer:
     server_id: Observed[str]
     amount_text: Observed[str]
     amount_unit_text: Observed[str]
+    amount: Observed[int]
+    price_sort: Observed[str]
     price_text: Observed[str]
     currency_symbol_text: Observed[str]
     row_index: int
@@ -264,12 +301,66 @@ def _row(node: Node, index: int) -> tuple[ChipsOffer, list[Defect]]:
             server_id=_attribute(node, _SERVER_ID, "server_id"),
             amount_text=_own_text(node.css_first(_AMOUNT), "amount_text"),
             amount_unit_text=_text(node.css_first(_AMOUNT_UNIT), "amount_unit_text"),
+            amount=_digits(node.css_first(_AMOUNT_VALUE), "amount"),
+            price_sort=_raw_attribute(node.css_first(_PRICE_SORT), "price_sort"),
             price_text=_own_text(node.css_first(_PRICE), "price_text"),
             currency_symbol_text=_text(node.css_first(_CURRENCY), "currency_symbol_text"),
             row_index=index,
         ),
         defects,
     )
+
+
+def _digits(node: Node | None, field_name: str) -> Observed[int]:
+    """Читает целое из числового носителя строки.
+
+    ОТКАЗЫВАЕТ НА ВСЁМ, ЧТО НЕ ЦИФРЫ. Значение здесь - количество единиц товара,
+    и прочитать его наполовину хуже, чем не прочитать: покупатель умножает его
+    на цену.
+
+    Аргументы:
+        node (Node | None): Узел-носитель либо None.
+        field_name (str): Имя поля для причины отсутствия.
+
+    Возвращает:
+        Observed[int]: Число либо причина отсутствия.
+    """
+    if node is None:
+        return Observed.missing(f"{field_name}_carrier_absent")
+    attributes = node.attributes or {}
+    # ПУСТОЙ АТРИБУТ И ОТСУТСТВУЮЩИЙ РАЗЛИЧАЮТСЯ ТОЛЬКО ПРИСУТСТВИЕМ КЛЮЧА:
+    # разборщик отдаёт None у обоих. Первое - наблюдение «площадка оставила
+    # пусто», второе - «поля нет вовсе».
+    if "data-s" not in attributes:
+        return Observed.missing(f"{field_name}_attribute_absent")
+    raw = attributes["data-s"]
+    value = (raw or "").strip()
+    if not value:
+        return Observed.empty(0)
+    if not value.isdigit():
+        # Подпись скелета попадает сюда же, и это верно: в снимке значение
+        # ЗАМАСКИРОВАНО, и числа там нет. Разбор честно говорит, что не прочитал.
+        return Observed.missing(f"{field_name}_not_digits")
+    return Observed.present(int(value))
+
+
+def _raw_attribute(node: Node | None, field_name: str) -> Observed[str]:
+    """Читает значение носителя КАК ЕСТЬ, не толкуя его.
+
+    Аргументы:
+        node (Node | None): Узел-носитель либо None.
+        field_name (str): Имя поля для причины отсутствия.
+
+    Возвращает:
+        Observed[str]: Значение либо причина отсутствия.
+    """
+    if node is None:
+        return Observed.missing(f"{field_name}_carrier_absent")
+    attributes = node.attributes or {}
+    if "data-s" not in attributes:
+        return Observed.missing(f"{field_name}_attribute_absent")
+    value = (attributes["data-s"] or "").strip()
+    return Observed.present(value) if value else Observed.empty("")
 
 
 def parse_chips(html: str, *, observed_at: datetime) -> ChipsPage:
