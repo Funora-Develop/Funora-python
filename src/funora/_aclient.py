@@ -32,13 +32,14 @@ from ._catalog import CatalogPage
 from ._chats import ChatsPage
 from ._chips import ChipsPage
 from ._currency_switch import CurrencySwitch
-from ._engine import Deliver, Engine, Fetch, Pause, Reply, Request, Submit, Upload
+from ._engine import Deliver, Engine, Fetch, Pause, Query, Reply, Request, Submit, Upload
 from ._host import host_of
 from ._identity import REGISTRY
 from ._lot_form import LotForm
 from ._market import MarketPage
 from ._observed import Observed
 from ._order import OrderView
+from ._order_details import OrderDetailsBatch
 from ._orders import OrdersPage
 from ._own_lots import OwnLotsPage
 from ._poll import Schedule
@@ -107,6 +108,36 @@ class AsyncOrdersService:
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
         return await self._client.run(self._client.engine.read_orders())
+
+    async def details(
+        self, *order_ids: str, include: tuple[str, ...] = ("details", "users")
+    ) -> OrderDetailsBatch:
+        """Читает подробности заказов пачкой, структурно.
+
+        ЧТО ЭТО ДАЁТ СВЕРХ ЧТЕНИЯ СТРАНИЦЫ: сумму числом, код валюты и
+        РАЗДЕЛЕНИЕ покупателя с продавцом. Страница заказа показывает одного
+        контрагента и не помечает, на которой стороне вы сами.
+
+        НАБЛЮДЕНО НЕ НАМИ. Ни одного живого ответа этой точки мы не видели;
+        состав полей известен от независимой реализации того же протокола.
+        Поэтому всё, что может отсутствовать, приходит наблюдением с причиной, а
+        состояние - строкой, не приведённой к нашему перечню насильно.
+
+        Args:
+            order_ids (str): Идентификаторы заказов, от одного до десяти.
+            include (tuple[str, ...]): Какие разделы ответа запрашивать.
+
+        Returns:
+            OrderDetailsBatch: Спрошенное, полученное и недостающее - порознь.
+
+        Raises:
+            ValidationError: Если пачка пуста, велика либо несёт непригодный
+                идентификатор.
+            FunoraError: Если ответ непригоден.
+        """
+        return await self._client.run(
+            self._client.engine.read_order_details(tuple(order_ids), include=include)
+        )
 
 
 class AsyncReviewsService:
@@ -1072,6 +1103,16 @@ class AsyncClient:
                         content=request.content,
                         content_type=request.content_type,
                         headers=request.headers,
+                    )
+                except FunoraError as exc:
+                    failure = exc
+            elif isinstance(request, Query):
+                # Структурный вопрос идёт мимо _fetch: тело у него JSON, а не
+                # поля формы. Правило перехода при этом ЧТЕНИЯ, а не записи -
+                # повтор здесь безвреден.
+                try:
+                    reply = await self._fetcher.query(
+                        request.path, request.payload, request.headers
                     )
                 except FunoraError as exc:
                     failure = exc

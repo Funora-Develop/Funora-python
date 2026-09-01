@@ -27,7 +27,7 @@
 There is no released package and nothing to install yet. The contract is not
 stabilised and still changes.
 
-Twenty-nine operations work: nineteen reads and ten writes - sending text and images, marking a chat read, leaving and removing a review, changing a lot price, raising offers, and activating or deactivating a lot.
+Thirty operations work: twenty reads and ten writes - sending text and images, marking a chat read, leaving and removing a review, changing a lot price, raising offers, and activating or deactivating a lot.
 
 **The guide lives in [docs/index.md](docs/index.md).** It builds into a site
 (`mkdocs serve`) and is checked by the same run as the code: examples are parsed
@@ -69,6 +69,7 @@ async with AsyncClient(EnvSecretProvider()) as client:
 |---|---|
 | `client.orders.list()` | the sales list as reduced records |
 | `client.orders.get(order_id)` | one order in full |
+| `client.orders.details(*ids)` | orders structurally: amount as a number, currency as a code |
 | `client.chats.list()` | the dialog list |
 | `client.chats.thread(node_id)` | a conversation with message origin resolved |
 | `client.chats.send_text(node_id, text)` | a send receipt carrying the outcome |

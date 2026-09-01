@@ -257,6 +257,7 @@ def test_every_returned_field_is_described() -> None:
     from funora._currency_switch import CurrencySwitch
     from funora._lot_form import LotForm
     from funora._market import MarketOffer
+    from funora._order_details import OrderDetails, OrderDetailsBatch
     from funora._orders import OrderListEntry
     from funora._own_lots import OwnLot
     from funora._raise import RaiseResult
@@ -281,6 +282,8 @@ def test_every_returned_field_is_described() -> None:
         (CurrencySwitch, "currency-switch"),
         (WithdrawalOption, "withdrawal-option"),
         (WithdrawalChannel, "withdrawal-channel"),
+        (OrderDetails, "order-details"),
+        (OrderDetailsBatch, "order-details-batch"),
     )
     for cls, name in pairs:
         declared = set(_schema(name).get("properties", {}))
@@ -327,6 +330,10 @@ def test_unbuildable_models_say_so() -> None:
         # тринадцать против восьми у стороннего источника.
         "withdrawal-option",
         "withdrawal-channel",
+        # Собираются с 31.08.2026: funora._order_details. НАБЛЮДЕНО НЕ НАМИ -
+        # ни одного живого ответа этой точки мы не видели.
+        "order-details",
+        "order-details-batch",
         "review-result",
         "market-page",
         # Собираются с 31.08.2026: funora._snapshot.MarketSnapshot и

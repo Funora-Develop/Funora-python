@@ -79,6 +79,13 @@ from ._market import MarketPage, parse_market
 from ._money import CURRENCY_BY_SYMBOL
 from ._observed import Observed
 from ._order import OrderView, parse_order_page
+from ._order_details import (
+    DEFAULT_INCLUDE,
+    ORDER_DETAILS_PATH,
+    OrderDetailsBatch,
+    check_batch,
+    parse_order_details,
+)
 from ._orders import Completeness, OrdersPage, parse_orders_page
 from ._outbound import UNSAFE_SENDS_WITHOUT_LEDGER, OutboundGovernor, OutboundRefusal
 from ._own_lots import OwnLotsPage, parse_own_lots
@@ -160,6 +167,7 @@ __all__ = [
     "ORDERS_PATH",
     "CHATS_PATH",
     "RUNNER_PATH",
+    "Query",
     "Upload",
     "UPLOAD_CHAT_PATH",
     "LOT_EDIT_PATH",
@@ -265,6 +273,28 @@ class Fetch:
 
 
 @dataclass(frozen=True, slots=True)
+class Query:
+    """Просьба спросить СТРУКТУРНО: тело JSON, ответ JSON.
+
+    ОТДЕЛЬНАЯ ПРОСЬБА, И ПРАВИЛО У НЕЁ ОБРАТНОЕ ОТПРАВКЕ. Submit не повторяется
+    по переходу, потому что повтор записи - вторая запись. Здесь ЧТЕНИЕ,
+    выполненное методом POST: повтор безвреден.
+
+    Признак у Submit означал бы, что противоположные правила живут в одном
+    месте и различаются условием. Условие однажды упростят.
+
+    Attributes:
+        path (str): Путь обращения.
+        payload (object): Тело запроса, кодируемое в JSON.
+        headers (dict[str, str]): Заголовки, кроме Cookie и Content-Type.
+    """
+
+    path: str
+    payload: object
+    headers: dict[str, str]
+
+
+@dataclass(frozen=True, slots=True)
 class Upload:
     """Просьба отправить файл.
 
@@ -337,8 +367,8 @@ class Deliver:
     events: tuple[Event, ...]
 
 
-#: Любая из пяти просьб.
-Request = Fetch | Submit | Upload | Pause | Deliver
+#: Любая из шести просьб.
+Request = Fetch | Submit | Upload | Query | Pause | Deliver
 
 #: Что ядро получает в ответ на просьбу. Наблюдение - на Fetch, результат
 #: раздачи - на Deliver, ничего - на Pause.
@@ -532,6 +562,7 @@ IMPLEMENTED: Final[frozenset[Capability]] = frozenset(
         Capability.LOTS_CALCULATE_PRICES,
         Capability.CHIPS_CALCULATE_PRICES,
         Capability.ACCOUNT_SWITCH_CURRENCY,
+        Capability.ORDERS_DETAILS,
     }
 )
 
@@ -2262,6 +2293,71 @@ class Engine:
             FunoraError: Если страница либо ответ непригодны.
         """
         return (yield from self._write_review(order_id, rating=None, body=""))
+
+    def read_order_details(
+        self, order_ids: tuple[str, ...], *, include: tuple[str, ...] = DEFAULT_INCLUDE
+    ) -> Generator[Request, Reply, OrderDetailsBatch]:
+        """Читает подробности заказов пачкой, структурно.
+
+        ЕДИНСТВЕННАЯ ТОЧКА, ОТДАЮЩАЯ ЗАКАЗ СТРУКТУРНО. Она даёт то, чего
+        страница не даёт ни в каком виде: сумму числом, код валюты, разделение
+        покупателя и продавца.
+
+        СВОЕГО НАБЛЮДЕНИЯ ЗДЕСЬ НЕТ НИ ОДНОГО. Всё - адрес, поля запроса, ключи
+        ответа - известно от независимой реализации того же протокола. Это
+        отличает точку от прочих: у поднятия наблюдён запрос, у отзыва - два
+        поля из четырёх, у расчёта цены - итог на странице.
+
+        СОГЛАСИЯ ВСЁ ЖЕ НЕ СПРАШИВАЕТ: это чтение. Ошибка чтения на чужом знании
+        видна - вернётся не то либо не вернётся ничего.
+
+        ЗАЩИТНОГО ТОКЕНА ЗДЕСЬ НЕТ ВОВСЕ, и это отличает семейство от форм.
+
+        Args:
+            order_ids (tuple[str, ...]): Идентификаторы заказов, от одного до
+                десяти.
+            include (tuple[str, ...]): Какие разделы ответа запрашивать.
+
+        Yields:
+            Request: Просьбы о вводе-выводе.
+
+        Returns:
+            OrderDetailsBatch: Спрошенное, полученное и недостающее - порознь.
+
+        Raises:
+            ValidationError: Если пачка пуста, велика либо несёт непригодный
+                идентификатор.
+            FunoraError: Если ответ непригоден.
+        """
+        cleaned = tuple(one.strip() for one in order_ids)
+        check_batch(cleaned)
+
+        capability = Capability.ORDERS_DETAILS
+        check_capability(
+            capability,
+            state=self._state.capabilities[capability],
+            opted_in=capability in self._state.opted_in,
+        )
+
+        yield from self.spend_budget(_class_of(capability), cost=1.0)
+        reply = yield Query(
+            ORDER_DETAILS_PATH,
+            {"order_uids": list(cleaned), "include": list(include)},
+            {"accept": "*/*"},
+        )
+        if not isinstance(reply, Observation):
+            raise TypeError(f"на просьбу Query ожидалось наблюдение, получено {type(reply)}")
+
+        try:
+            payload = json.loads(reply.html)
+        except ValueError as exc:
+            raise ProtocolChangedError(
+                "ответ структурного чтения заказов не разобрался как JSON"
+            ) from exc
+
+        result = parse_order_details(payload, asked=cleaned, observed_at=datetime.now(UTC))
+        self._state.capabilities[capability] = CapabilityState.SUPPORTED
+        return result
 
     def read_order(self, order_id: str) -> Generator[Request, Reply, OrderView]:
         """Читает страницу одного заказа.

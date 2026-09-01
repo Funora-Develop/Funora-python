@@ -52,6 +52,7 @@ from ._market import MarketOffer, MarketPage
 from ._money import CURRENCY_BY_SYMBOL, Money, currency_of_symbol
 from ._observed import Confidence, Observed, Presence
 from ._order import OrderParam, OrderView
+from ._order_details import OrderDetails, OrderDetailsBatch
 from ._orders import (
     Completeness,
     Defect,
@@ -176,6 +177,8 @@ __all__ = [
     # подчёркиванием - то есть в место, о котором пакет прямо говорит «менять
     # буду молча».
     "OrderView",
+    "OrderDetails",
+    "OrderDetailsBatch",
     "OrderParam",
     "SendResult",
     "Account",
