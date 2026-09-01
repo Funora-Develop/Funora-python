@@ -129,8 +129,12 @@ def test_every_borrowed_write_refuses_without_consent(name: str) -> None:
     Возвращает:
         None
     """
+    # Ввоз по короткому имени, а не через пакет tests: пакета такого нет, и
+    # работает он у меня лишь потому, что корень оказался в пути. В CI не
+    # оказался - и проверка падала ввозом, ничего не проверив.
+    from _consent_probe import call_without_consent
+
     from funora.errors import UsageError
-    from tests._consent_probe import call_without_consent
 
     with pytest.raises(UsageError) as raised:
         call_without_consent(name)
