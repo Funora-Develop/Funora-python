@@ -30,9 +30,10 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Final
+from typing import Any, Final
 
 from selectolax.parser import HTMLParser, Node
 
@@ -119,6 +120,70 @@ class Transaction:
     row_index: int
 
 
+#: Обёртка вокруг формы вывода, несущая настройки объектом.
+_WITHDRAW_BOX: Final[str] = SELECTORS["account.withdrawal_options.carrier"]
+
+#: Имя атрибута с настройками. Стоит рядом с селектором нарочно.
+_WITHDRAW_DATA: Final[str] = "data-data"
+
+
+@dataclass(frozen=True, slots=True)
+class WithdrawalOption:
+    """Один способ вывода средств, как его объявила площадка.
+
+    ПЕРЕЧЕНЬ ЧИТАЕТСЯ, А НЕ ЗАШИВАЕТСЯ, и это главное свойство этой записи.
+
+    Независимая реализация того же протокола держит перечень способов рукописным
+    списком из восьми. У площадки их ТРИНАДЦАТЬ, и два из восьми неверны:
+    значения binance в перечне площадки нет вовсе (там binance_usdc и
+    binance_usdt), а fps и yandex - разные способы, слитые у неё в один.
+
+    Рукописный перечень чужой стороны устарел молча. Наш устарел бы так же, и
+    потому его тут нет: ключи читаются из того, что прислала площадка.
+
+    Attributes:
+        key (str): Машинное имя способа: card_rub, fps, usdt_trc и прочие.
+            Именно оно уходит в запрос вывода.
+        name (Observed[str]): Название на локали интерфейса. Не разбирается.
+        unit (Observed[str]): Единица, в которой способ выдаёт средства.
+        wallet_label (Observed[str]): Подпись поля адреса кошелька - то, что
+            площадка просит ввести.
+        saved_wallets (tuple[str, ...]): Сохранённые адреса этого способа.
+
+            У наблюдённого аккаунта пусты все тринадцать. Строение наблюдено,
+            наполнение - нет. Пустой список здесь положительный признак:
+            площадка сказала «сохранённых нет», а не промолчала.
+    """
+
+    key: str
+    name: Observed[str]
+    unit: Observed[str]
+    wallet_label: Observed[str]
+    saved_wallets: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class WithdrawalChannel:
+    """Канал вывода: пара «валюта счёта - способ» и сведения о комиссии.
+
+    СЛОВА «КОМИССИЯ» В ПРОЕКТЕ ДО 31.08.2026 НЕ БЫЛО НИГДЕ. Это первое место,
+    где она названа, - и названа она текстом, потому что иначе нельзя.
+
+    Attributes:
+        currency (str): Валюта счёта, с которой выводят. Код ISO 4217.
+        option_key (str): Машинное имя способа, к которому ведёт канал.
+        name (Observed[str]): Название канала на локали. Не разбирается.
+        fee_text (Observed[str]): Сведения о комиссии, КАК ЕСТЬ. Разбирать их мы
+            не станем: это текст на локали интерфейса, а локаль привязана к
+            аккаунту. Строить расчёт ДЕНЕГ на переводе нельзя.
+    """
+
+    currency: str
+    option_key: str
+    name: Observed[str]
+    fee_text: Observed[str]
+
+
 @dataclass(frozen=True, slots=True)
 class BalancePage:
     """Результат чтения страницы баланса.
@@ -135,6 +200,11 @@ class BalancePage:
         rows_total (int): Сколько кандидатов в операции нашлось, штук.
         rows_accepted (int): Сколько операций собрано, штук.
         rows_rejected (int): Сколько кандидатов отброшено, штук.
+        withdrawal_options (tuple[WithdrawalOption, ...]): Способы вывода,
+            объявленные площадкой на этой же странице. Отдельного запроса за
+            ними нет - тот же довод, по которому здесь же лежат операции.
+        withdrawal_channels (tuple[WithdrawalChannel, ...]): Каналы вывода:
+            какой валютой каким способом и с какой комиссией.
         defects (tuple[Defect, ...]): Замеченные повреждения.
     """
 
@@ -145,6 +215,8 @@ class BalancePage:
     rows_total: int
     rows_accepted: int
     rows_rejected: int
+    withdrawal_options: tuple[WithdrawalOption, ...] = ()
+    withdrawal_channels: tuple[WithdrawalChannel, ...] = ()
     defects: tuple[Defect, ...] = ()
     _entries: tuple[Transaction, ...] = field(repr=False, default=())
 
@@ -365,6 +437,115 @@ def _totality(tree: HTMLParser) -> tuple[Completeness, str]:
     return Completeness.COMPLETE, "all_rows_parsed"
 
 
+def _text_field(source: dict[str, Any], key: str) -> Observed[str]:
+    """Читает строковое поле объекта настроек вывода.
+
+    Аргументы:
+        source (dict[str, Any]): Объект.
+        key (str): Имя ключа.
+
+    Возвращает:
+        Observed[str]: Наблюдение.
+    """
+    raw = source.get(key)
+    if not isinstance(raw, str):
+        return Observed.missing(f"{key}_not_a_string")
+    value = raw.strip()
+    return Observed.present(value) if value else Observed.empty("")
+
+
+def parse_withdrawal_box(
+    html_source: str,
+) -> tuple[tuple[WithdrawalOption, ...], tuple[WithdrawalChannel, ...], tuple[Defect, ...]]:
+    """Читает способы и каналы вывода из настроек области вывода.
+
+    ПЕРЕЧЕНЬ СПОСОБОВ БЕРЁТСЯ ИЗ КЛЮЧЕЙ ОБЪЕКТА, а не из нашего списка. Список,
+    записанный здесь, устарел бы молча - ровно так устарел рукописный перечень
+    сторонней реализации, где восемь способов вместо тринадцати и два неверных.
+
+    ОТСУТСТВИЕ ОБЛАСТИ - НЕ ПОВРЕЖДЕНИЕ. Гостю она не показывается вовсе, и
+    объявлять это поломкой значило бы ломать чтение страницы под гостем.
+
+    Аргументы:
+        html_source (str): Разметка страницы баланса.
+
+    Возвращает:
+        tuple: Способы, каналы и перечень повреждений.
+    """
+    tree = HTMLParser(html_source)
+    node = tree.css_first(_WITHDRAW_BOX)
+    if node is None:
+        return (), (), ()
+
+    raw = (node.attributes or {}).get(_WITHDRAW_DATA)
+    if not raw:
+        return (), (), ()
+
+    try:
+        settings: Any = json.loads(raw)
+    except ValueError:
+        return (
+            (),
+            (),
+            (
+                Defect(
+                    severity=Severity.PAGE,
+                    code="withdraw_box_not_json",
+                    detail="настройки области вывода не разбираются как объект JSON",
+                    field_name="withdrawal_options",
+                ),
+            ),
+        )
+
+    if not isinstance(settings, dict):
+        return (), (), ()
+
+    options: list[WithdrawalOption] = []
+    raw_options = settings.get("extCurrencies")
+    if isinstance(raw_options, dict):
+        for key in sorted(raw_options):
+            body = raw_options[key]
+            if not isinstance(body, dict):
+                continue
+            raw_wallets = body.get("wallets")
+            options.append(
+                WithdrawalOption(
+                    key=key,
+                    name=_text_field(body, "name"),
+                    unit=_text_field(body, "unit"),
+                    wallet_label=_text_field(body, "walletName"),
+                    saved_wallets=tuple(one for one in raw_wallets if isinstance(one, str))
+                    if isinstance(raw_wallets, list)
+                    else (),
+                )
+            )
+
+    channels: list[WithdrawalChannel] = []
+    raw_currencies = settings.get("currencies")
+    if isinstance(raw_currencies, dict):
+        for code in sorted(raw_currencies):
+            body = raw_currencies[code]
+            if not isinstance(body, dict):
+                continue
+            for one in body.get("channels") or []:
+                if not isinstance(one, dict):
+                    continue
+                raw_key = one.get("extCurrency")
+                channels.append(
+                    WithdrawalChannel(
+                        # Код приводится к прописным: площадка объявляет валюты
+                        # строчными ключами, а переключатель в шапке - прописными.
+                        # Два вида одного кода разошлись бы при сверке молча.
+                        currency=code.upper(),
+                        option_key=raw_key if isinstance(raw_key, str) else "",
+                        name=_text_field(one, "name"),
+                        fee_text=_text_field(one, "feeInfo"),
+                    )
+                )
+
+    return tuple(options), tuple(channels), ()
+
+
 def parse_balance_page(html: str, observed_at: datetime) -> BalancePage:
     """Разбирает страницу баланса: балансы и операции по счёту.
 
@@ -459,6 +640,12 @@ def parse_balance_page(html: str, observed_at: datetime) -> BalancePage:
     else:
         completeness, reason = _totality(tree)
 
+    # Способы вывода читаются С ТОЙ ЖЕ СТРАНИЦЫ. Отдельного запроса за ними нет,
+    # и делать его значило бы ходить на площадку дважды за одним ответом - тот же
+    # довод, по которому здесь же лежат операции по счёту.
+    options, channels, box_defects = parse_withdrawal_box(html)
+    defects.extend(box_defects)
+
     return BalancePage(
         balances=balances,
         completeness=completeness,
@@ -467,6 +654,8 @@ def parse_balance_page(html: str, observed_at: datetime) -> BalancePage:
         rows_total=rows_total,
         rows_accepted=len(entries),
         rows_rejected=len(found.rows) - len(entries),
+        withdrawal_options=options,
+        withdrawal_channels=channels,
         defects=tuple(defects),
         _entries=entries,
     )

@@ -251,6 +251,7 @@ def test_every_returned_field_is_described() -> None:
     Returns:
         None
     """
+    from funora._account import WithdrawalChannel, WithdrawalOption
     from funora._calc import PaymentMethod, PriceCalculation
     from funora._chats import ChatListEntry
     from funora._currency_switch import CurrencySwitch
@@ -278,6 +279,8 @@ def test_every_returned_field_is_described() -> None:
         (PriceCalculation, "price-calculation"),
         (PaymentMethod, "payment-method"),
         (CurrencySwitch, "currency-switch"),
+        (WithdrawalOption, "withdrawal-option"),
+        (WithdrawalChannel, "withdrawal-channel"),
     )
     for cls, name in pairs:
         declared = set(_schema(name).get("properties", {}))
@@ -319,6 +322,11 @@ def test_unbuildable_models_say_so() -> None:
         "price-calculation",
         "payment-method",
         "currency-switch",
+        # Собираются с 31.08.2026: funora._account.WithdrawalOption и
+        # WithdrawalChannel - по НАШЕМУ снимку, где способов вывода
+        # тринадцать против восьми у стороннего источника.
+        "withdrawal-option",
+        "withdrawal-channel",
         "review-result",
         "market-page",
         # Собираются с 31.08.2026: funora._snapshot.MarketSnapshot и
