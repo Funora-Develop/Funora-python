@@ -213,8 +213,13 @@ def test_every_result_type_is_importable_from_the_package() -> None:
             if member.startswith("_"):
                 continue
             returns = getattr(service, member).__annotations__.get("return")
-            if isinstance(returns, str):
-                wanted.add(returns)
+            if not isinstance(returns, str):
+                continue
+            # Кортеж разворачивается до ЭЛЕМЕНТА: вызывающий пишет
+            # tuple[BuyerViewing, ...], и импортировать ему нужен BuyerViewing.
+            # Сам tuple - имя языка, вывозить его неоткуда и незачем.
+            wrapped = re.fullmatch(r"tuple\[(\w+), \.\.\.\]", returns)
+            wanted.add(wrapped.group(1) if wrapped else returns)
 
     assert wanted, "у сервисов не нашлось ни одного объявленного типа результата"
 
@@ -297,6 +302,8 @@ def test_the_readme_counts_the_operations_it_has() -> None:
         28: ("двадцать восемь", "twenty-eight"),
         29: ("двадцать девять", "twenty-nine"),
         30: ("тридцать", "thirty"),
+        31: ("тридцать одну", "thirty-one"),
+        32: ("тридцать две", "thirty-two"),
     }
     assert methods in words, f"операций {methods}, а числительного для них нет"
     assert methods - writes in words, f"чтений {methods - writes}, числительного нет"

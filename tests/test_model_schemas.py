@@ -265,6 +265,7 @@ def test_every_returned_field_is_described() -> None:
     from funora._runner import SendResult
     from funora._snapshot import SnapshotEntry
     from funora._thread import Message
+    from funora._viewing import BuyerViewing
 
     pairs = (
         (OrderListEntry, "order-list-entry"),
@@ -284,6 +285,7 @@ def test_every_returned_field_is_described() -> None:
         (WithdrawalChannel, "withdrawal-channel"),
         (OrderDetails, "order-details"),
         (OrderDetailsBatch, "order-details-batch"),
+        (BuyerViewing, "buyer-viewing"),
     )
     for cls, name in pairs:
         declared = set(_schema(name).get("properties", {}))
@@ -334,6 +336,9 @@ def test_unbuildable_models_say_so() -> None:
         # ни одного живого ответа этой точки мы не видели.
         "order-details",
         "order-details-batch",
+        # Собирается с 31.08.2026: funora._viewing.BuyerViewing. Подписка наша,
+        # ответ - от стороннего источника.
+        "buyer-viewing",
         "review-result",
         "market-page",
         # Собираются с 31.08.2026: funora._snapshot.MarketSnapshot и

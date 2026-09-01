@@ -193,6 +193,8 @@ class Capability(StrEnum):
     CHATS_SEND_TEXT = "chats.send_text"
     #: Отправка изображения или вложения.
     CHATS_SEND_IMAGE = "chats.send_image"
+    #: Что покупатель смотрит прямо сейчас.
+    CHATS_BUYER_VIEWING = "chats.buyer_viewing"
     #: Отметка переписки прочитанной.
     CHATS_MARK_READ = "chats.mark_read"
     #: Написание отзыва к заказу либо ответа на чужой.
@@ -238,6 +240,7 @@ CAPABILITY_SOURCE: Final[dict[Capability, str]] = {
     Capability.CHATS_HISTORY_PAGINATION: "probe",
     Capability.CHATS_SEND_TEXT: "static",
     Capability.CHATS_SEND_IMAGE: "probe",
+    Capability.CHATS_BUYER_VIEWING: "probe",
     Capability.CHATS_MARK_READ: "probe",
     Capability.REVIEWS_LEAVE: "probe",
     Capability.REVIEWS_REMOVE: "probe",
@@ -277,6 +280,7 @@ CAPABILITY_INITIAL: Final[dict[Capability, CapabilityState]] = {
     Capability.CHATS_HISTORY_PAGINATION: CapabilityState.UNKNOWN,
     Capability.CHATS_SEND_TEXT: CapabilityState.SUPPORTED,
     Capability.CHATS_SEND_IMAGE: CapabilityState.UNKNOWN,
+    Capability.CHATS_BUYER_VIEWING: CapabilityState.UNKNOWN,
     Capability.CHATS_MARK_READ: CapabilityState.UNKNOWN,
     Capability.REVIEWS_LEAVE: CapabilityState.UNKNOWN,
     Capability.REVIEWS_REMOVE: CapabilityState.UNKNOWN,

@@ -53,6 +53,7 @@ from ._showcase import ShowcasePage
 from ._snapshot import MarketSnapshot
 from ._thread import Thread
 from ._transport import AsyncFetcher, TransportSettings
+from ._viewing import BuyerViewing
 from ._watch import Router, adispatch
 from ._whoami import Account, CapabilityProfile, SessionHealth
 from .capabilities import Capability, CapabilityState
@@ -346,6 +347,32 @@ class AsyncChatsService:
             self._client.engine.send_image(
                 node_id, content, filename=filename, content_type=content_type
             )
+        )
+
+    async def buyer_viewing(self, node_id: str, *buyer_ids: str) -> tuple[BuyerViewing, ...]:
+        """Читает, что покупатели смотрят прямо сейчас.
+
+        ЗАЧЕМ ЭТО ПРОДАВЦУ: увидеть, что покупатель, с которым идёт переписка,
+        смотрит именно ваш лот - и что именно.
+
+        РАСКОЛ НАБЛЮДЕНИЯ. Подписка наблюдена нами; ответ на неё - нет. Поэтому
+        разметка блока сохраняется КАК ЕСТЬ: не разберись наши поля, у вас
+        останется то, из чего вы поймёте сами.
+
+        Args:
+            node_id (str): Диалог, со страницы которого берётся защитный токен.
+            buyer_ids (str): Идентификаторы покупателей.
+
+        Returns:
+            tuple[BuyerViewing, ...]: По записи на каждого спрошенного, В ТОМ ЖЕ
+            ПОРЯДКЕ. Не ответившие получают наблюдение «не смотрит».
+
+        Raises:
+            ValidationError: Если идентификатор непригоден либо перечень пуст.
+            FunoraError: Если страница либо ответ непригодны.
+        """
+        return await self._client.run(
+            self._client.engine.read_buyer_viewing(node_id, tuple(buyer_ids))
         )
 
 

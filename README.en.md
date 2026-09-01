@@ -27,7 +27,7 @@
 There is no released package and nothing to install yet. The contract is not
 stabilised and still changes.
 
-Thirty operations work: twenty reads and ten writes - sending text and images, marking a chat read, leaving and removing a review, changing a lot price, raising offers, and activating or deactivating a lot.
+Thirty-one operations work: twenty-one reads and ten writes - sending text and images, marking a chat read, leaving and removing a review, changing a lot price, raising offers, and activating or deactivating a lot.
 
 **The guide lives in [docs/index.md](docs/index.md).** It builds into a site
 (`mkdocs serve`) and is checked by the same run as the code: examples are parsed
@@ -75,6 +75,7 @@ async with AsyncClient(EnvSecretProvider()) as client:
 | `client.chats.send_text(node_id, text)` | a send receipt carrying the outcome |
 | `client.chats.mark_read(node_id)` | the chat marked as read |
 | `client.chats.send_image(node_id, content, ...)` | an image in the chat |
+| `client.chats.buyer_viewing(node_id, *buyer_ids)` | what a buyer is viewing right now |
 | `client.lots.list_own(node_id)` | your own lots in a section, with offer ids |
 | `client.lots.form(node_id, offer_id)` | a lot edit form, and whether the lot is listed |
 | `client.lots.update_price(...)` | the lot with a new price and nothing else touched |

@@ -317,6 +317,7 @@ OPERATION_METHOD: dict[str, tuple[str, str]] = {
     "account.switch_currency": ("AccountService", "switch_currency"),
     "orders.details": ("OrdersService", "details"),
     "lots.promote": ("LotsService", "promote"),
+    "chats.buyer_viewing": ("ChatsService", "buyer_viewing"),
     "chats.mark_read": ("ChatsService", "mark_read"),
     "chats.send_image": ("ChatsService", "send_image"),
     "reviews.leave": ("ReviewsService", "leave"),
@@ -375,9 +376,21 @@ def test_declared_return_type_matches_what_is_returned() -> None:
         # заведена ЗДЕСЬ, а не подстановкой в порождённом контракте: void
         # объявляет отсутствие результата, а None - объект. Совпадают они в
         # Python, но не в шести языках, ради которых контракт и языконезависим.
-        declared = "None" if OPERATIONS[name].returns == "void" else OPERATIONS[name].returns
+        promised = OPERATIONS[name].returns
+        # void контракта - это None языка. Пара заведена ЗДЕСЬ, а не подстановкой
+        # в порождённом контракте: void объявляет отсутствие результата, а None -
+        # объект. Совпадают они в Python, но не в шести языках.
+        if promised == "void":
+            declared = "None"
+        elif promised.endswith("[]"):
+            # Перечень контракта - неизменяемая последовательность языка. Список
+            # был бы неверен: вызывающий вправе решить, что его можно править, а
+            # правка прочитанного молча расходится с площадкой.
+            declared = f"tuple[{promised[:-2]}, ...]"
+        else:
+            declared = promised
         assert declared == actual, (
-            f"{name}: спецификация обещает {OPERATIONS[name].returns}, "
+            f"{name}: спецификация обещает {promised}, "
             f"а {service}.{method_name} возвращает {actual}"
         )
 
