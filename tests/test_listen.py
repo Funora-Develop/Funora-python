@@ -540,3 +540,37 @@ def test_the_subscription_carries_the_token_and_both_objects(no_sleep: list[floa
     objects = json.loads(sent["objects"])
     assert [one["type"] for one in objects] == [ORDERS_COUNTERS, CHAT_BOOKMARKS]
     assert len({one["id"] for one in objects}) == 1, "оба объекта берут id из data-user"
+
+
+def test_the_outbox_is_drained_in_the_short_pause(no_sleep: list[float]) -> None:
+    """Проверяет, что ответ покупателю уходит и на быстром пути.
+
+    ЭТО ГЛАВНАЯ ПРОВЕРКА ВСЕЙ ЗАТЕИ ДЛЯ БОТА. Очередь исходящих разбирается в
+    паузе между шагами, и другого места у неё нет. Быстрый путь укорачивает
+    паузу с двух минут до пяти секунд - значит и отвечать бот стал чаще, а не
+    только замечать быстрее.
+
+    Пропусти мы разбор очереди на быстром пути - вышло бы наоборот: наблюдение
+    видит новое сообщение за секунды и молчит в ответ, пока не сорвётся на
+    медленный путь.
+
+    Аргументы:
+        no_sleep (list[float]): Перечень пауз.
+
+    Возвращает:
+        None
+    """
+    paused: list[int] = []
+    transport = _Channel([_answer([])])
+    with Client(transport=transport) as client:  # type: ignore[arg-type]
+        client.run(
+            client.engine.watch(Router(), max_iterations=3),
+            router=Router(),
+            on_idle=paused.append,
+        )
+
+    assert len(paused) == 3, "разбор очереди предлагается на каждом шаге, а не через раз"
+    # Первый шаг идёт медленным путём - опорную точку брать неоткуда, - и паузу
+    # ему назначает расписание. Дальше паузы ставит канал.
+    assert paused[1:] == [5000, 5000], "пауза быстрого пути - собственный темп площадки"
+    assert paused[0] != 5000, "первая пауза приходит от расписания, а не от канала"
