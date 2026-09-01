@@ -29,10 +29,22 @@ from ._account import BalancePage
 from ._budget import Budget
 from ._calc import PriceCalculation
 from ._catalog import CatalogPage
+from ._chat_history import ChatHistory
 from ._chats import ChatsPage
 from ._chips import ChipsPage
 from ._currency_switch import CurrencySwitch
-from ._engine import Deliver, Engine, Fetch, Pause, Query, Reply, Request, Submit, Upload
+from ._engine import (
+    Ask,
+    Deliver,
+    Engine,
+    Fetch,
+    Pause,
+    Query,
+    Reply,
+    Request,
+    Submit,
+    Upload,
+)
 from ._host import host_of
 from ._identity import REGISTRY
 from ._lot_form import LotForm
@@ -317,6 +329,35 @@ class AsyncChatsService:
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
         return await self._client.run(self._client.engine.read_thread(node_id))
+
+    async def history_before(self, node_id: str, *, before_message_id: str) -> ChatHistory:
+        """Догружает сообщения переписки СТАРШЕ указанного.
+
+        ЗАПРОС ЗАИМСТВОВАН ЦЕЛИКОМ - и адрес, и оба имени параметров, и форма
+        ответа. Своего наблюдения этой точки нет ни одного.
+
+        СОГЛАСИЯ НЕ ТРЕБУЕТ: это чтение, а ошибка чтения на чужом знании видна
+        сразу и следа не оставляет.
+
+        НАПРАВЛЕНИЕ СВЕРЯЕТСЯ. Пришедшие идентификаторы обязаны быть строго
+        меньше курсора; иначе - отказ, а не молча отданный список.
+
+        Args:
+            node_id (str): Идентификатор диалога.
+            before_message_id (str): Курсор - идентификатор сообщения, от
+                которого просят назад. Только цифры.
+
+        Returns:
+            ChatHistory: Догруженные сообщения вместе с признаком конца.
+
+        Raises:
+            ValidationError: Если идентификатор либо курсор непригодны.
+            CursorIncompatibleError: Если площадка вернула не ту сторону.
+            FunoraError: Если ответ непригоден.
+        """
+        return await self._client.run(
+            self._client.engine.read_history_before(node_id, before_message_id=before_message_id)
+        )
 
     async def mark_read(self, node_id: str) -> None:
         """Помечает диалог прочитанным.
@@ -1171,6 +1212,15 @@ class AsyncClient:
                     reply = await self._fetcher.query(
                         request.path, request.payload, request.headers
                     )
+                except FunoraError as exc:
+                    failure = exc
+            elif isinstance(request, Ask):
+                # Вопрос методом GET с ответом объектом. Мимо _fetch: переходы
+                # здесь не выполняются - переход отсюда означает не «страница
+                # переехала», а «нас выкинуло на страницу», и разбирать её как
+                # объект нельзя.
+                try:
+                    reply = await self._fetcher.ask(request.path, request.headers)
                 except FunoraError as exc:
                     failure = exc
             elif isinstance(request, Deliver):

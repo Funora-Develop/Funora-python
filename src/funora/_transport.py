@@ -510,6 +510,48 @@ class Fetcher:
             elapsed=response.elapsed.total_seconds(),
         )
 
+    def ask(self, path: str, headers: dict[str, str]) -> Observation:
+        """Спрашивает методом GET, но получает ОБЪЕКТ, а не разметку страницы.
+
+        ОТДЕЛЬНЫЙ МЕТОД, А НЕ ПРИЗНАК У fetch. Отличий от чтения страницы два -
+        заголовки и то, что ответ разбирается как объект, - и оба можно было бы
+        сделать признаками. Признак означал бы, что два разных чтения живут в
+        одном месте и различаются условием, а условие однажды упростят.
+
+        ПЕРЕХОДЫ НЕ ВЫПОЛНЯЮТСЯ. Точка отвечает объектом; переход отсюда означает
+        не «страница переехала», а «нас выкинуло на страницу» - и разбирать её
+        как объект нельзя. Пусть лучше это станет видно отказом.
+
+        Args:
+            path (str): Путь обращения вместе с параметрами.
+            headers (dict[str, str]): Заголовки, кроме Cookie.
+
+        Returns:
+            Observation: Результат обращения.
+
+        Raises:
+            TimeoutError: Если истёк предел ожидания.
+            NetworkError: При любом другом сетевом отказе.
+            RemoteServerError: Если ответ превысил предел размера.
+        """
+        url = _start_url(self._settings, path)
+        try:
+            response = self._client.get(
+                url,
+                headers={**headers, **self._cookie()},
+            )
+        except httpx.HTTPError as exc:
+            raise _translate(exc, path) from exc
+
+        return _observe(
+            response,
+            settings=self._settings,
+            rejected_url=None,
+            redirects=0,
+            sent=1,
+            elapsed=response.elapsed.total_seconds(),
+        )
+
     def query(self, path: str, payload: object, headers: dict[str, str]) -> Observation:
         """Спрашивает СТРУКТУРНО: тело JSON, ответ JSON.
 
@@ -763,6 +805,48 @@ class AsyncFetcher:
         try:
             response = await self._client.post(
                 url, data=fields, headers={**headers, **self._cookie()}
+            )
+        except httpx.HTTPError as exc:
+            raise _translate(exc, path) from exc
+
+        return _observe(
+            response,
+            settings=self._settings,
+            rejected_url=None,
+            redirects=0,
+            sent=1,
+            elapsed=response.elapsed.total_seconds(),
+        )
+
+    async def ask(self, path: str, headers: dict[str, str]) -> Observation:
+        """Спрашивает методом GET, но получает ОБЪЕКТ, а не разметку страницы.
+
+        ОТДЕЛЬНЫЙ МЕТОД, А НЕ ПРИЗНАК У fetch. Отличий от чтения страницы два -
+        заголовки и то, что ответ разбирается как объект, - и оба можно было бы
+        сделать признаками. Признак означал бы, что два разных чтения живут в
+        одном месте и различаются условием, а условие однажды упростят.
+
+        ПЕРЕХОДЫ НЕ ВЫПОЛНЯЮТСЯ. Точка отвечает объектом; переход отсюда означает
+        не «страница переехала», а «нас выкинуло на страницу» - и разбирать её
+        как объект нельзя. Пусть лучше это станет видно отказом.
+
+        Args:
+            path (str): Путь обращения вместе с параметрами.
+            headers (dict[str, str]): Заголовки, кроме Cookie.
+
+        Returns:
+            Observation: Результат обращения.
+
+        Raises:
+            TimeoutError: Если истёк предел ожидания.
+            NetworkError: При любом другом сетевом отказе.
+            RemoteServerError: Если ответ превысил предел размера.
+        """
+        url = _start_url(self._settings, path)
+        try:
+            response = await self._client.get(
+                url,
+                headers={**headers, **self._cookie()},
             )
         except httpx.HTTPError as exc:
             raise _translate(exc, path) from exc

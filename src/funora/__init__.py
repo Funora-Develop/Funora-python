@@ -24,6 +24,7 @@ from ._aclient import AsyncChatsService, AsyncClient, AsyncOrdersService
 from ._budget import Budget, Reservation
 from ._calc import PaymentMethod, PriceCalculation
 from ._catalog import CatalogGame, CatalogPage
+from ._chat_history import ChatHistory
 from ._chats import ChatListEntry, ChatsPage, parse_chats_page
 from ._chips import ChipsOffer, ChipsPage
 from ._classify import (
@@ -219,6 +220,7 @@ __all__ = [
     "MAX_SUBSCRIPTION",
     # список диалогов
     "parse_chats_page",
+    "ChatHistory",
     "ChatsPage",
     "ChatListEntry",
     # переписка
