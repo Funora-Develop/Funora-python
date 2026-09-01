@@ -27,7 +27,7 @@
 There is no released package and nothing to install yet. The contract is not
 stabilised and still changes.
 
-Twenty-eight operations work: nineteen reads and nine writes - sending text and images, marking a chat read, leaving and removing a review, changing a lot price, raising offers, and activating or deactivating a lot.
+Twenty-nine operations work: nineteen reads and ten writes - sending text and images, marking a chat read, leaving and removing a review, changing a lot price, raising offers, and activating or deactivating a lot.
 
 **The guide lives in [docs/index.md](docs/index.md).** It builds into a site
 (`mkdocs serve`) and is checked by the same run as the code: examples are parsed
@@ -92,6 +92,7 @@ async with AsyncClient(EnvSecretProvider()) as client:
 | `client.account.refresh()` | the same, re-read |
 | `client.account.health()` | whether the session is usable |
 | `client.account.balance()` | balance and transactions |
+| `client.account.switch_currency(code)` | the display currency switched |
 | `client.account.capabilities()` | which of the declared capabilities are available |
 | `client.catalog.categories()` | the marketplace sections |
 

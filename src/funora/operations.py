@@ -136,6 +136,26 @@ OPERATIONS: Final[dict[str, Operation]] = {
             "funora.transport",
         ),
     ),
+    "account.switch_currency": Operation(
+        name="account.switch_currency",
+        capability="account.switch_currency",
+        safety=Safety.IDEMPOTENT,
+        request_class="automation",
+        returns="CurrencySwitch",
+        errors=(
+            "funora.capability.unsupported",
+            "funora.auth.session_expired",
+            "funora.protocol.changed",
+            "funora.transport",
+        ),
+        request_provenance="third_party_report",
+        provenance_source="FunPayAPI (бот FunPayCardinal), account.py, get_exchange_rate.",
+        provenance_rests_on=(
+            "Адрес, имена полей запроса и ключи ответа. НАБЛЮДЁН НАМИ только сам переключатель в "
+            "шапке: пункты его несут код ISO 4217 в data-cy, и перечисляют они ПРОЧИЕ валюты, не "
+            "текущую. То есть мы видели, какие коды бывают, и не видели, как их отправить."
+        ),
+    ),
     "capabilities": Operation(
         name="capabilities",
         capability="account.profile",

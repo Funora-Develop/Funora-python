@@ -143,6 +143,8 @@ class Capability(StrEnum):
     ACCOUNT_PROFILE = "account.profile"
     #: Чтение операций по счёту.
     ACCOUNT_TRANSACTIONS = "account.transactions"
+    #: Смена валюты, в которой площадка показывает суммы.
+    ACCOUNT_SWITCH_CURRENCY = "account.switch_currency"
     #: Чтение баланса аккаунта.
     ACCOUNT_BALANCE = "account.balance"
     #: Чтение дерева разделов каталога.
@@ -209,6 +211,7 @@ class Capability(StrEnum):
 CAPABILITY_SOURCE: Final[dict[Capability, str]] = {
     Capability.ACCOUNT_PROFILE: "static",
     Capability.ACCOUNT_TRANSACTIONS: "probe",
+    Capability.ACCOUNT_SWITCH_CURRENCY: "probe",
     Capability.ACCOUNT_BALANCE: "probe",
     Capability.CATALOG_CATEGORIES: "static",
     Capability.CATALOG_FIELD_SCHEMA: "probe",
@@ -246,6 +249,7 @@ CAPABILITY_SOURCE: Final[dict[Capability, str]] = {
 CAPABILITY_INITIAL: Final[dict[Capability, CapabilityState]] = {
     Capability.ACCOUNT_PROFILE: CapabilityState.SUPPORTED,
     Capability.ACCOUNT_TRANSACTIONS: CapabilityState.UNKNOWN,
+    Capability.ACCOUNT_SWITCH_CURRENCY: CapabilityState.UNKNOWN,
     Capability.ACCOUNT_BALANCE: CapabilityState.UNKNOWN,
     Capability.CATALOG_CATEGORIES: CapabilityState.SUPPORTED,
     Capability.CATALOG_FIELD_SCHEMA: CapabilityState.UNKNOWN,

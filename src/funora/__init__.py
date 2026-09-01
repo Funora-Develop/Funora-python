@@ -35,6 +35,7 @@ from ._classify import (
     classify,
 )
 from ._client import ChatsService, Client, OrdersService
+from ._currency_switch import CurrencySwitch
 from ._diff import (
     Event,
     chats_cursor,
@@ -185,6 +186,7 @@ __all__ = [
     "ReviewsPage",
     "Review",
     "OwnLotsPage",
+    "CurrencySwitch",
     "PaymentMethod",
     "PriceCalculation",
     "RaiseResult",

@@ -52,6 +52,12 @@ from ._catalog import CatalogPage, parse_catalog
 from ._chats import ChatsPage, parse_chats_page
 from ._chips import ChipsPage, parse_chips
 from ._classify import DEFAULT_IDENTITY_CSS, ResponseClass, Verdict, classify
+from ._currency_switch import (
+    NEVER_CONFIRMED,
+    SWITCH_CURRENCY_PATH,
+    CurrencySwitch,
+    parse_currency_switch,
+)
 from ._delivered import DeliveryLedger
 from ._diff import (
     UNREAD_STATUS,
@@ -70,6 +76,7 @@ from ._host import host_of
 from ._identity import REGISTRY, Identity, identity_of
 from ._lot_form import SAVE_PATH, LotForm, parse_lot_form
 from ._market import MarketPage, parse_market
+from ._money import CURRENCY_BY_SYMBOL
 from ._observed import Observed
 from ._order import OrderView, parse_order_page
 from ._orders import Completeness, OrdersPage, parse_orders_page
@@ -524,6 +531,7 @@ IMPLEMENTED: Final[frozenset[Capability]] = frozenset(
         Capability.REVIEWS_REMOVE,
         Capability.LOTS_CALCULATE_PRICES,
         Capability.CHIPS_CALCULATE_PRICES,
+        Capability.ACCOUNT_SWITCH_CURRENCY,
     }
 )
 
@@ -1943,6 +1951,90 @@ class Engine:
             else CapabilityState.DEGRADED
         )
         return page
+
+    def switch_currency(self, currency: str) -> Generator[Request, Reply, CurrencySwitch]:
+        """Меняет валюту, в которой площадка показывает суммы.
+
+        ПОБОЧНОЕ ДЕЙСТВИЕ ГЛОБАЛЬНО. После смены каждая страница отдаёт другие
+        числа, и всякое последующее чтение вернёт не то, что вернуло бы прежде.
+
+        Дороже всего это для снимков рынка: сравнение двух снимков, снятых по
+        разные стороны от смены, объявит сменившейся КАЖДУЮ цену - без единой
+        ошибки и без следа.
+
+        ПОДТВЕРЖДЕНИЕ НЕ ДАЁТСЯ ЗА ПОЛЬЗОВАТЕЛЯ. Вернула площадка окно - смены
+        не было, и это конечный исход. Решать, соглашаться ли, вправе человек.
+
+        Args:
+            currency (str): Код валюты по ISO 4217. Регистр не важен.
+
+        Yields:
+            Request: Просьбы о вводе-выводе.
+
+        Returns:
+            CurrencySwitch: Исход с признаком смены и текстом окна, если оно
+            вернулось.
+
+        Raises:
+            ValidationError: Если код не из наблюдённого набора.
+            UsageError: Если согласия на непроверенный запрос не дано.
+            FunoraError: Если страница либо ответ непригодны.
+        """
+        wanted = currency.strip().upper()
+        known = set(CURRENCY_BY_SYMBOL.values())
+        if wanted not in known:
+            raise ValidationError(
+                f"валюта {currency!r} не из наблюдённого набора "
+                f"({', '.join(sorted(known))}). Набор площадки замкнут тремя, и "
+                "четвёртой мы не видели"
+            )
+
+        capability = Capability.ACCOUNT_SWITCH_CURRENCY
+        contract = OPERATIONS["account.switch_currency"]
+        if contract.request_provenance == "third_party_report" and (
+            capability not in self._state.opted_in
+        ):
+            raise UsageError(
+                "операция account.switch_currency стоит на непроверенном нами "
+                f"запросе и без согласия не отправляется. Непроверено вот что: "
+                f"{contract.provenance_rests_on} Источник: "
+                f"{contract.provenance_source} Если вы понимаете цену ошибки - "
+                f"включите возможность {capability.value} явно"
+            )
+
+        observation = yield from self.fetch_ok(capability, BALANCE_PATH)
+        settings = parse_app_data(observation.html)
+        token = settings.csrf_token
+        if token is None:
+            raise ProtocolChangedError(
+                "на странице нет защитного токена, и собрать запрос смены валюты не из чего"
+            )
+
+        yield from self.spend_budget(_class_of(capability), cost=1.0)
+        reply = yield Submit(
+            SWITCH_CURRENCY_PATH,
+            {
+                "cy": wanted.lower(),
+                "csrf_token": token.reveal(),
+                # ВСЕГДА отрицание. Согласие за пользователя не даётся.
+                "confirmed": NEVER_CONFIRMED,
+            },
+            dict(RUNNER_HEADERS),
+        )
+        if not isinstance(reply, Observation):
+            raise TypeError(f"на просьбу Submit ожидалось наблюдение, получено {type(reply)}")
+
+        try:
+            payload = json.loads(reply.html)
+        except ValueError as exc:
+            raise ProtocolChangedError(
+                "ответ смены валюты не разобрался как JSON. Сменилась валюта или "
+                "нет - неизвестно, а после смены каждая страница отдаёт другие числа"
+            ) from exc
+
+        result = parse_currency_switch(payload, requested=wanted, observed_at=datetime.now(UTC))
+        self._state.capabilities[capability] = CapabilityState.SUPPORTED
+        return result
 
     def calculate_prices(
         self, *, node_id: str | None = None, game_id: str | None = None, price: str
