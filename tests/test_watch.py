@@ -265,7 +265,7 @@ def test_handler_failure_reaches_the_caller(no_sleep: list[float]) -> None:
 
     caught: list[HandlerError] = []
     with Client(transport=_Cycle([orders, chats])) as client:  # type: ignore[arg-type]
-        client.watch(router, max_iterations=1, on_handler_error=caught.append)
+        client.watch(router, max_iterations=1, on_handler_error=caught.append, use_channel=False)
 
     assert len(caught) == 1
     assert isinstance(caught[0], HandlerError)
@@ -297,7 +297,7 @@ def test_working_handler_reports_nothing(no_sleep: list[float]) -> None:
 
     caught: list[HandlerError] = []
     with Client(transport=_Cycle([orders, chats])) as client:  # type: ignore[arg-type]
-        client.watch(router, max_iterations=1, on_handler_error=caught.append)
+        client.watch(router, max_iterations=1, on_handler_error=caught.append, use_channel=False)
 
     assert seen == [EventType.WATCH_PRIMED]
     assert caught == []
@@ -329,7 +329,7 @@ def test_handler_failure_keeps_its_traceback_in_the_log(
         caplog.at_level(logging.WARNING, logger="funora"),
         Client(transport=_Cycle([orders, chats])) as client,  # type: ignore[arg-type]
     ):
-        client.watch(router, max_iterations=1)
+        client.watch(router, max_iterations=1, use_channel=False)
 
     failures = [rec for rec in caplog.records if "обработчик упал" in rec.getMessage()]
     assert failures, "отказ обработчика не попал в журнал вовсе"
@@ -413,7 +413,7 @@ def test_the_engine_passes_the_declared_class(no_sleep: list[float]) -> None:
         return None
 
     with Client(transport=_Cycle([orders, chats])) as client:  # type: ignore[arg-type]
-        client.watch(router, max_iterations=1)
+        client.watch(router, max_iterations=1, use_channel=False)
         demanded = set(client.engine._budget._demanded_at)
 
     assert RequestClass.POLL in demanded, (
@@ -561,7 +561,7 @@ def test_cold_start_is_silent(no_sleep: list[float]) -> None:
         seen.append(event.type)
 
     with Client(transport=_Cycle([orders, chats])) as client:  # type: ignore[arg-type]
-        client.watch(router, max_iterations=1)
+        client.watch(router, max_iterations=1, use_channel=False)
 
     assert seen == [EventType.WATCH_PRIMED]
 
@@ -585,7 +585,7 @@ def test_second_pass_without_changes_is_silent(no_sleep: list[float]) -> None:
 
     transport = _Cycle([orders, chats, orders, chats])
     with Client(transport=transport) as client:  # type: ignore[arg-type]
-        client.watch(router, max_iterations=2)
+        client.watch(router, max_iterations=2, use_channel=False)
 
     assert data == []
     assert transport.calls == 4
@@ -635,7 +635,7 @@ def test_new_order_reaches_the_handler(no_sleep: list[float]) -> None:
         seen.append(event.entity_id)
 
     with Client(transport=_Cycle([orders, chats, grown, chats])) as client:  # type: ignore[arg-type]
-        client.watch(router, max_iterations=2)
+        client.watch(router, max_iterations=2, use_channel=False)
 
     assert seen == ["777"]
 
@@ -665,7 +665,7 @@ def test_failed_handler_makes_the_event_come_again(no_sleep: list[float]) -> Non
         raise ValueError("не смог")
 
     with Client(transport=_Cycle([orders, chats, grown, chats, grown, chats])) as client:  # type: ignore[arg-type]
-        client.watch(router, max_iterations=3)
+        client.watch(router, max_iterations=3, use_channel=False)
 
     assert attempts == ["777", "777"], "событие обязано прийти снова после отказа"
 
@@ -682,7 +682,7 @@ def test_interval_grows_while_nothing_happens(no_sleep: list[float]) -> None:
     orders, chats = _page("orders-trade.logged.ru"), _page("chat.logged.ru")
 
     with Client(transport=_Cycle([orders, chats])) as client:  # type: ignore[arg-type]
-        client.watch(Router(), max_iterations=4, schedule=Schedule())
+        client.watch(Router(), max_iterations=4, schedule=Schedule(), use_channel=False)
 
     assert no_sleep == sorted(no_sleep)
     assert no_sleep[0] < no_sleep[-1]
@@ -715,7 +715,7 @@ def test_watch_survives_a_restart(no_sleep: list[float], tmp_path: Path) -> None
         seen.append(event.entity_id)
 
     with Client(transport=_Cycle([orders, chats, grown, chats])) as client:  # type: ignore[arg-type]
-        client.watch(router, max_iterations=2, state_path=state_path)
+        client.watch(router, max_iterations=2, state_path=state_path, use_channel=False)
 
     assert seen == ["777"]
     assert state_path.is_file(), "состояние обязано сохраниться"
@@ -724,7 +724,7 @@ def test_watch_survives_a_restart(no_sleep: list[float], tmp_path: Path) -> None
     # холодный старт его не заметит. Но если бы заметил, гашение обязано
     # отработать по восстановленному состоянию.
     with Client(transport=_Cycle([grown, chats, grown, chats])) as client:  # type: ignore[arg-type]
-        client.watch(router, max_iterations=2, state_path=state_path)
+        client.watch(router, max_iterations=2, state_path=state_path, use_channel=False)
 
     assert seen == ["777"], "после перезапуска событие пришло повторно"
 
@@ -750,7 +750,7 @@ def test_watch_refuses_foreign_state(no_sleep: list[float], tmp_path: Path) -> N
         Client(transport=_Cycle([orders, chats])) as client,  # type: ignore[arg-type]
         pytest.raises(StateSchemaIncompatibleError),
     ):
-        client.watch(Router(), max_iterations=1, state_path=state_path)
+        client.watch(Router(), max_iterations=1, state_path=state_path, use_channel=False)
 
 
 def _orders_with(ids: list[str]) -> str:
@@ -817,13 +817,13 @@ def test_restart_does_not_swallow_what_changed_while_it_was_down(
         seen.append(event.entity_id)
 
     with Client(transport=_Cycle([before, chats])) as client:  # type: ignore[arg-type]
-        client.watch(router, max_iterations=1, state_path=state_path)
+        client.watch(router, max_iterations=1, state_path=state_path, use_channel=False)
 
     assert seen == [], "холодный старт обязан молчать о данных"
 
     # Процесс остановлен. Пока он стоял, появился заказ 104.
     with Client(transport=_Cycle([after, chats])) as client:  # type: ignore[arg-type]
-        client.watch(router, max_iterations=1, state_path=state_path)
+        client.watch(router, max_iterations=1, state_path=state_path, use_channel=False)
 
     assert seen == ["104"], "изменение за простой обязано дойти до обработчика"
 
@@ -858,7 +858,7 @@ def test_partial_read_does_not_move_the_cursor(no_sleep: list[float], tmp_path: 
         seen.append(event.entity_id)
 
     with Client(transport=_Cycle([whole, chats, damaged, chats, whole, chats])) as client:  # type: ignore[arg-type]
-        client.watch(router, max_iterations=3, state_path=state_path)
+        client.watch(router, max_iterations=3, state_path=state_path, use_channel=False)
 
     assert seen == [], "заказ 101 существовал всё время и новым не является"
 
@@ -890,13 +890,13 @@ def test_platform_error_from_handler_reaches_the_caller(
         raise SessionExpiredError("сессия истекла")
 
     with Client(transport=_Cycle([before, chats])) as client:  # type: ignore[arg-type]
-        client.watch(router, max_iterations=1, state_path=state_path)
+        client.watch(router, max_iterations=1, state_path=state_path, use_channel=False)
 
     with (
         Client(transport=_Cycle([after, chats])) as client,  # type: ignore[arg-type]
         pytest.raises(SessionExpiredError),
     ):
-        client.watch(router, max_iterations=1, state_path=state_path)
+        client.watch(router, max_iterations=1, state_path=state_path, use_channel=False)
 
     assert state_path.is_file(), "состояние обязано сохраниться до подъёма ошибки"
 
@@ -1034,7 +1034,7 @@ def _follow_run(
         threads or [_page("chat-thread.logged.ru")],
     )
     with Client(transport=transport) as client:  # type: ignore[arg-type]
-        client.watch(router, max_iterations=steps, **watch_args)  # type: ignore[arg-type]
+        client.watch(router, max_iterations=steps, **watch_args, use_channel=False)  # type: ignore[arg-type]
     return transport, seen
 
 
@@ -1241,7 +1241,7 @@ def test_rejected_message_comes_again(no_sleep: list[float]) -> None:
         [thread_a] + [thread_b] * 8,
     )
     with Client(transport=transport) as client:  # type: ignore[arg-type]
-        client.watch(router, max_iterations=8)
+        client.watch(router, max_iterations=8, use_channel=False)
 
     assert seen, "непринятое сообщение обязано прийти снова - иначе оно потеряно навсегда"
     assert seen[0] == "message-fresh"
@@ -1263,7 +1263,7 @@ def test_thread_cursor_survives_a_restart(no_sleep: list[float], tmp_path: Path)
 
     first = _ByPath(_page("orders-trade.logged.ru"), _dialogs_changing(3), [thread_a] * 3)
     with Client(transport=first) as client:  # type: ignore[arg-type]
-        client.watch(Router(), max_iterations=3, state_path=state)
+        client.watch(Router(), max_iterations=3, state_path=state, use_channel=False)
 
     saved = json.loads(state.read_text(encoding="utf-8"))["payload"]["cursor"]
     assert saved.get("threads"), "курсоры переписок не сохранены"
@@ -1276,7 +1276,7 @@ def test_thread_cursor_survives_a_restart(no_sleep: list[float], tmp_path: Path)
 
     second = _ByPath(_page("orders-trade.logged.ru"), _dialogs_changing(3), [thread_b] * 3)
     with Client(transport=second) as client:  # type: ignore[arg-type]
-        client.watch(router, max_iterations=2, state_path=state)
+        client.watch(router, max_iterations=2, state_path=state, use_channel=False)
 
     assert seen == ["message-fresh"], "после перезапуска сообщение не дошло"
 
@@ -1339,7 +1339,7 @@ def test_partial_first_read_does_not_silence_the_dialog(no_sleep: list[float]) -
         [flawed(whole), flawed(fresh), flawed(fresh), flawed(fresh)],
     )
     with Client(transport=transport) as client:  # type: ignore[arg-type]
-        client.watch(router, max_iterations=5)
+        client.watch(router, max_iterations=5, use_channel=False)
 
     assert "message-fresh" in seen, "при неполных чтениях диалог замолчал навсегда"
 
@@ -1369,7 +1369,7 @@ def test_primed_comes_once_even_if_orders_are_partial(no_sleep: list[float]) -> 
 
     transport = _ByPath(broken, _dialogs_changing(4), [_page("chat-thread.logged.ru")] * 4)
     with Client(transport=transport) as client:  # type: ignore[arg-type]
-        client.watch(router, max_iterations=4)
+        client.watch(router, max_iterations=4, use_channel=False)
 
     assert seen.count(EventType.WATCH_PRIMED) == 1, (
         "watch.primed обязано прийти один раз, а не на каждом шаге"
@@ -1435,7 +1435,9 @@ def test_blocked_access_stops_the_step_instead_of_hammering(
     )
 
     with Client(transport=transport) as client, pytest.raises(AccessBlockedError):  # type: ignore[arg-type]
-        client.watch(Router(), max_iterations=3, state_path=state, max_threads_per_step=5)
+        client.watch(
+            Router(), max_iterations=3, state_path=state, max_threads_per_step=5, use_channel=False
+        )
 
     assert len(transport.threads_read()) == 1, (
         "после первого отказа аккаунта клиент продолжил перебирать очередь"
@@ -1460,7 +1462,9 @@ def test_rate_limited_thread_returns_to_the_queue(no_sleep: list[float], tmp_pat
     )
 
     with Client(transport=transport) as client:  # type: ignore[arg-type]
-        client.watch(Router(), max_iterations=3, state_path=state, max_threads_per_step=5)
+        client.watch(
+            Router(), max_iterations=3, state_path=state, max_threads_per_step=5, use_channel=False
+        )
 
     waiting = json.loads(state.read_text(encoding="utf-8"))["payload"]["cursor"]["pending_threads"]
     assert waiting, "диалог выброшен по временному отказу"
@@ -1545,7 +1549,7 @@ def test_rejected_message_comes_again_even_if_the_list_goes_quiet(
 
     transport = _ByPath(_page("orders-trade.logged.ru"), chats, [thread_a] + [thread_b] * 8)
     with Client(transport=transport) as client:  # type: ignore[arg-type]
-        client.watch(router, max_iterations=8)
+        client.watch(router, max_iterations=8, use_channel=False)
 
     assert seen == ["message-fresh"], (
         "диалог не перечитан: список замер, а из очереди узел не вернулся"
@@ -1807,7 +1811,7 @@ def test_incomplete_read_tells_the_handler(no_sleep: list[float]) -> None:
 
     transport = _Cycle([_orders_missing_a_field(), _page("chat.logged.ru")])
     with Client(transport=transport) as client:  # type: ignore[arg-type]
-        client.watch(router, max_iterations=1)
+        client.watch(router, max_iterations=1, use_channel=False)
 
     notices = [event for event in seen if event.type is EventType.SNAPSHOT_INCOMPLETE]
     assert notices, "неполное чтение прошло молча"
@@ -1836,7 +1840,7 @@ def test_complete_read_says_nothing_about_incompleteness(no_sleep: list[float]) 
 
     transport = _Cycle([_page("orders-trade.logged.ru"), _page("chat.logged.ru")])
     with Client(transport=transport) as client:  # type: ignore[arg-type]
-        client.watch(router, max_iterations=1)
+        client.watch(router, max_iterations=1, use_channel=False)
 
     assert not [e for e in seen if e.type is EventType.SNAPSHOT_INCOMPLETE]
 
@@ -1865,7 +1869,7 @@ def test_the_same_incompleteness_does_not_repeat_every_step(no_sleep: list[float
     broken = _orders_missing_a_field()
     transport = _Cycle([broken, _page("chat.logged.ru")])
     with Client(transport=transport) as client:  # type: ignore[arg-type]
-        client.watch(router, max_iterations=3)
+        client.watch(router, max_iterations=3, use_channel=False)
 
     notices = [e for e in seen if e.type is EventType.SNAPSHOT_INCOMPLETE]
     assert len(notices) == 1, (
@@ -1963,7 +1967,7 @@ def test_redelivery_is_marked_as_a_repeat(no_sleep: list[float]) -> None:
     grown = _renamed_first_order(orders)
     transport = _Cycle([orders, chats, grown, chats, grown, chats])
     with Client(transport=transport) as client:  # type: ignore[arg-type]
-        client.watch(router, max_iterations=3)
+        client.watch(router, max_iterations=3, use_channel=False)
 
     assert attempts, "события о заказах не дошли ни разу"
     assert max(attempts) > 1, (
@@ -2004,7 +2008,7 @@ def test_counter_holds_only_what_is_still_undelivered(
     router.on()(seen.append)
 
     with Client(transport=_Cycle([orders, chats, grown, chats])) as client:  # type: ignore[arg-type]
-        client.watch(router, max_iterations=2, state_path=state_path)
+        client.watch(router, max_iterations=2, state_path=state_path, use_channel=False)
 
     assert seen, "события не дошли - проверять нечего"
     assert {event.delivery.attempt for event in seen} == {1}, (
@@ -2066,7 +2070,7 @@ def test_attempt_survives_a_restart(no_sleep: list[float], tmp_path: Path) -> No
             raise ValueError("обработчик не принял")
 
         with Client(transport=_Cycle(pages)) as client:  # type: ignore[arg-type]
-            client.watch(router, max_iterations=iterations, state_path=state)
+            client.watch(router, max_iterations=iterations, state_path=state, use_channel=False)
         return seen
 
     grown = _renamed_first_order(orders)
@@ -2131,7 +2135,7 @@ def test_failure_on_the_first_batch_does_not_silence_the_watch(
 
     transport = _Cycle([orders, chats, orders, chats, grown, chats])
     with Client(transport=transport) as client:  # type: ignore[arg-type]
-        client.watch(router, max_iterations=3)
+        client.watch(router, max_iterations=3, use_channel=False)
 
     assert seen.count(EventType.WATCH_PRIMED) == 2, (
         "приветствие не пришло второй раз - признак «поздоровались» поднят "
@@ -2164,7 +2168,7 @@ def test_greeting_is_not_repeated_after_it_was_taken(no_sleep: list[float]) -> N
     router.on()(lambda event: seen.append(event.type))
 
     with Client(transport=_Cycle([orders, chats])) as client:  # type: ignore[arg-type]
-        client.watch(router, max_iterations=3)
+        client.watch(router, max_iterations=3, use_channel=False)
 
     assert seen.count(EventType.WATCH_PRIMED) == 1, (
         f"приветствие пришло {seen.count(EventType.WATCH_PRIMED)} раз за три шага"

@@ -263,7 +263,7 @@ def _run(state: Path, market: _Marketplace) -> tuple[int, list[str]]:
         client.engine._state.outbound.note_incoming(
             NODE_ID, at_ms=int(datetime.now(UTC).timestamp() * 1000)
         )
-        bot.run(max_iterations=3)
+        bot.run(max_iterations=3, use_channel=False)
 
     return len(market.submitted), reasons
 

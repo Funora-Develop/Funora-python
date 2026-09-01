@@ -194,7 +194,7 @@ def test_a_command_from_another_thread_is_sent_by_the_watching_thread(
 
         assert bot.outbox.pending == 1, "задание не легло в очередь"
 
-        bot.run(max_iterations=2)
+        bot.run(max_iterations=2, use_channel=False)
         runner = threading.get_ident()
 
     assert tape.submitted, "задание из чужого потока не ушло"
@@ -343,7 +343,7 @@ def test_the_refusal_reaches_the_thread_that_asked(no_clock: list[float], tmp_pa
         # Переписка НЕ согрета, признак холода не объявлен - ограничитель обязан
         # отвергнуть задание.
         ticket = bot.send(NODE_ID, "здравствуйте", idempotency_key="k1")
-        bot.run(max_iterations=2)
+        bot.run(max_iterations=2, use_channel=False)
 
     assert ticket.ready, "квитанция не закрыта: положивший задание ждал бы вечно"
     with pytest.raises(UsageError, match="ограничитель исходящих"):
@@ -367,7 +367,7 @@ def test_one_refusal_does_not_stop_the_watch(no_clock: list[float]) -> None:
     with Client(transport=tape) as client:  # type: ignore[arg-type]
         bot = Bot(client, Router())
         bot.send(NODE_ID, "первое", idempotency_key="k1")
-        bot.run(max_iterations=3)
+        bot.run(max_iterations=3, use_channel=False)
 
     assert bot.refused == 1
     assert len([one for one in tape.paths if one.startswith("/orders")]) == 3, (
@@ -398,7 +398,7 @@ def test_no_more_than_the_limit_is_sent_per_pause(no_clock: list[float]) -> None
             bot.send(NODE_ID, f"строка {index}", idempotency_key=f"k{index}")
 
         assert bot.outbox.pending == 5
-        bot.run(max_iterations=1)
+        bot.run(max_iterations=1, use_channel=False)
         left = bot.outbox.pending
 
     assert left == 3, f"за паузу разобрано {5 - left} заданий при пределе 2"
@@ -434,7 +434,7 @@ def test_draining_does_not_stretch_the_polling_interval(no_clock: list[float]) -
         before = len(no_clock)
         with Client(transport=_Tape()) as client:  # type: ignore[arg-type]
             client.run(
-                client.engine.watch(Router(), max_iterations=2),
+                client.engine.watch(Router(), max_iterations=2, use_channel=False),
                 router=Router(),
                 on_idle=hook,  # type: ignore[arg-type]
             )
@@ -483,7 +483,7 @@ def test_a_confirmed_send_reaches_the_ticket(no_clock: list[float], tmp_path: Pa
         )
         bot = Bot(client, Router())
         ticket = bot.send(NODE_ID, "здравствуйте", idempotency_key="k1")
-        bot.run(max_iterations=2)
+        bot.run(max_iterations=2, use_channel=False)
 
     result = ticket.wait(timeout=0)
     assert result is not None, "исход не дошёл до квитанции"
@@ -574,7 +574,7 @@ def test_send_now_goes_through_from_the_watching_thread(
 
         bot.outbox.claim()
         client.run(
-            client.engine.watch(Router(), max_iterations=1),
+            client.engine.watch(Router(), max_iterations=1, use_channel=False),
             router=Router(),
             on_idle=on_idle,
         )
@@ -624,7 +624,7 @@ def test_the_async_idle_hook_is_awaited() -> None:
 
         client = AsyncClient(transport=_AsyncTape())  # type: ignore[arg-type]
         await client.run(
-            client.engine.watch(Router(), max_iterations=1),
+            client.engine.watch(Router(), max_iterations=1, use_channel=False),
             router=Router(),
             on_idle=hook,
         )
@@ -695,7 +695,7 @@ def test_a_command_from_another_process_is_sent_by_the_watch_loop(
         assert bot.spool is not None
         assert bot.spool.pending == 1
 
-        bot.run(max_iterations=2)
+        bot.run(max_iterations=2, use_channel=False)
 
     assert tape.submitted, "задание из чужого процесса не ушло"
     assert bot.sent == 1
@@ -726,7 +726,7 @@ def test_a_stranded_command_is_not_resent_on_restart(tmp_path: Path, no_clock: l
             NODE_ID, at_ms=int(datetime.now(UTC).timestamp() * 1000)
         )
         bot = Bot(client, Router(), spool_path=root)
-        bot.run(max_iterations=2)
+        bot.run(max_iterations=2, use_channel=False)
 
     assert not tape.submitted, "сообщение с неизвестной судьбой ушло вторым разом"
     assert bot.spool is not None
@@ -754,7 +754,7 @@ def test_a_refused_command_records_its_refusal(tmp_path: Path, no_clock: list[fl
     tape = _Tape()
     with Client(transport=tape, state_path=tmp_path / "state.json") as client:  # type: ignore[arg-type]
         bot = Bot(client, Router(), spool_path=root)
-        bot.run(max_iterations=2)
+        bot.run(max_iterations=2, use_channel=False)
 
     assert not tape.submitted, "холодное обращение ушло"
     assert bot.refused == 1
@@ -792,7 +792,7 @@ def test_both_queues_share_one_limit(tmp_path: Path, no_clock: list[float]) -> N
         bot = Bot(client, Router(), max_sends_per_idle=2, spool_path=root)
         bot.send(NODE_ID, "из памяти", idempotency_key="m1")
 
-        bot.run(max_iterations=1)
+        bot.run(max_iterations=1, use_channel=False)
 
     # Считаются ПОПЫТКИ, а не удачи: бюджет запросов в одном шаге может не
     # дать второй отправке состояться, и тогда проверка про предел паузы

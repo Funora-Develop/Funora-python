@@ -77,6 +77,15 @@ from ._extract import observe_locale
 from ._gate import check_capability
 from ._host import host_of
 from ._identity import REGISTRY, Identity, identity_of
+from ._listen import (
+    CHANNEL_INTERVAL_MS,
+    ChannelSignal,
+    ChannelState,
+    classify_signal,
+    seed_tags,
+    unexpected_shape,
+    wanted_objects,
+)
 from ._lot_form import SAVE_PATH, LotForm, parse_lot_form
 from ._market import MarketPage, parse_market
 from ._money import CURRENCY_BY_SYMBOL
@@ -109,17 +118,20 @@ from ._review_write import (
 from ._reviews import ReviewsPage, parse_reviews_page
 from ._runner import (
     Anchor,
+    RunnerContext,
     SendResult,
     classify_send_response,
     parse_runner_context,
     reconcile,
     take_anchor,
 )
+from ._secret import Secret
 from ._showcase import ShowcasePage, parse_showcase
 from ._snapshot import MarketSnapshot, snapshot_of
 from ._state import StateFile
 from ._thread import Thread, parse_thread
 from ._transport import Observation, TransportSettings
+from ._updates import build_subscription, parse_updates_answer
 from ._verdicts import error_for
 from ._viewing import VIEWING_OBJECT, BuyerViewing, parse_buyer_viewing
 from ._watch import Router, StepResult, health_changed, incomplete, loss, primed
@@ -772,6 +784,7 @@ class Engine:
         "_delivered",
         "_price_audit",
         "_ledger",
+        "_runner_context",
         "_stored_account",
         "_settings",
         "_state",
@@ -785,7 +798,7 @@ class Engine:
         budget: Budget,
         experimental: frozenset[Capability] = frozenset(),
         identity: Identity | None = None,
-        state_path: Path | None = None,
+        state_path: str | Path | None = None,
         unsafe_sends_without_ledger: bool = False,
         unsafe_price_changes_without_audit: bool = False,
     ) -> None:
@@ -799,7 +812,17 @@ class Engine:
         #: снимается перезапуском процесса. Пределы часовые, а память
         #: обнуляется, и тридцать сообщений в час превращаются в тридцать на
         #: запуск. Бот под супервизором обходил бы ограничитель полностью.
-        self._ledger: StateFile | None = StateFile(state_path) if state_path else None
+        self._ledger: StateFile | None = StateFile(Path(state_path)) if state_path else None
+
+        #: Что прочитано с шапки последнего списка диалогов.
+        #:
+        #: Носитель защитного токена и собственного номера - всего, что нужно,
+        #: чтобы обратиться к каналу обновлений. Снимается попутно с чтением
+        #: страницы: отдельного запроса ради него нет.
+        #:
+        #: None означает, что списка диалогов ещё не читали либо на нём токена не
+        #: оказалось. Второе - законное состояние: под гостем его там нет.
+        self._runner_context: RunnerContext | None = None
 
         #: Снятые вызывающим защиты. Читаются состоянием здоровья.
         #:
@@ -2740,6 +2763,17 @@ class Engine:
         page = parse_chats_page(observation.html, observed_at=datetime.now(UTC))
         if not integrity_verified(observation):
             page = unverified(page)
+        # Контекст канала снимается ПОПУТНО, с уже прочитанной страницы.
+        #
+        # Отдельного чтения ради токена нет нарочно: быстрый путь заводился,
+        # чтобы страниц НЕ читать, и чтение страницы ради него отменило бы всю
+        # выгоду. Здесь же страница уже в руках, и разбор её шапки стоит
+        # ничтожно мало против самого запроса.
+        #
+        # Список диалогов годится и без открытого диалога: наблюдено, что оба
+        # объекта глобальной подписки - orders_counters и chat_bookmarks - берут
+        # идентификатор из data-user, который на этой странице есть.
+        self._runner_context = parse_runner_context(observation.html)
         self._note_success(Capability.CHATS_LIST, page.completeness, page)
         return page
 
@@ -3749,6 +3783,94 @@ class Engine:
                     reservation.bucket,
                 )
 
+    def listen_once(
+        self,
+        channel: ChannelState,
+        *,
+        own_user_id: str,
+        token: Secret,
+    ) -> Generator[Request, Reply, tuple[ChannelSignal, str]]:
+        """Спрашивает канал, изменилось ли что-нибудь, и НИЧЕГО не разбирает сверх.
+
+        Из ответа берётся ровно одно решение из трёх: изменилось, тихо,
+        непонятно. Данные ответа - счётчики числами и готовая разметка сообщений
+        - не читаются вовсе, и это не упущение. Поведения канала при истёкшей
+        сессии и при исчерпании предела не наблюдал никто; реализация, собирающая
+        события из его данных, обязана была бы верить ему и в этих двух случаях.
+        Сигналу верить не нужно: любая его ошибка стоит одного лишнего чтения
+        страниц либо ловится сторожевым сроком.
+
+        ПОДПИСКА ИДЁТ ОДНОЙ ПОРЦИЕЙ. Объектов в ней два, предел - десять, и
+        порции здесь не нужны; сборка всё равно идёт общим построителем, чтобы
+        предел считался в одном месте.
+
+        БЮДЖЕТ ТРАТИТСЯ. Опрос канала - такой же запрос к площадке, как чтение
+        страницы, и не учитывать его значило бы обойти собственный ограничитель
+        ровно тем механизмом, который заводился ради бережливости.
+
+        Args:
+            channel (ChannelState): Состояние слушателя: накопленные метки и
+                счёт неудач.
+            own_user_id (str): Собственный идентификатор - он же идентификатор
+                обоих объектов подписки.
+            token (Secret): Защитный токен со страницы.
+
+        Yields:
+            Request: Просьбы о вводе-выводе.
+
+        Returns:
+            tuple[ChannelSignal, str]: Сигнал и машиночитаемая причина.
+
+        Raises:
+            TypeError: Если на просьбу пришло не наблюдение.
+        """
+        wanted = wanted_objects(own_user_id)
+        batches = build_subscription(wanted, channel.tags)
+
+        yield from self.spend_budget(RequestClass.POLL, cost=1.0)
+        reply = yield Submit(
+            RUNNER_PATH,
+            {
+                "objects": json.dumps(batches[0], ensure_ascii=False),
+                "csrf_token": token.reveal(),
+            },
+            dict(RUNNER_HEADERS),
+        )
+        if not isinstance(reply, Observation):
+            raise TypeError(f"на просьбу Submit ожидалось наблюдение, получено {type(reply)}")
+
+        try:
+            answer = parse_updates_answer(reply.html)
+        except FunoraError as exc:
+            # Непонятный ответ не роняет наблюдение: он переводит его на опрос
+            # страниц. Уронить здесь значило бы сделать быстрый путь опаснее
+            # медленного, а он заводился ради скорости, а не вместо надёжности.
+            return ChannelSignal.DEGRADED, type(exc).__name__
+
+        # ПОРЯДОК: объявленная ошибка раньше формы. Ответ с ошибкой площадка
+        # даёт объектом, а объект - это и есть «неожиданная форма» для опроса без
+        # действия. Проверяй мы форму первой, всякий отказ канала назывался бы
+        # неожиданной формой, и настоящая причина терялась бы.
+        signal, reason = classify_signal(answer)
+        if signal is ChannelSignal.DEGRADED:
+            return signal, reason
+
+        strange = unexpected_shape(answer)
+        if strange:
+            return ChannelSignal.DEGRADED, strange
+
+        # Метки накапливаются ТОЛЬКО с понятного ответа - сюда доходят лишь они.
+        # Взять метку с непонятного значило бы записать в память состояние,
+        # которого мы не поняли, и следующий опрос пошёл бы от него.
+        #
+        # НАКОПЛЕНИЕ, А НЕ ЗАМЕЩЕНИЕ: ответ несёт только изменившиеся объекты, и
+        # метки молчавшего в нём нет вовсе. Замести бы мы её - молчавший объект
+        # получил бы метку «я ничего не видел» и приехал целиком на следующем
+        # шаге, то есть канал перестал бы быть дешевле страниц ровно тогда,
+        # когда он нужен.
+        channel.tags = answer.tags(channel.tags)
+        return signal, reason
+
     def watch(
         self,
         router: Router,
@@ -3756,8 +3878,9 @@ class Engine:
         account_id: str = "self",
         max_iterations: int | None = None,
         schedule: Schedule | None = None,
-        state_path: Path | None = None,
+        state_path: str | Path | None = None,
         max_threads_per_step: int = 5,
+        use_channel: bool = True,
     ) -> Generator[Request, Reply, None]:
         """Ведёт наблюдение: опрашивает площадку и раздаёт события обработчикам.
 
@@ -3777,10 +3900,24 @@ class Engine:
                 бесконечно; ограничение нужно проверкам и разовым прогонам.
             schedule (Schedule | None): Расписание опроса. По умолчанию из
                 спецификации.
-            state_path (Path | None): Файл, в котором состояние гашения повторов
+            state_path (str | Path | None): Файл, в котором состояние гашения повторов
                 переживает перезапуск. Без него кэш живёт только в памяти, и
                 после любого перезапуска повторно приходит всё, что успело
                 прийти до него.
+            use_channel (bool): Слушать ли канал обновлений площадки.
+
+                ПО УМОЛЧАНИЮ ДА, и это главное, ради чего цикл переписан.
+                Канал отвечает за секунды, тогда как опрос страниц замечал
+                изменение от трёх секунд до двух минут.
+
+                Из ответа канала берётся ОДНО решение - изменилось или нет, - а
+                события по-прежнему собираются чтением страниц. Поэтому
+                выключать его незачем ради достоверности: она не изменилась.
+                Выключать стоит ради предсказуемости числа запросов - скажем, в
+                проверках, - и тогда цикл работает ровно как прежде.
+
+                Непонятный ответ канала выключает быстрый путь сам, на минуту, и
+                говорит об этом событием protocol.health_changed.
             max_threads_per_step (int): Сколько переписок читать за один шаг.
                 Предел нужен: изменись разом полсотни диалогов, шаг превратился
                 бы в полсотни запросов. Непрочитанные не теряются - они ждут в
@@ -3797,7 +3934,7 @@ class Engine:
         """
         plan = schedule or Schedule()
         dedup = Deduplicator()
-        state = StateFile(state_path) if state_path is not None else None
+        state = StateFile(Path(state_path)) if state_path is not None else None
         if state is not None and self._ledger is None:
             # Файл наблюдения становится и реестром отправок. Иначе бот, честно
             # передавший state_path, всё равно отправлял бы без долговечного
@@ -3890,12 +4027,85 @@ class Engine:
                     len(known_chats) if known_chats is not None else "нет",
                 )
 
+        # Состояние быстрого пути. Живёт столько же, сколько сам цикл: токен и
+        # накопленные метки обнуляются вместе с ним, и это верно - и то, и
+        # другое привязано к сеансу.
+        channel = ChannelState()
+        channel_token: Secret | None = None
+        channel_user: str = ""
+
         step = 0
         while max_iterations is None or step < max_iterations:
             step += 1
+
+            # БЫСТРЫЙ ПУТЬ. Спросить канал дешевле, чем прочитать две страницы,
+            # и ответ приходит за секунды вместо десятков секунд.
+            #
+            # Условий у него четыре, и каждое снимает свой риск:
+            #
+            # уже здоровались - первый проход обязан прочитать страницы, иначе
+            # брать опорную точку будет неоткуда;
+            #
+            # очередь переписок пуста - недочитанное с прошлого шага ждёт
+            # чтения, и тишина канала про него ничего не говорит;
+            #
+            # канал не остывает после отказа;
+            #
+            # токен есть. Токен берётся со страницы, и живёт он неизвестно
+            # сколько: сеанс наблюдения этого не выяснял. Поэтому он не
+            # добывается отдельным чтением - он ПОДБИРАЕТСЯ по дороге, из той
+            # страницы, которую цикл и так прочёл.
+            if use_channel and greeted and not pending and channel_token is not None:
+                now = monotonic()
+                if channel.available(now):
+                    signal, reason = yield from self.listen_once(
+                        channel, own_user_id=channel_user, token=channel_token
+                    )
+                    if signal is ChannelSignal.DEGRADED:
+                        if channel.note_failure(reason, now):
+                            _log.warning(
+                                "канал обновлений непригоден (%s), наблюдение идёт опросом "
+                                "страниц ближайшую минуту",
+                                reason,
+                            )
+                        # Токен сбрасывается вместе с отказом. Что именно
+                        # протухло - токен или сессия, - различить нечем, а
+                        # перечитать страницу цикл всё равно собирается прямо
+                        # сейчас: она и принесёт свежий.
+                        channel_token = None
+                    elif signal is ChannelSignal.QUIET and not channel.watchdog_expired(now):
+                        channel.note_success(now, changed=False)
+                        # СТРАНИЦЫ НЕ ЧИТАЮТСЯ ВОВСЕ. Ради этого всё и затевалось:
+                        # молчащий аккаунт стоит одного маленького запроса в пять
+                        # секунд вместо двух полных страниц.
+                        #
+                        # Пауза короткая, и очередь исходящих разбирается в ней
+                        # так же, как разбиралась в длинной: Pause - единственное
+                        # место, где это происходит, и оно на месте.
+                        yield Pause(CHANNEL_INTERVAL_MS)
+                        continue
+                    else:
+                        channel.note_success(now, changed=True)
+
             orders = yield from self.read_orders()
             chats = yield from self.read_chats()
             now = monotonic()
+
+            # Токен и собственный идентификатор подбираются из уже прочитанного.
+            # Отдельного чтения ради них нет и быть не должно: чтение страницы
+            # ради того, чтобы не читать страницы, отменило бы всю выгоду.
+            context = self._runner_context
+            if use_channel and context is not None:
+                if context.csrf_token is not None and context.own_user_id.is_observed:
+                    channel_token = context.csrf_token
+                    channel_user = context.own_user_id.value
+                    if not channel.tags:
+                        channel.tags = seed_tags(context)
+                elif channel_token is None:
+                    # Токена на странице нет. Это не поломка: страница под
+                    # гостем его не несёт, и чтение под гостем - законное
+                    # состояние. Быстрый путь просто не включится.
+                    _log.debug("на списке диалогов нет защитного токена, канал не слушается")
 
             # Состояние возможности событий по заказам выставляется ЗДЕСЬ и не
             # через _note_success: своей операции у неё нет, и в перечне

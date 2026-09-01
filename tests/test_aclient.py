@@ -326,9 +326,9 @@ async def test_watch_emits_the_same_events(no_sleep: list[float]) -> None:
     async_router.on()(remember)
 
     with _sync_client(_watch_pages(2)) as sync:
-        sync.watch(sync_router, max_iterations=2, schedule=Schedule())
+        sync.watch(sync_router, max_iterations=2, schedule=Schedule(), use_channel=False)
     async with _async_client(_watch_pages(2)) as client:
-        await client.watch(async_router, max_iterations=2, schedule=Schedule())
+        await client.watch(async_router, max_iterations=2, schedule=Schedule(), use_channel=False)
 
     assert seen_sync == seen_async
     assert seen_sync == [EventType.WATCH_PRIMED], "холодный старт обязан молчать о данных"
@@ -369,7 +369,9 @@ async def test_failed_handler_keeps_the_cursor_in_both(
 
     state = tmp_path / "state.json"
     async with _async_client(_watch_pages(1)) as client:
-        await client.watch(router, max_iterations=1, schedule=Schedule(), state_path=state)
+        await client.watch(
+            router, max_iterations=1, schedule=Schedule(), state_path=state, use_channel=False
+        )
 
     saved = state.read_text(encoding="utf-8")
     # Разбираем, а не ищем подстроку: вид записи задаёт каноническая форма, и
@@ -429,7 +431,7 @@ async def test_sync_handler_works_in_an_async_client(no_sleep: list[float]) -> N
     router.on()(lambda event: seen.append(event.type))
 
     async with _async_client(_watch_pages(1)) as client:
-        await client.watch(router, max_iterations=1, schedule=Schedule())
+        await client.watch(router, max_iterations=1, schedule=Schedule(), use_channel=False)
 
     assert seen == [EventType.WATCH_PRIMED]
 
@@ -528,7 +530,7 @@ async def test_thread_following_works_through_the_async_driver(no_sleep: list[fl
         _page("orders-trade.logged.ru"), [dialogs, moved, again], [before, after, after]
     )
     async with AsyncClient(transport=transport, budget=Budget()) as client:  # type: ignore[arg-type]
-        await client.watch(router, max_iterations=3)
+        await client.watch(router, max_iterations=3, use_channel=False)
 
     assert [p for p in transport.paths if "node=" in p], "переписка не читалась вовсе"
     fresh = [e for e in seen if e.type is EventType.MESSAGE_CREATED]

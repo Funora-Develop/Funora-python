@@ -881,7 +881,7 @@ class AsyncClient:
             идентичность, а не то, сколько клиентов мы завели у себя.
         proxies (tuple[Proxy, ...]): Выходы, между которыми распределяются
             аккаунты. Пустой набор означает прямое соединение.
-        state_path (Path | None): Файл, в котором реестр отправок, реестр
+        state_path (str | Path | None): Файл, в котором реестр отправок, реестр
             выданного и журнал правок цены переживают перезапуск. Без него
             отправка и правка цены ОТКАЗЫВАЮТ: обе защиты держатся памятью
             процесса, а память обнуляется.
@@ -919,7 +919,7 @@ class AsyncClient:
         transport: AsyncFetcher | None = None,
         budget: Budget | None = None,
         proxies: tuple[Proxy, ...] = (),
-        state_path: Path | None = None,
+        state_path: str | Path | None = None,
         unsafe_sends_without_ledger: bool = False,
         unsafe_price_changes_without_audit: bool = False,
     ) -> None:
@@ -1054,8 +1054,9 @@ class AsyncClient:
         account_id: str = "self",
         max_iterations: int | None = None,
         schedule: Schedule | None = None,
-        state_path: Path | None = None,
+        state_path: str | Path | None = None,
         max_threads_per_step: int = 5,
+        use_channel: bool = True,
         concurrency: int = 1,
         on_handler_error: Callable[[HandlerError], None] | None = None,
     ) -> None:
@@ -1073,8 +1074,16 @@ class AsyncClient:
                 бесконечно; ограничение нужно проверкам и разовым прогонам.
             schedule (Schedule | None): Расписание опроса. По умолчанию из
                 спецификации.
-            state_path (Path | None): Файл, в котором состояние гашения повторов
+            state_path (str | Path | None): Файл, в котором состояние гашения повторов
                 переживает перезапуск.
+            use_channel (bool): Слушать ли канал обновлений площадки.
+
+                ПО УМОЛЧАНИЮ ДА. Канал отвечает за секунды; опрос страниц
+                замечал изменение от трёх секунд до двух минут. События при этом
+                по-прежнему собираются чтением страниц - из канала берётся одно
+                решение «изменилось или нет», - и достоверность не меняется.
+
+                Выключение возвращает прежнее поведение целиком.
             max_threads_per_step (int): Сколько переписок дочитывать за один
                 шаг. Изменившийся диалог говорит, что в нём что-то произошло, но
                 само сообщение видно только на странице переписки. Предел нужен:
@@ -1102,6 +1111,7 @@ class AsyncClient:
                 schedule=schedule,
                 state_path=state_path,
                 max_threads_per_step=max_threads_per_step,
+                use_channel=use_channel,
             ),
             router=router,
             concurrency=concurrency,

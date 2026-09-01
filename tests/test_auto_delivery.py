@@ -16,7 +16,7 @@ from typing import Final
 
 import pytest
 
-from funora._delivered import Delivery, DeliveryLedger
+from funora._delivered import QUEUED_OUTCOME, Delivery, DeliveryLedger
 from funora._matching import match_offer, normalized_for_match
 from funora._observed import Confidence, Observed
 from funora._orders import OrderListEntry
@@ -107,7 +107,7 @@ def _delivery(*, goods: dict[str, str] | None = None) -> tuple[AutoDelivery, lis
     """
     queued: list[SendCommand] = []
 
-    def send(chat_id: str, text: str, key: str) -> SendTicket:
+    def send(chat_id: str, text: str, key: str, cold: bool = True) -> SendTicket:
         """Изображает постановку в очередь.
 
         Возвращает:
@@ -367,7 +367,7 @@ def test_the_ledger_is_written_before_the_send() -> None:
     ledger = DeliveryLedger()
     seen: list[bool] = []
 
-    def send(chat_id: str, text: str, key: str) -> SendTicket:
+    def send(chat_id: str, text: str, key: str, cold: bool = True) -> SendTicket:
         """Смотрит, есть ли запись о выдаче в момент отправки.
 
         Возвращает:
@@ -754,7 +754,7 @@ def test_the_ledger_is_saved_before_the_send(tmp_path: Path) -> None:
     ledger = DeliveryLedger()
     seen: list[int] = []
 
-    def send(chat_id: str, text: str, key: str) -> SendTicket:
+    def send(chat_id: str, text: str, key: str, cold: bool = True) -> SendTicket:
         """Смотрит, что уже лежит на диске в момент отправки.
 
         Возвращает:
@@ -781,3 +781,166 @@ def test_the_ledger_is_saved_before_the_send(tmp_path: Path) -> None:
         f"на диске в момент отправки было {seen} записей вместо одной: "
         "перезапуск здесь выдал бы товар второй раз"
     )
+
+
+def test_a_silent_buyer_is_addressed_with_the_cold_flag() -> None:
+    """Проверяет, что автовыдача признаёт обращение холодным.
+
+    Покупатель, который купил и промолчал, - обычный случай, а не редкий. Его
+    переписка холодная, и отправка без признания холодности отвергается
+    ограничителем ещё до сети. Прежде признак не передавался вовсе, и товар не
+    уходил ровно тому, кто вёл себя тише всех.
+
+    Возвращает:
+        None
+    """
+    seen: list[bool] = []
+
+    def send(chat_id: str, text: str, key: str, cold: bool) -> SendTicket:
+        """Запоминает признак холодности.
+
+        Возвращает:
+            SendTicket: Квитанция.
+        """
+        seen.append(cold)
+        command = SendCommand(chat_id=chat_id, text=text, idempotency_key=key)
+        return SendTicket(command=command)
+
+    plan = DeliveryPlan(goods={"L2": "товар"}, chat_of=lambda order_id: "chat")
+    delivery = AutoDelivery(plan, DeliveryLedger(), send)
+
+    delivery.handle(
+        _order(order_id="O1", description="Аккаунт Steam с играми", status=OrderStatus.PAID),
+        LOTS,
+        page_completeness=Completeness.COMPLETE,
+    )
+
+    assert seen == [True], "автовыдача обязана признавать обращение холодным"
+
+
+def test_the_seller_can_refuse_the_cold_flag() -> None:
+    """Проверяет, что признание холодности - решение продавца, а не наше.
+
+    Продавцу, который здоровается с покупателем сам, переписка достаётся тёплой,
+    и тратить на выдачу квоту холодных обращений незачем.
+
+    Возвращает:
+        None
+    """
+    seen: list[bool] = []
+
+    def send(chat_id: str, text: str, key: str, cold: bool) -> SendTicket:
+        """Запоминает признак холодности.
+
+        Возвращает:
+            SendTicket: Квитанция.
+        """
+        seen.append(cold)
+        command = SendCommand(chat_id=chat_id, text=text, idempotency_key=key)
+        return SendTicket(command=command)
+
+    plan = DeliveryPlan(
+        goods={"L2": "товар"},
+        chat_of=lambda order_id: "chat",
+        declared_cold=False,
+    )
+    AutoDelivery(plan, DeliveryLedger(), send).handle(
+        _order(order_id="O1", description="Аккаунт Steam с играми", status=OrderStatus.PAID),
+        LOTS,
+        page_completeness=Completeness.COMPLETE,
+    )
+
+    assert seen == [False], "признание холодности обязано быть настраиваемым"
+
+
+def test_a_failed_chat_read_leaves_no_trace_in_the_ledger() -> None:
+    """Проверяет, что отказ чтения страницы заказа не помечает заказ выданным.
+
+    chat_of - сетевое чтение. Прежде запись в реестр стояла ВПЕРЕДИ него, и
+    всякий отказ этого чтения оставлял заказ навсегда помеченным выданным при
+    нуле отправок: повторно он не выдавался никогда, а on_hold не срабатывал.
+
+    Возвращает:
+        None
+    """
+    held: list[DeliveryDecision] = []
+    sent: list[str] = []
+
+    def send(chat_id: str, text: str, key: str, cold: bool) -> SendTicket:
+        """Не должна зваться вовсе.
+
+        Возвращает:
+            SendTicket: Квитанция.
+        """
+        sent.append(key)
+        command = SendCommand(chat_id=chat_id, text=text, idempotency_key=key)
+        return SendTicket(command=command)
+
+    def refuse(order_id: str) -> str:
+        """Изображает отказ чтения страницы заказа.
+
+        Возвращает:
+            str: Ничего не возвращает.
+
+        Raises:
+            RuntimeError: Всегда.
+        """
+        raise RuntimeError("страница заказа не прочиталась")
+
+    ledger = DeliveryLedger()
+    plan = DeliveryPlan(goods={"L2": "товар"}, chat_of=refuse)
+    delivery = AutoDelivery(plan, ledger, send, on_hold=held.append)
+
+    ticket = delivery.handle(
+        _order(order_id="O1", description="Аккаунт Steam с играми", status=OrderStatus.PAID),
+        LOTS,
+        page_completeness=Completeness.COMPLETE,
+    )
+
+    assert ticket is None, "выдача не состоялась, квитанции быть не должно"
+    assert sent == [], "отправки не было"
+    assert not ledger.seen("O1"), "заказ не выдан и помечаться выданным не должен"
+    assert [one.reason for one in held] == ["chat_not_read"], (
+        "заказ обязан уйти человеку с названной причиной, а не пропасть молча"
+    )
+
+
+def test_the_ledger_can_name_the_deliveries_whose_outcome_never_arrived() -> None:
+    """Проверяет, что незакрытые выдачи можно перечислить.
+
+    Запись заводится исходом queued и прежде так и оставалась навсегда:
+    успешная выдача и потерянная лежали в реестре одинаковыми, и найти
+    потерянные было нечем.
+
+    Возвращает:
+        None
+    """
+    ledger = DeliveryLedger()
+    ledger.record(Delivery(order_id="O1", offer_id="L2", at_ms=1, outcome=QUEUED_OUTCOME))
+    ledger.record(Delivery(order_id="O2", offer_id="L2", at_ms=2, outcome=QUEUED_OUTCOME))
+
+    assert ledger.unsettled() == ("O1", "O2")
+
+    ledger.settle("O1", "confirmed")
+
+    assert ledger.unsettled() == ("O2",), "закрытая выдача из перечня уходит"
+    assert ledger.seen("O1"), "исход на защиту от повторной выдачи не влияет"
+    got = ledger.get("O1")
+    assert got is not None
+    assert got.outcome == "confirmed"
+
+
+def test_settling_an_unknown_order_does_not_invent_a_delivery() -> None:
+    """Проверяет, что исход не заводит записи.
+
+    Завести её здесь значило бы объявить выданным заказ, по которому решения не
+    принимали.
+
+    Возвращает:
+        None
+    """
+    ledger = DeliveryLedger()
+    ledger.settle("O404", "confirmed")
+
+    assert not ledger.seen("O404")
+    assert len(ledger) == 0

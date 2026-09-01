@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Final
 
-from .._delivered import Delivery, DeliveryLedger
+from .._delivered import QUEUED_OUTCOME, Delivery, DeliveryLedger
 from .._matching import match_offer
 from .._orders import OrderListEntry
 from .._own_lots import OwnLot
@@ -76,10 +76,31 @@ class DeliveryPlan:
             Отдельной функцией, а не полем: узел лежит на странице заказа, идти
             за ним - запрос, и делать этот запрос стоит только тогда, когда всё
             остальное сошлось.
+        declared_cold (bool): Объявлять ли обращение холодным.
+
+            ПО УМОЛЧАНИЮ ДА, и это не послабление, а исправление. Холодной
+            считается переписка, в которой собеседник нам не писал, а покупатель,
+            купивший и промолчавший, - самый обычный случай, а не редкий.
+            Автовыдача прежде звала отправку без этого признака, ограничитель
+            отвергал её с cold_outreach_not_declared, и товар не уходил ровно
+            тому, кто вёл себя тише всех. Заказ при этом уже был помечен
+            выданным.
+
+            Признание здесь честное: обращение вправду холодное. Покупка
+            переписку не греет - это записано в spec/runtime/budget.yaml и
+            остаётся верным. Но выдача оплаченного товара и есть тот случай, ради
+            которого квота холодных обращений существует.
+
+            ПОМНИТЕ ПРО ПОТОЛОК: холодных обращений три в сутки. Продавцу, у
+            которого продаж больше, придётся либо здороваться с покупателем
+            первым по событию о заказе - тогда переписка станет тёплой его
+            ответом, - либо выдавать руками. Молча упереться в потолок нельзя:
+            отправка откажет вслух, и заказ уйдёт в on_hold.
     """
 
     goods: dict[str, str]
     chat_of: Callable[[str], str]
+    declared_cold: bool = True
 
 
 class AutoDelivery:
@@ -92,8 +113,9 @@ class AutoDelivery:
     Args:
         plan (DeliveryPlan): Что и кому выдавать.
         ledger (DeliveryLedger): Реестр уже выданного.
-        send (Callable[[str, str, str], SendTicket]): Как поставить отправку в
-            очередь: узел, текст, ключ идемпотентности.
+        send (Callable[[str, str, str, bool], SendTicket]): Как поставить
+            отправку в очередь: узел, текст, ключ идемпотентности, признание
+            холодного обращения.
         on_hold (Callable[[DeliveryDecision], None] | None): Что делать с
             заказом, который сам не выдаётся. Без него такой заказ виден только
             в журнале.
@@ -113,7 +135,7 @@ class AutoDelivery:
         self,
         plan: DeliveryPlan,
         ledger: DeliveryLedger,
-        send: Callable[[str, str, str], SendTicket],
+        send: Callable[[str, str, str, bool], SendTicket],
         on_hold: Callable[[DeliveryDecision], None] | None = None,
         persist: Callable[[], None] | None = None,
     ) -> None:
@@ -251,12 +273,46 @@ class AutoDelivery:
                 self._on_hold(decision)
             return None
 
+        # УЗЕЛ ДИАЛОГА БЕРЁТСЯ ДО ЗАПИСИ В РЕЕСТР, и порядок здесь важнее, чем
+        # кажется. chat_of - это СЕТЕВОЕ чтение страницы заказа, а не поле:
+        # именно поэтому оно и сделано функцией.
+        #
+        # Прежде запись стояла впереди него, и всякий отказ этого чтения -
+        # оборванная сессия, исчерпанный бюджет, изменившаяся вёрстка - оставлял
+        # заказ НАВСЕГДА помеченным выданным при нуле отправок. Повторно он не
+        # выдаётся никогда, а on_hold не срабатывает: решение-то было
+        # положительным.
+        #
+        # Что довод «пишем впереди отправки» защищает - это окно между записью и
+        # ОТПРАВКОЙ. Сетевое чтение адреса в это окно не входит: оно происходит
+        # до того, как принято решение действовать, и его отказ означает «мы ещё
+        # ничего не сделали», а не «мы, возможно, уже отправили».
+        try:
+            chat_id = self._plan.chat_of(decision.order_id)
+        except Exception as exc:
+            _log.warning(
+                "заказ %s: узел диалога не прочитан (%s), выдача не состоялась и в реестр "
+                "не записана",
+                decision.order_id,
+                type(exc).__name__,
+            )
+            if self._on_hold is not None:
+                self._on_hold(
+                    DeliveryDecision(
+                        decision.order_id,
+                        False,
+                        "chat_not_read",
+                        offer_id=decision.offer_id,
+                    )
+                )
+            return None
+
         self._ledger.record(
             Delivery(
                 order_id=decision.order_id,
                 offer_id=decision.offer_id,
                 at_ms=int(datetime.now(UTC).timestamp() * 1000),
-                outcome="queued",
+                outcome=QUEUED_OUTCOME,
             )
         )
         # Сохранение НА ДИСК тоже впереди отправки, и по тому же доводу:
@@ -266,9 +322,10 @@ class AutoDelivery:
             self._persist()
 
         return self._send(
-            self._plan.chat_of(decision.order_id),
+            chat_id,
             self._plan.goods[decision.offer_id],
             # Ключ идемпотентности - сам заказ. По одному заказу выдают один
             # раз, и ключ обязан говорить именно это, а не «эта попытка».
             f"delivery:{decision.order_id}",
+            self._plan.declared_cold,
         )
