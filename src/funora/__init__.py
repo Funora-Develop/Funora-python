@@ -91,6 +91,7 @@ from ._updates import (
     parse_updates_answer,
 )
 from ._verdicts import error_for
+from ._viewing import BuyerViewing
 from ._watch import Router, StepResult, adispatch, dispatch
 from ._whoami import Account, CapabilityProfile, SessionHealth
 from .capabilities import CAPABILITY_INITIAL, Capability, CapabilityState
@@ -114,6 +115,7 @@ __all__ = [
     "AsyncOrdersService",
     "ChatsService",
     "AsyncChatsService",
+    "BuyerViewing",
     "Budget",
     "Proxy",
     "Reservation",

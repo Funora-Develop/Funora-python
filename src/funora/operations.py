@@ -187,6 +187,31 @@ OPERATIONS: Final[dict[str, Operation]] = {
             "funora.transport",
         ),
     ),
+    "chats.buyer_viewing": Operation(
+        name="chats.buyer_viewing",
+        capability="chats.buyer_viewing",
+        safety=Safety.SAFE,
+        request_class="poll",
+        returns="BuyerViewing[]",
+        errors=(
+            "funora.capability.unsupported",
+            "funora.auth.session_expired",
+            "funora.protocol.changed",
+            "funora.transport",
+        ),
+        request_provenance="third_party_report",
+        provenance_source=(
+            "FunPayAPI (бот FunPayCardinal), account.py, get_buyers_viewing и "
+            "__parse_buyer_viewing."
+        ),
+        provenance_rests_on=(
+            "ТОЛЬКО ОТВЕТ. Подписка наблюдена НАМИ - объект вида c-p-u лежит в семи наших записях "
+            "канала, и состав его известен: признак, идентификатор из восьми цифр, метка из "
+            "восьми знаков.\nНе наблюдено, ЧТО приходит в ответ на такую подписку. Известно от "
+            "сторонней реализации: при пустом признаке покупатель не смотрит ничего, иначе внутри "
+            "лежит разметка со ссылкой на лот."
+        ),
+    ),
     "chats.history": Operation(
         name="chats.history",
         capability="chats.history",

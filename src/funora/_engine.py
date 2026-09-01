@@ -37,7 +37,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic
-from typing import Final, TypeVar
+from typing import Any, Final, TypeVar
 from urllib.parse import urlparse
 
 from ._account import BalancePage, parse_balance_page
@@ -117,6 +117,7 @@ from ._state import StateFile
 from ._thread import Thread, parse_thread
 from ._transport import Observation, TransportSettings
 from ._verdicts import error_for
+from ._viewing import VIEWING_OBJECT, BuyerViewing, parse_buyer_viewing
 from ._watch import Router, StepResult, health_changed, incomplete, loss, primed
 from ._whoami import Account, CapabilityProfile, SessionHealth, parse_account, parse_app_data
 from .budget import (
@@ -563,6 +564,7 @@ IMPLEMENTED: Final[frozenset[Capability]] = frozenset(
         Capability.CHIPS_CALCULATE_PRICES,
         Capability.ACCOUNT_SWITCH_CURRENCY,
         Capability.ORDERS_DETAILS,
+        Capability.CHATS_BUYER_VIEWING,
     }
 )
 
@@ -1115,6 +1117,99 @@ class Engine:
         result = classify_send_response(reply.html, sent_to=context.node_name.value)
         if result.outcome is SendOutcome.CONFIRMED:
             self._state.capabilities[capability] = CapabilityState.SUPPORTED
+        return result
+
+    def read_buyer_viewing(
+        self, node_id: str, buyer_ids: tuple[str, ...]
+    ) -> Generator[Request, Reply, tuple[BuyerViewing, ...]]:
+        """Читает, что покупатели смотрят прямо сейчас.
+
+        РАСКОЛ НАБЛЮДЕНИЯ. Подписка наблюдена НАМИ - объект этого вида лежит в
+        семи наших записях канала. Ответ на неё мы не видели ни разу, и состав
+        его известен от независимой реализации того же протокола.
+
+        ЧТЕНИЕ, И СОГЛАСИЯ НЕ СПРАШИВАЕТ: ошибка чтения на чужом знании видна.
+
+        СТРАНИЦА ДИАЛОГА НУЖНА НЕ РАДИ ДИАЛОГА, а ради защитного токена: без
+        него к каналу не обратиться вовсе.
+
+        Args:
+            node_id (str): Диалог, со страницы которого берётся токен.
+            buyer_ids (tuple[str, ...]): Идентификаторы покупателей.
+
+        Yields:
+            Request: Просьбы о вводе-выводе.
+
+        Returns:
+            tuple[BuyerViewing, ...]: По записи на каждого спрошенного, в том
+            же порядке. Не ответившие получают наблюдение «не смотрит».
+
+        Raises:
+            ValidationError: Если идентификатор непригоден либо перечень пуст.
+            FunoraError: Если страница либо ответ непригодны.
+        """
+        cleaned_node = node_id.strip()
+        if not cleaned_node or not cleaned_node.isalnum():
+            raise ValidationError(
+                "идентификатор диалога обязан состоять из букв и цифр. Проверка идёт до сети"
+            )
+        buyers = tuple(one.strip() for one in buyer_ids)
+        if not buyers:
+            raise ValidationError("перечень покупателей пуст: спрашивать не о ком")
+        for one in buyers:
+            if not one or not one.isdigit():
+                raise ValidationError(f"идентификатор покупателя {one!r} обязан быть числом")
+
+        capability = Capability.CHATS_BUYER_VIEWING
+        observation = yield from self.fetch_ok(capability, THREAD_PATH.format(node_id=cleaned_node))
+        context = parse_runner_context(observation.html)
+        token = context.csrf_token
+        if token is None:
+            raise ProtocolChangedError(
+                "на странице диалога нет защитного токена, и к каналу не обратиться"
+            )
+
+        yield from self.spend_budget(_class_of(capability), cost=1.0)
+        reply = yield Submit(
+            RUNNER_PATH,
+            {
+                "objects": json.dumps(
+                    [
+                        # Состав подписки НАШ, наблюдённый: признак, номер,
+                        # метка. Метка «нулевая» - площадка принимает любую и
+                        # отвечает всем, что изменилось с той поры.
+                        {"type": VIEWING_OBJECT, "id": one, "tag": "00000000", "data": False}
+                        for one in buyers
+                    ],
+                    ensure_ascii=False,
+                ),
+                "csrf_token": token.reveal(),
+            },
+            dict(RUNNER_HEADERS),
+        )
+        if not isinstance(reply, Observation):
+            raise TypeError(f"на просьбу Submit ожидалось наблюдение, получено {type(reply)}")
+
+        try:
+            payload = json.loads(reply.html)
+        except ValueError as exc:
+            raise ProtocolChangedError("ответ канала не разобрался как JSON") from exc
+
+        objects = payload.get("objects") if isinstance(payload, dict) else None
+        by_id: dict[str, Any] = {}
+        if isinstance(objects, list):
+            for one in objects:
+                if isinstance(one, dict) and one.get("type") == VIEWING_OBJECT:
+                    by_id[str(one.get("id"))] = one
+
+        now = datetime.now(UTC)
+        # ПОРЯДОК СОХРАНЯЕТСЯ СПРОШЕННЫЙ, а не ответный: ответ канала
+        # перечисляет что попало, и вызывающий, сопоставлявший по месту, получил
+        # бы чужого покупателя.
+        result = tuple(
+            parse_buyer_viewing(by_id.get(one), buyer_id=one, observed_at=now) for one in buyers
+        )
+        self._state.capabilities[capability] = CapabilityState.SUPPORTED
         return result
 
     def mark_chat_read(self, node_id: str) -> Generator[Request, Reply, None]:
