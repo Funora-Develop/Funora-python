@@ -171,6 +171,11 @@ class OrderListEntry:
     time_ago_text: Observed[str]
 
 
+#: Форма сужения списка. Показывается площадкой НЕ ВСЕГДА: в снимке
+#: 19.08.2026 её нет вовсе, в снимке 28.08.2026 она есть.
+_FILTER_FORM: Final[str] = SELECTORS["orders.filters.form"]
+
+
 @dataclass(frozen=True, slots=True)
 class OrdersPage:
     """Результат чтения страницы списка заказов.
@@ -187,6 +192,12 @@ class OrdersPage:
         rows_total (int): Сколько кандидатов в строки нашлось.
         rows_accepted (int): Сколько записей собрано.
         rows_rejected (int): Сколько строк отброшено.
+        filters_available (bool): Есть ли на странице форма сужения списка.
+
+            ЧИТАЕТСЯ, А НЕ ПРЕДПОЛАГАЕТСЯ. В снимке 19.08.2026 формы нет вовсе,
+            в снимке 28.08.2026 она есть - то есть площадка показывает её не
+            всегда, и отправить фильтр туда, где формы нет, значило бы получить
+            несуженный список молча.
         defects (tuple[Defect, ...]): Обнаруженные повреждения.
     """
 
@@ -196,6 +207,7 @@ class OrdersPage:
     rows_total: int
     rows_accepted: int
     rows_rejected: int
+    filters_available: bool
     defects: tuple[Defect, ...]
     _entries: tuple[OrderListEntry, ...] = field(repr=False, default=())
 
@@ -751,6 +763,7 @@ def parse_orders_page(html: str, *, observed_at: datetime) -> OrdersPage:
         rows_total=rows_total,
         rows_accepted=rows_accepted,
         rows_rejected=rows_rejected,
+        filters_available=tree.css_first(_FILTER_FORM) is not None,
         defects=tuple(defects),
         _entries=tuple(entries),
     )
