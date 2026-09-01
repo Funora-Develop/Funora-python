@@ -103,6 +103,7 @@ SELECTORS: Final[dict[str, str]] = {
     "account.transactions.rows_container": ".dyn-table-body",
     "account.transactions.table": ".tc-finance",
     "account.withdraw.form": "form[action$='/withdraw/withdraw']",
+    "account.withdrawal_options.carrier": "div.withdraw-box[data-data]",
     "catalog.field_schema.container": ".lot-fields",
     "catalog.field_schema.fields": ".lot-field",
     "catalog.field_schema.input": ".lot-field-input",

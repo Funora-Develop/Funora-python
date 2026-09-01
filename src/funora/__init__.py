@@ -19,7 +19,7 @@
 
 from __future__ import annotations
 
-from ._account import BalancePage, Transaction
+from ._account import BalancePage, Transaction, WithdrawalChannel, WithdrawalOption
 from ._aclient import AsyncChatsService, AsyncClient, AsyncOrdersService
 from ._budget import Budget, Reservation
 from ._calc import PaymentMethod, PriceCalculation
@@ -182,6 +182,8 @@ __all__ = [
     "SessionHealth",
     "CapabilityProfile",
     "BalancePage",
+    "WithdrawalChannel",
+    "WithdrawalOption",
     "Transaction",
     "ReviewsPage",
     "Review",
