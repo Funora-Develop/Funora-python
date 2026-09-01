@@ -27,7 +27,7 @@
 There is no released package and nothing to install yet. The contract is not
 stabilised and still changes.
 
-Thirty-two operations work: twenty-one reads and eleven writes - sending text and images, marking a chat read, leaving and removing a review, changing a lot price, raising offers, and activating or deactivating a lot.
+Thirty-three operations work: twenty-two reads and eleven writes - sending text and images, marking a chat read, leaving and removing a review, changing a lot price, raising offers, and activating or deactivating a lot.
 
 **The guide lives in [docs/index.md](docs/index.md).** It builds into a site
 (`mkdocs serve`) and is checked by the same run as the code: examples are parsed

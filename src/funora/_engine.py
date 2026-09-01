@@ -51,6 +51,7 @@ from ._calc import (
     parse_calculation,
 )
 from ._catalog import CatalogPage, parse_catalog
+from ._chat_history import CHAT_HISTORY_PATH, HISTORY_HEADERS, ChatHistory, parse_history
 from ._chats import ChatsPage, parse_chats_page
 from ._chips import ChipsPage, parse_chips
 from ._classify import DEFAULT_IDENTITY_CSS, ResponseClass, Verdict, classify
@@ -173,6 +174,7 @@ __all__ = [
     "CHATS_PATH",
     "RUNNER_PATH",
     "Query",
+    "Ask",
     "Upload",
     "UPLOAD_CHAT_PATH",
     "LOT_EDIT_PATH",
@@ -304,6 +306,29 @@ class Query:
 
 
 @dataclass(frozen=True, slots=True)
+class Ask:
+    """Просьба спросить страницу методом GET, но получить ОБЪЕКТ, а не разметку.
+
+    ОТДЕЛЬНАЯ ПРОСЬБА, И ЗАВЕДЕНА ОНА ПО ТОМУ ЖЕ ДОВОДУ, ЧТО РАЗВЁЛ Query И
+    Submit. Отличий от Fetch два - заголовки и то, что ответ разбирается как
+    объект, - и оба можно было бы сделать признаками у Fetch. Признак означал бы,
+    что два разных чтения живут в одном месте и различаются условием, а условие
+    однажды упростят.
+
+    От Query отличается способом: там тело JSON методом POST, здесь параметры в
+    адресе методом GET. Складывать их вместе значило бы завести у одной просьбы
+    два несовместимых вида.
+
+    Attributes:
+        path (str): Путь обращения вместе с параметрами.
+        headers (dict[str, str]): Заголовки, кроме Cookie.
+    """
+
+    path: str
+    headers: dict[str, str]
+
+
+@dataclass(frozen=True, slots=True)
 class Upload:
     """Просьба отправить файл.
 
@@ -377,7 +402,7 @@ class Deliver:
 
 
 #: Любая из шести просьб.
-Request = Fetch | Submit | Upload | Query | Pause | Deliver
+Request = Fetch | Submit | Upload | Query | Ask | Pause | Deliver
 
 #: Что ядро получает в ответ на просьбу. Наблюдение - на Fetch, результат
 #: раздачи - на Deliver, ничего - на Pause.
@@ -570,6 +595,7 @@ IMPLEMENTED: Final[frozenset[Capability]] = frozenset(
         Capability.REVIEWS_REMOVE,
         Capability.LOTS_CALCULATE_PRICES,
         Capability.CHIPS_CALCULATE_PRICES,
+        Capability.CHATS_HISTORY_PAGINATION,
         Capability.ACCOUNT_SWITCH_CURRENCY,
         Capability.ORDERS_DETAILS,
         Capability.CHATS_BUYER_VIEWING,
@@ -2080,9 +2106,22 @@ class Engine:
         # ей не место. Площадка вправе показать баланс и не показать историю, и
         # сводить их в одно состояние значило бы объявить историю работающей по
         # факту баланса.
+        # МЕРКА ЗДЕСЬ ОДНА - ПОЛНОТА, и второй быть не должно. До 01.09.2026
+        # стояло «строки есть И полнота complete», и первая половина условия
+        # НИКОГДА не решала ничего: разбор счёта объявляет пустую таблицу
+        # unknown, а не complete, потому что счёта без единой операции никто не
+        # видел. Мутация это и показала - снятие половины условия не уронило ни
+        # одной проверки.
+        #
+        # Условие, которое не может сработать, хуже отсутствующего: оно выглядит
+        # предохранителем и даёт уверенность, ничего не проверяя.
+        #
+        # Связь, на которой стоит вывод, проверяется отдельно - см.
+        # tests/test_state_without_operations.py: пустая таблица не бывает
+        # полной. Разойдись это правило с разбором - упадёт там, а не у продавца.
         self._state.capabilities[Capability.ACCOUNT_TRANSACTIONS] = (
             CapabilityState.SUPPORTED
-            if page.rows_total and page.completeness is Completeness.COMPLETE
+            if page.completeness is Completeness.COMPLETE
             else CapabilityState.DEGRADED
         )
         return page
@@ -2852,6 +2891,94 @@ class Engine:
         """
         thread, _ = yield from self._read_thread_observed(node_id)
         return thread
+
+    def read_history_before(
+        self, node_id: str, *, before_message_id: str
+    ) -> Generator[Request, Reply, ChatHistory]:
+        """Догружает сообщения переписки СТАРШЕ указанного.
+
+        ЗАПРОС ЗАИМСТВОВАН ЦЕЛИКОМ, и этим операция отличается от прочих. У
+        прежних заимствований чужим был ВЫВОД о действии запроса, который мы
+        наблюдали сами; здесь чужие и адрес, и оба имени параметров, и форма
+        ответа. Своего наблюдения этой точки нет ни одного: наш способ прочитать
+        переписку - целая страница, и она отдаёт лишь показанное сразу.
+
+        СОГЛАСИЯ НЕ СПРАШИВАЕТ: это чтение. Ошибка чтения на чужом знании видна
+        сразу - вернётся не то либо не вернётся ничего - и следа не оставляет.
+        Спрашивать согласие у чтения значило бы обесценить механизм там, где он
+        вправду нужен: у записи.
+
+        НАПРАВЛЕНИЕ ПРОВЕРЯЕТ РАЗБОР. Что курсор отдаёт сообщения СТАРШЕ него -
+        чужое утверждение, и подтверждено оно не было; молча отданный список
+        выглядит одинаково правильным в обе стороны. Поэтому пришедшие
+        идентификаторы сверяются с посланным курсором, и расхождение - отказ.
+
+        Args:
+            node_id (str): Идентификатор диалога.
+            before_message_id (str): Курсор - идентификатор сообщения, от
+                которого просят назад.
+
+        Yields:
+            Request: Просьбы о вводе-выводе.
+
+        Returns:
+            ChatHistory: Догруженные сообщения вместе с признаком конца.
+
+        Raises:
+            ValidationError: Если идентификатор либо курсор непригодны.
+            CursorIncompatibleError: Если площадка вернула не ту сторону.
+            FunoraError: Если ответ непригоден.
+        """
+        node = node_id.strip()
+        if not node or not node.isalnum():
+            raise ValidationError(
+                "идентификатор диалога обязан состоять из букв и цифр, получено "
+                f"{len(node)} знаков иного вида. Проверка идёт до сети: "
+                "подставленный в адрес мусор отправил бы запрос неизвестно куда"
+            )
+        cursor = before_message_id.strip()
+        # Курсор строже узла: на нём стоит СВЕРКА НАПРАВЛЕНИЯ, а сверять можно
+        # только числа. Пропусти мы сюда «12a» - и единственная проверка чужого
+        # утверждения об этой точке молча перестала бы работать.
+        if not cursor.isdigit():
+            raise ValidationError(
+                f"курсор догрузки обязан быть числом, получено {cursor!r}. На нём "
+                "стоит сверка направления листания - единственное, чем мы "
+                "проверяем чужое утверждение об этой точке, - и на нечисловом "
+                "курсоре сверка молча пропустила бы всё"
+            )
+
+        capability = Capability.CHATS_HISTORY_PAGINATION
+        check_capability(
+            capability,
+            state=self._state.capabilities[capability],
+            opted_in=capability in self._state.opted_in,
+        )
+
+        yield from self.spend_budget(_class_of(capability), cost=1.0)
+        reply = yield Ask(
+            f"{CHAT_HISTORY_PATH}?node={node}&last_message={cursor}",
+            dict(HISTORY_HEADERS),
+        )
+        if not isinstance(reply, Observation):
+            raise TypeError(f"на просьбу Ask ожидалось наблюдение, получено {type(reply)}")
+
+        try:
+            payload = json.loads(reply.html)
+        except ValueError as exc:
+            raise UnexpectedResponseError(
+                f"ответ догрузки переписки не разобрался как объект: {exc}"
+            ) from exc
+
+        history = parse_history(
+            payload,
+            chat_id=node,
+            cursor=cursor,
+            observed_at=datetime.now(UTC),
+            host=host_of(self._settings.base_url),
+        )
+        self._note_success(capability, history.completeness, None)
+        return history
 
     def _read_thread_observed(self, node_id: str) -> Generator[Request, Reply, tuple[Thread, str]]:
         """Читает переписку и заодно снимает адрес собственного профиля.
@@ -3769,6 +3896,25 @@ class Engine:
             orders = yield from self.read_orders()
             chats = yield from self.read_chats()
             now = monotonic()
+
+            # Состояние возможности событий по заказам выставляется ЗДЕСЬ и не
+            # через _note_success: своей операции у неё нет, и в перечне
+            # выполняемых ей не место - события порождает этот цикл.
+            #
+            # Прежде состояние не выставлялось вовсе, и возможность числилась
+            # невыполненной по честной причине: спросить её было можно, а ответ
+            # ни на что не влиял.
+            #
+            # Мерка - полнота списка продаж. Полный список означает, что
+            # пропавшая строка вправду исчезла. На неполном курсор нарочно не
+            # сдвигается, чтобы выпавшие строки не сочли исчезнувшими, а события
+            # по прочитанному всё равно порождаются - и принимающий их за полную
+            # картину ошибается. Пусть он видит об этом пометку.
+            self._state.capabilities[Capability.ORDERS_EVENTS] = (
+                CapabilityState.SUPPORTED
+                if orders.completeness is Completeness.COMPLETE
+                else CapabilityState.DEGRADED
+            )
 
             chat_events = diff_chats(known_chats, chats, account_id=account_id)
             # Неполное чтение объявляется вслух и в той же партии, что и события

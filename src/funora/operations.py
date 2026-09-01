@@ -231,11 +231,26 @@ OPERATIONS: Final[dict[str, Operation]] = {
         capability="chats.history_pagination",
         safety=Safety.SAFE,
         request_class="interactive",
-        returns="Message[]",
+        returns="ChatHistory",
         errors=(
             "funora.capability.unsupported",
             "funora.state.cursor_incompatible",
+            "funora.protocol.unexpected_response",
             "funora.transport",
+        ),
+        request_provenance="third_party_report",
+        provenance_source=(
+            "FunPayAPI (бот FunPayCardinal), account.py, get_chat_history - адрес chat/history, "
+            "параметры node и last_message, заголовок x-requested-with, и разбор ответа по ключам "
+            "chat.messages с полями id, author, html."
+        ),
+        provenance_rests_on=(
+            "ВЕСЬ ЗАПРОС ЦЕЛИКОМ, а не вывод о нём: этой точки мы не наблюдали ни разу. Наш "
+            "собственный способ прочитать переписку - страница /chat/?node=, и она отдаёт только "
+            "то, что площадка показала сразу. Чужое здесь и адрес, и имена обоих параметров, и "
+            "форма ответа.\nОтдельно чужим остаётся НАПРАВЛЕНИЕ: что курсор отдаёт сообщения "
+            "СТАРШЕ него, а не младше. Именно это утверждение операция проверяет сама - см. "
+            "примечание о сверке."
         ),
     ),
     "chats.list": Operation(

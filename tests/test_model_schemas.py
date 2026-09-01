@@ -356,6 +356,9 @@ def test_unbuildable_models_say_so() -> None:
         "orders-page",
         "chats-page",
         "thread",
+        # Собирается с 01.09.2026: funora._chat_history.ChatHistory.
+        # Объявлена тогда же, когда написана chats.history_before.
+        "chat-history",
         # Служба отзывов написана в 0.8.0 по снимку профиля, который уже
         # лежал в проекте. Обе модели собираются разбором целиком.
         "review",
