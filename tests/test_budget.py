@@ -206,7 +206,7 @@ def test_slow_bucket_refuses_instead_of_waiting_forever() -> None:
     budget = Budget(names=("write",))
     now = 0.0
     while True:
-        reservation = budget.reserve(now)
+        reservation = budget.reserve(now, action=True)
         if reservation.granted:
             continue
         if reservation.wait_ms > MAX_WAIT_MS:
@@ -216,7 +216,7 @@ def test_slow_bucket_refuses_instead_of_waiting_forever() -> None:
         now += reservation.wait_ms / 1000
 
     with pytest.raises(BudgetExhaustedError) as exc:
-        budget.require(now)
+        budget.require(now, action=True)
     assert "не отправлен" in str(exc.value)
 
 

@@ -25,7 +25,6 @@ from funora._engine import Engine, Fetch, Pause
 from funora._orders import Completeness
 from funora._thread import Origin, Thread
 from funora._transport import Observation, TransportSettings
-from funora.budget import MAX_WAIT_MS
 from funora.capabilities import Capability, CapabilityState
 from funora.errors import (
     AccessBlockedError,
@@ -426,7 +425,9 @@ def test_budget_is_shared_between_clients() -> None:
     second.close()
 
 
-def test_exhausted_budget_does_not_send_the_request(no_sleep: list[float]) -> None:
+def test_exhausted_budget_does_not_send_the_request(
+    no_sleep: list[float], monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Проверяет, что при исчерпании запрос не отправляется вовсе.
 
     В этом весь смысл ошибки: она означает решение SDK не ходить, а не ответ
@@ -438,21 +439,12 @@ def test_exhausted_budget_does_not_send_the_request(no_sleep: list[float]) -> No
     Returns:
         None
     """
-    # Опустошать надо по тем же часам, которые спросит клиент. Опустошение в
-    # момент ноль ничего не даёт: к настоящему монотонному моменту ведро успеет
-    # восполниться, и проверка станет зелёной, ничего не проверив.
-    budget = Budget(names=("write",))
-    now = monotonic()
-    # Опустошать надо ЗАПАС, а не право на залп. Залп восстанавливается за
-    # доли секунды, и остановка на нём дала бы ведро, полное на три четверти:
-    # клиент подождал бы сто миллисекунд и спокойно сходил.
-    while True:
-        reservation = budget.reserve(now)
-        if reservation.granted:
-            continue
-        if reservation.wait_ms > MAX_WAIT_MS:
-            break
-        now += reservation.wait_ms / 1000
+    # Чтение расходует host, а write предназначено только для изменений.
+    # Часы не двигаются после подставного сна: повторная попытка допуска
+    # должна завершиться отказом, не отправив запрос.
+    budget = Budget(names=("host",))
+    budget._buckets[0].tokens = 0
+    monkeypatch.setattr("funora._engine.monotonic", lambda: 0.0)
 
     fetcher = _FakeFetcher([_observation(_page("orders-trade.logged.ru"))])
     with Client(transport=fetcher, budget=budget) as client:  # type: ignore[arg-type]

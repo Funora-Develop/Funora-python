@@ -350,6 +350,7 @@ def _requests(scenario: dict[str, Any]) -> list[dict[str, Any]]:
             "at_ms": rule["at_ms"],
             "class": rule["class"],
             "account": f"аккаунт-{account}",
+            "action": rule.get("action", False),
         }
         for account in range(rule["accounts"])
         for _ in range(rule["per_account"])
@@ -389,11 +390,17 @@ def _run_trace(scenario: dict[str, Any]) -> list[int | None]:
         now_ms = max(now_ms, int(request.get("at_ms", 0)))
         request_class = RequestClass(request.get("class", "interactive"))
         cost = float(request.get("cost", 1))
+        action = request.get("action", False)
+        if not isinstance(action, bool):
+            raise ValueError("action в трассе должен быть boolean")
+        account_budget = budget.for_account(request.get("account", "self"))
 
         moment: int | None = None
         for attempt in range(attempts):
             try:
-                reservation = budget.require(now_ms / 1000, cost=cost, request_class=request_class)
+                reservation = account_budget.require(
+                    now_ms / 1000, cost=cost, request_class=request_class, action=action
+                )
             except BudgetExhaustedError:
                 # Отказ по классу отменяемому либо ожидание дольше предела.
                 # И то и другое означает, что запрос не отправлен вовсе.

@@ -41,7 +41,11 @@ from funora._aclient import AsyncCatalogService
 assert callable(CatalogService.field_schema)
 assert callable(AsyncCatalogService.field_schema)
 from funora import Client, AsyncClient
+from funora import Budget
+from funora.budget import BUCKETS
 from funora.errors import ConfigurationError
+assert BUCKETS['write'].unit == 'actions_per_hour'
+assert Budget().reserve(0, action=True).granted
 with Client(public_only=True, account_id='package-check') as client:
     try:
         client.orders.list()

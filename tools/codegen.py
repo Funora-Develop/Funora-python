@@ -1315,7 +1315,7 @@ def render_budget(spec: Path) -> str:
         "площадки означало бы намеренно их превышать. Поэтому они подобраны\n"
         "консервативно и будут уточняться наблюдением, а не подбором.\n"
         "\n"
-        "Расходуются отправленные запросы, включая повторы и переходы по\n"
+        "Сетевые вёдра расходуют запросы, включая повторы и переходы по\n"
         "редиректам. Считать только логические операции нельзя: тогда шторм\n"
         "повторов оказывается бесплатным ровно в тот момент, когда площадке\n"
         "хуже всего.\n"
@@ -1375,30 +1375,34 @@ def render_budget(spec: Path) -> str:
     out.append('    """Ёмкость и скорость пополнения одного ведра.\n\n')
     out.append("    Attributes:\n")
     out.append("        name (str): Имя ведра.\n")
-    out.append("        capacity (int): Сколько запросов помещается всего.\n")
+    out.append("        capacity (int): Сколько единиц помещается всего.\n")
     out.append("        refill_per_second (float): Сколько восстанавливается за секунду.\n")
     out.append("        burst (int): Сколько можно потратить залпом.\n")
+    out.append("        unit (str): requests либо actions_per_hour для логических записей.\n")
     out.append('    """\n\n')
     out.append("    name: str\n")
     out.append("    capacity: int\n")
     out.append("    refill_per_second: float\n")
     out.append("    burst: int\n")
+    out.append('    unit: str = "requests"\n')
 
     out.append("\n\n#: Вёдра бюджета. Вложены: запрос расходует сначала общее, потом ведро\n")
     out.append("#: аккаунта. Порядок нормативен, иначе при нескольких аккаунтах в одном\n")
     out.append("#: процессе общий предел обходится.\n")
     # Ключи ведра, которые кодогенератор ЧИТАЕТ.
-    read_here = {"capacity", "refill_per_second", "burst"}
+    read_here = {"capacity", "refill_per_second", "burst", "unit"}
 
     # Ключи, объявленные и намеренно не читаемые. Каждый обязан быть назван
     # записью реестра неисполненного - иначе он «объявлен и молчит», а это в
     # проекте запрещено.
     #
     # summary - проза для человека, механизма за ней нет.
-    # unit - единица учёта ведра записи; записана как write_bucket_unit.
-    known_unread = {"summary": None, "unit": "write_bucket_unit"}
+    known_unread = {"summary": None}
 
     for name, entry in buckets.items():
+        expected_unit = "actions_per_hour" if name == "write" else "requests"
+        if entry.get("unit", "requests") != expected_unit:
+            raise SystemExit(f"spec/runtime/budget.yaml: неподдерживаемая единица ведра {name}")
         unknown = set(entry) - read_here - set(known_unread)
         if unknown:
             # Прежде такой ключ пропадал МОЛЧА. Признак unit у ведра записи
@@ -1419,6 +1423,8 @@ def render_budget(spec: Path) -> str:
         out.append(f"        capacity={entry['capacity']},\n")
         out.append(f"        refill_per_second={float(entry['refill_per_second'])},\n")
         out.append(f"        burst={entry['burst']},\n")
+        if "unit" in entry:
+            out.append(f'        unit="{entry["unit"]}",\n')
         out.append("    ),\n")
     out.append("}\n")
 

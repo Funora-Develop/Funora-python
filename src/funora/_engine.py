@@ -1126,7 +1126,7 @@ class Engine:
         anchor = take_anchor(observation.html)
         self._reserve_outbound(cleaned, anchor, declared_cold=declared_cold)
 
-        yield from self.spend_budget(_class_of(capability), cost=1.0)
+        yield from self.spend_budget(_class_of(capability), cost=1.0, action=True)
         uploaded = yield Upload(
             UPLOAD_CHAT_PATH,
             field="file",
@@ -1341,7 +1341,7 @@ class Engine:
             "content": "",
         }
 
-        yield from self.spend_budget(_class_of(capability), cost=1.0)
+        yield from self.spend_budget(_class_of(capability), cost=1.0, action=True)
         reply = yield Submit(
             RUNNER_PATH,
             {
@@ -1441,7 +1441,7 @@ class Engine:
             "last_message": int(context.last_message.value),
             "content": text,
         }
-        yield from self.spend_budget(_class_of(capability), cost=1.0)
+        yield from self.spend_budget(_class_of(capability), cost=1.0, action=True)
         result = yield from self._submit_message(context, data)
 
         # СВЕРКА ДЕЛАЕТСЯ ТОЛЬКО ТАМ, ГДЕ ИСХОДА НЕ НАБЛЮДАЛИ. При подтверждённом
@@ -1698,7 +1698,9 @@ class Engine:
         if before.is_active == visible:
             return before
 
-        reply = yield Submit(SAVE_PATH, before.to_request(active=visible), {})
+        fields = before.to_request(active=visible)
+        yield from self.spend_budget(_class_of(capability), action=True)
+        reply = yield Submit(SAVE_PATH, fields, {})
         if not isinstance(reply, Observation):
             raise TypeError(f"на просьбу Submit ожидалось наблюдение, получено {type(reply)}")
 
@@ -1819,6 +1821,8 @@ class Engine:
         cleaned = price.strip()
         if not cleaned:
             raise ValidationError("цена пуста: пустое поле стирает цену, а не оставляет прежнюю")
+        if cleaned == before.price_text:
+            return before
 
         # Вид аудита тоже из контракта: before_state - сохранить состояние ДО
         # правки. Появись у операции аудит другого вида, здесь станет видно,
@@ -1829,6 +1833,8 @@ class Engine:
                 "реализован before_state. Что именно сохранять - решает "
                 "спецификация, и молча исполнять не то нельзя"
             )
+
+        fields = before.to_request(price=cleaned)
 
         # ЗАПИСЬ ВПЕРЕДИ ОТПРАВКИ. «Запишем, когда подтвердится» означает не
         # записать ровно те правки, которые могли уйти: ответ теряется, процесс
@@ -1846,7 +1852,8 @@ class Engine:
         )
         self._save_price_audit()
 
-        reply = yield Submit(SAVE_PATH, before.to_request(price=cleaned), {})
+        yield from self.spend_budget(_class_of(Capability.LOTS_UPDATE_PRICE), action=True)
+        reply = yield Submit(SAVE_PATH, fields, {})
         if not isinstance(reply, Observation):
             raise TypeError(f"на просьбу Submit ожидалось наблюдение, получено {type(reply)}")
 
@@ -2022,7 +2029,7 @@ class Engine:
             opted_in=capability in self._state.opted_in,
         )
 
-        yield from self.spend_budget(_class_of(capability), cost=1.0)
+        yield from self.spend_budget(_class_of(capability), cost=1.0, action=True)
         reply = yield Submit(RAISE_PATH, {"game_id": game, "node_id": node}, {})
         if not isinstance(reply, Observation):
             raise TypeError(f"на просьбу Submit ожидалось наблюдение, получено {type(reply)}")
@@ -2245,7 +2252,7 @@ class Engine:
                 "на странице нет защитного токена, и собрать запрос смены валюты не из чего"
             )
 
-        yield from self.spend_budget(_class_of(capability), cost=1.0)
+        yield from self.spend_budget(_class_of(capability), cost=1.0, action=True)
         reply = yield Submit(
             SWITCH_CURRENCY_PATH,
             {
@@ -2430,7 +2437,7 @@ class Engine:
             fields["rating"] = str(rating)
             fields["text"] = body
 
-        yield from self.spend_budget(_class_of(capability), cost=1.0)
+        yield from self.spend_budget(_class_of(capability), cost=1.0, action=True)
         reply = yield Submit(path, fields, dict(RUNNER_HEADERS))
         if not isinstance(reply, Observation):
             raise TypeError(f"на просьбу Submit ожидалось наблюдение, получено {type(reply)}")
@@ -2585,7 +2592,7 @@ class Engine:
                 "на странице заказа нет защитного токена, и собрать запрос возврата не из чего"
             )
 
-        yield from self.spend_budget(_class_of(capability), cost=1.0)
+        yield from self.spend_budget(_class_of(capability), cost=1.0, action=True)
         reply = yield Submit(
             REFUND_PATH,
             # Оба поля наблюдены НАМИ, в форме на странице заказа. Номер берётся
@@ -3751,12 +3758,17 @@ class Engine:
         request_class: RequestClass = RequestClass.INTERACTIVE,
         *,
         cost: float = 1.0,
+        action: bool = False,
     ) -> Generator[Request, Reply, None]:
         """Занимает бюджет под один отправляемый запрос.
 
         Расходуется именно отправляемый запрос, а не логическая операция:
         повтор - тоже запрос. Считать иначе означало бы сделать шторм повторов
         бесплатным ровно в тот момент, когда площадке хуже всего.
+
+        При action=True вместе с запросом резервируется одно действие записи.
+        Последующие запросы той же операции передают action=False, включая
+        отправку сообщения после загрузки изображения. Допуск атомарен.
 
         Ожидание выполняется просьбой, а не в бюджете: сам бюджет не спит, чтобы
         его можно было проверять числами вместо секунд.
@@ -3795,7 +3807,9 @@ class Engine:
         # зависшего процесса.
         waited = 0
         for attempt in range(WAIT_ATTEMPTS):
-            reservation = self._budget.require(monotonic(), cost=cost, request_class=request_class)
+            reservation = self._budget.require(
+                monotonic(), cost=cost, request_class=request_class, action=action
+            )
             if reservation.granted:
                 return
             if attempt + 1 == WAIT_ATTEMPTS:

@@ -45,3 +45,22 @@ def test_incompatible_operation_policy_is_rejected(tmp_path, service, operation,
     path.write_text(yaml.safe_dump(doc))
     with pytest.raises(SystemExit):
         codegen.render_operations(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "bucket, unit", [("write", None), ("write", "requests"), ("host", "actions_per_hour")]
+)
+def test_wrong_budget_unit_is_rejected(tmp_path, bucket, unit):
+    spec = os.environ.get("FUNORA_SPEC_DIR")
+    if not spec:
+        pytest.skip("FUNORA_SPEC_DIR не задана")
+    shutil.copytree(Path(spec) / "spec", tmp_path / "spec")
+    path = tmp_path / "spec/runtime/budget.yaml"
+    doc = yaml.safe_load(path.read_text())
+    if unit is None:
+        doc["buckets"][bucket].pop("unit")
+    else:
+        doc["buckets"][bucket]["unit"] = unit
+    path.write_text(yaml.safe_dump(doc))
+    with pytest.raises(SystemExit):
+        codegen.render_budget(tmp_path)

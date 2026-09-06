@@ -203,7 +203,7 @@ class Budget:
 
     __slots__ = ("_buckets", "_demanded_at", "_suspended_until", "_lock", "_accounts")
 
-    def __init__(self, names: tuple[str, ...] = ("host", "account")) -> None:
+    def __init__(self, names: tuple[str, ...] = ("host", "account", "write")) -> None:
         self._accounts: dict[str, Budget] = {}
         self._lock = RLock()
         self._buckets = tuple(TokenBucket(BUCKETS[name]) for name in names)
@@ -315,6 +315,8 @@ class Budget:
         now: float,
         cost: float = 1.0,
         request_class: RequestClass = RequestClass.INTERACTIVE,
+        *,
+        action: bool = False,
     ) -> Reservation:
         """Пытается занять бюджет во всех вёдрах сразу.
 
@@ -337,6 +339,8 @@ class Budget:
             now (float): Текущий момент, монотонные секунды.
             cost (float): Стоимость запроса.
             request_class (RequestClass): Класс запроса.
+            action (bool): Начало логической записи. Списывает одну единицу
+                write вместе с первым запросом; остальные запросы - без неё.
 
         Returns:
             Reservation: Выдан ли бюджет, и сколько ждать, если нет.
@@ -362,13 +366,18 @@ class Budget:
                 )
 
             floor = self._floor_for(request_class, now)
-            for bucket in self._buckets:
-                wait = bucket.wait_for(now, cost, floor)
+            charges = tuple(
+                (bucket, 1.0 if bucket.limits.unit == "actions_per_hour" else cost)
+                for bucket in self._buckets
+                if bucket.limits.unit != "actions_per_hour" or action
+            )
+            for bucket, charge in charges:
+                wait = bucket.wait_for(now, charge, floor)
                 if wait:
                     return Reservation(granted=False, wait_ms=wait, bucket=bucket.limits.name)
 
-            for bucket in self._buckets:
-                bucket.take(now, cost)
+            for bucket, charge in charges:
+                bucket.take(now, charge)
             return Reservation(granted=True, wait_ms=0, bucket="")
 
     def scale(self, factor: float) -> None:
@@ -410,6 +419,8 @@ class Budget:
         now: float,
         cost: float = 1.0,
         request_class: RequestClass = RequestClass.INTERACTIVE,
+        *,
+        action: bool = False,
     ) -> Reservation:
         """Занимает бюджет или отказывает, если ждать пришлось бы слишком долго.
 
@@ -425,7 +436,7 @@ class Budget:
                 этом не отправляется вовсе - в этом весь смысл: ошибка означает
                 решение SDK не ходить, а не ответ площадки.
         """
-        reservation = self.reserve(now, cost, request_class)
+        reservation = self.reserve(now, cost, request_class, action=action)
         if reservation.granted:
             return reservation
 
