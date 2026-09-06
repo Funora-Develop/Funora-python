@@ -111,6 +111,7 @@ SELECTORS: Final[dict[str, str]] = {
     "catalog.field_schema.fields": ".lot-field",
     "catalog.field_schema.input": ".lot-field-input",
     "catalog.field_schema.kinds.choice": ".lot-field-radio-box",
+    "catalog.field_schema.kinds.choice.options": "button",
     "catalog.field_schema.kinds.range": ".lot-field-range-box",
     "catalog.field_schema.label": ".control-label",
     "catalog.game.card": ".promo-games-all .promo-game-item",

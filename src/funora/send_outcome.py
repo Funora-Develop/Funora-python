@@ -45,6 +45,8 @@ class SendOutcome(StrEnum):
 
 #: Причины решения. Машиночитаемы и закрыты.
 SEND_REASONS: Final[dict[str, str]] = {
+    "transport_error": "Ответ после отправки не получен; запрос мог быть исполнен.",
+    "unexpected_http_status": "HTTP-статус ответа не подтверждает исполнение действия.",
     "confirmed_by_channel": "Ответ несёт новое сообщение в том самом диалоге.",
     "channel_reported_error": "Поле error непусто. Что именно в нём - неизвестно.",
     "body_not_json": "Тело ответа не разобралось.",
@@ -61,6 +63,8 @@ SEND_REASONS: Final[dict[str, str]] = {
 #:
 #: Каждый шаг - имя, исход при непрохождении и причина.
 SEND_PIPELINE: Final[tuple[tuple[str, str, str], ...]] = (
+    ("Ответ транспорта получен", "unconfirmed", "transport_error"),
+    ("HTTP-статус ответа допускает подтверждение", "unconfirmed", "unexpected_http_status"),
     ("Тело разбирается как JSON", "unconfirmed", "body_not_json"),
     ("Разобранное - объект", "unconfirmed", "body_not_an_object"),
     ("Поле response - объект", "unconfirmed", "response_not_an_object"),

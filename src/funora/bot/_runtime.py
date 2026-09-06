@@ -14,10 +14,12 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from contextlib import nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 from .._client import Client
+from .._fileio import file_lock
 from .._poll import Schedule
 from .._watch import Router
 from ..errors import (
@@ -208,28 +210,36 @@ class Bot:
         Raises:
             FunoraError: Любая ошибка чтения, которую не удалось повторить.
         """
-        self._outbox.claim()
-
-        # Застрявшее разбирается ОДИН РАЗ, на старте, и до первого опроса.
-        # Задание, взятое умершим процессом, могло уйти на площадку и могло не
-        # уйти; повторять его нельзя, и молчать о нём нельзя тоже.
-        if self._spool is not None:
-            self._spool.recover()
-
-        self._client.run(
-            self._client.engine.watch(
-                self._router,
-                account_id=account_id,
-                max_iterations=max_iterations,
-                schedule=schedule,
-                state_path=state_path,
-                max_threads_per_step=max_threads_per_step,
-                use_channel=use_channel,
-            ),
-            router=self._router,
-            on_handler_error=on_handler_error,
-            on_idle=self._drain,
+        worker = (
+            file_lock(self._spool.root / ".worker.lock", blocking=False)
+            if self._spool is not None
+            else nullcontext()
         )
+        with worker:
+            self._outbox.claim()
+            try:
+                # Застрявшее разбирается ОДИН РАЗ, на старте, и до первого опроса.
+                # Задание, взятое умершим процессом, могло уйти на площадку и могло не
+                # уйти; повторять его нельзя, и молчать о нём нельзя тоже.
+                if self._spool is not None:
+                    self._spool.recover()
+
+                self._client.run(
+                    self._client.engine.watch(
+                        self._router,
+                        account_id=account_id,
+                        max_iterations=max_iterations,
+                        schedule=schedule,
+                        state_path=state_path,
+                        max_threads_per_step=max_threads_per_step,
+                        use_channel=use_channel,
+                    ),
+                    router=self._router,
+                    on_handler_error=on_handler_error,
+                    on_idle=self._drain,
+                )
+            finally:
+                self._outbox.release()
 
     def _note_delivery(self, idempotency_key: str, outcome: str) -> None:
         """Проставляет реестру выдач настоящий исход отправки.
@@ -282,7 +292,11 @@ class Bot:
             None
         """
         left = self._limit
-        for ticket in self._outbox.take(left):
+        for _ in range(left):
+            batch = self._outbox.take(1)
+            if not batch:
+                break
+            ticket = batch[0]
             left -= 1
             command = ticket.command
             try:
@@ -301,6 +315,10 @@ class Bot:
                 ticket.settle(error=exc)
                 self._note_delivery(command.idempotency_key, type(exc).__name__)
                 continue
+            except Exception as exc:
+                ticket.settle(error=exc)
+                self._note_delivery(command.idempotency_key, "unexpected_error")
+                raise
             self._sent += 1
             ticket.settle(result=result)
             self._note_delivery(command.idempotency_key, result.outcome.value)
@@ -316,7 +334,11 @@ class Bot:
         if self._spool is None:
             return
 
-        for entry in self._spool.take(left):
+        for _ in range(left):
+            entries = self._spool.take(1)
+            if not entries:
+                break
+            entry = entries[0]
             command = entry.command
             try:
                 result = self._client.chats.send_text(

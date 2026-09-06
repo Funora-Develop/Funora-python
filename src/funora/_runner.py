@@ -360,7 +360,9 @@ def _unconfirmed(reason: str) -> SendResult:
     )
 
 
-def classify_send_response(body: str, *, sent_to: str) -> SendResult:
+def classify_send_response(
+    body: str, *, sent_to: str, transport_failed: bool = False, http_status: int = 200
+) -> SendResult:
     """Устанавливает исход отправки по ответу канала.
 
     ПОРЯДОК ШАГОВ НОРМАТИВЕН и объявлен в spec/protocol/send-outcome.yaml. Две
@@ -381,6 +383,10 @@ def classify_send_response(body: str, *, sent_to: str) -> SendResult:
         SendResult: Исход, причина и прочитанное из ответа.
     """
     # Шаг 1. Тело разбирается как JSON.
+    if transport_failed:
+        return _unconfirmed("transport_error")
+    if http_status != 200:
+        return _unconfirmed("unexpected_http_status")
     try:
         parsed: object = json.loads(body)
     except ValueError:

@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from threading import RLock
 from typing import Final
 
 from .budget import (
@@ -102,7 +103,6 @@ class TokenBucket:
         if now <= self.updated_at:
             # Монотонные часы назад не идут, но защита дешевле разбирательства:
             # отрицательный интервал молча выдал бы бесконечный бюджет.
-            self.updated_at = now
             return
         elapsed = now - self.updated_at
         self.tokens = min(
@@ -201,9 +201,10 @@ class Budget:
             нормативен: сначала общее, потом ведро аккаунта.
     """
 
-    __slots__ = ("_buckets", "_demanded_at", "_suspended_until")
+    __slots__ = ("_buckets", "_demanded_at", "_suspended_until", "_lock")
 
     def __init__(self, names: tuple[str, ...] = ("host", "account")) -> None:
+        self._lock = RLock()
         self._buckets = tuple(TokenBucket(BUCKETS[name]) for name in names)
         #: Когда каждый класс последний раз просил бюджет.
         #:
@@ -237,10 +238,11 @@ class Budget:
         Returns:
             None
         """
-        for request_class in classes:
-            self._suspended_until[request_class] = max(
-                self._suspended_until.get(request_class, 0.0), until
-            )
+        with self._lock:
+            for request_class in classes:
+                self._suspended_until[request_class] = max(
+                    self._suspended_until.get(request_class, 0.0), until
+                )
 
     def is_suspended(self, request_class: RequestClass, now: float) -> bool:
         """Сообщает, снят ли класс с очереди сейчас.
@@ -252,7 +254,8 @@ class Budget:
         Returns:
             bool: True, если класс снят и запрос по нему сейчас не пройдёт.
         """
-        return now < self._suspended_until.get(request_class, 0.0)
+        with self._lock:
+            return now < self._suspended_until.get(request_class, 0.0)
 
     def _floor_for(self, request_class: RequestClass, now: float) -> float:
         """Считает порог допуска для класса по нынешнему спросу.
@@ -315,31 +318,35 @@ class Budget:
         Returns:
             Reservation: Выдан ли бюджет, и сколько ждать, если нет.
         """
-        self._demanded_at[request_class] = now
-
-        # Снятый класс не проходит вовсе, сколько бы ни было в ведре. Ждать он
-        # обязан до конца остывания, а не до появления токена.
-        #
-        # Округление то же, что и у ожидания запаса: пауза строго больше точной
-        # величины. Здесь константа прежде стояла литералом - то есть правило
-        # выполнялось по совпадению, и правка объявленного числа обошла бы это
-        # место стороной.
-        if self.is_suspended(request_class, now):
-            return Reservation(
-                granted=False,
-                wait_ms=int((self._suspended_until[request_class] - now) * 1000) + WAIT_GUARD_MS,
-                bucket="suspended",
+        with self._lock:
+            self._demanded_at[request_class] = max(
+                now, self._demanded_at.get(request_class, float("-inf"))
             )
 
-        floor = self._floor_for(request_class, now)
-        for bucket in self._buckets:
-            wait = bucket.wait_for(now, cost, floor)
-            if wait:
-                return Reservation(granted=False, wait_ms=wait, bucket=bucket.limits.name)
+            # Снятый класс не проходит вовсе, сколько бы ни было в ведре. Ждать он
+            # обязан до конца остывания, а не до появления токена.
+            #
+            # Округление то же, что и у ожидания запаса: пауза строго больше точной
+            # величины. Здесь константа прежде стояла литералом - то есть правило
+            # выполнялось по совпадению, и правка объявленного числа обошла бы это
+            # место стороной.
+            if self.is_suspended(request_class, now):
+                return Reservation(
+                    granted=False,
+                    wait_ms=int((self._suspended_until[request_class] - now) * 1000)
+                    + WAIT_GUARD_MS,
+                    bucket="suspended",
+                )
 
-        for bucket in self._buckets:
-            bucket.take(now, cost)
-        return Reservation(granted=True, wait_ms=0, bucket="")
+            floor = self._floor_for(request_class, now)
+            for bucket in self._buckets:
+                wait = bucket.wait_for(now, cost, floor)
+                if wait:
+                    return Reservation(granted=False, wait_ms=wait, bucket=bucket.limits.name)
+
+            for bucket in self._buckets:
+                bucket.take(now, cost)
+            return Reservation(granted=True, wait_ms=0, bucket="")
 
     def scale(self, factor: float) -> None:
         """Урезает ёмкость всех вёдер до доли от объявленной.
@@ -364,13 +371,14 @@ class Budget:
             ValueError: Если доля вне разумных границ. Множитель больше единицы
                 означал бы, что ограничение частоты РАЗРЕШАЕТ ходить чаще.
         """
-        if not 0 < factor <= 1:
-            raise ValueError(
-                f"доля ёмкости {factor} вне границ (0, 1]: множитель больше "
-                "единицы означал бы, что ограничение частоты разрешает ходить чаще"
-            )
-        for bucket in self._buckets:
-            bucket.scale(factor)
+        with self._lock:
+            if not 0 < factor <= 1:
+                raise ValueError(
+                    f"доля ёмкости {factor} вне границ (0, 1]: множитель больше "
+                    "единицы означал бы, что ограничение частоты разрешает ходить чаще"
+                )
+            for bucket in self._buckets:
+                bucket.scale(factor)
 
     def require(
         self,

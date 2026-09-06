@@ -97,6 +97,7 @@ nav:
       - guide/observed.md
       - guide/errors.md
   - Операции:
+      - guide/catalog.md
       - guide/orders.md
       - guide/chats.md
       - guide/sending.md
@@ -109,6 +110,7 @@ nav:
       - guide/budget.md
       - guide/async.md
   - Внутреннее устройство:
+      - validation.md
       - architecture.md
       - observations.md
       - observing.md

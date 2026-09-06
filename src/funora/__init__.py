@@ -46,6 +46,7 @@ from ._diff import (
     orders_cursor,
     thread_cursor,
 )
+from ._field_schema import FieldDefinition, FieldOption, FieldSchema
 from ._gate import check_capability
 from ._host import host_of, is_safe_hop, same_host
 from ._lot_form import LotForm, parse_lot_form
@@ -109,6 +110,9 @@ from .extraction import (
 __version__ = "0.0.1.dev0"
 
 __all__ = [
+    "FieldDefinition",
+    "FieldOption",
+    "FieldSchema",
     "__version__",
     # клиент
     "Client",

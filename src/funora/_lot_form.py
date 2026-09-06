@@ -94,6 +94,7 @@ class LotForm:
     completeness: Completeness
     reason: str
     defects: tuple[Defect, ...] = field(default_factory=tuple)
+    _checkbox_values: dict[str, str] = field(default_factory=dict, repr=False)
 
     def to_request(self, *, price: str | None = None, active: bool | None = None) -> dict[str, str]:
         """Собирает поля запроса сохранения.
@@ -138,7 +139,7 @@ class LotForm:
             out[ACTIVE_FIELD] = ""
 
         for name in sorted(checked):
-            out[name] = "on"
+            out[name] = self._checkbox_values.get(name, "on")
         return out
 
 
@@ -201,6 +202,7 @@ def parse_lot_form(html: str, *, observed_at: datetime) -> LotForm:
 
     fields: dict[str, str] = {}
     checked: set[str] = set()
+    checkbox_values: dict[str, str] = {}
     defects: list[Defect] = []
 
     # Поля собираются ВСЕ ПОДРЯД. Перечень допустимых отстал бы от площадки
@@ -213,16 +215,48 @@ def parse_lot_form(html: str, *, observed_at: datetime) -> LotForm:
             # Кнопки имени не имеют и в запрос не уходят - так наблюдено.
             continue
 
-        if attributes.get("type") == "checkbox":
+        if "disabled" in attributes:
+            continue
+        kind = (attributes.get("type") or "text").lower()
+        if kind in {"submit", "button", "reset", "file"}:
+            continue
+        if kind == "checkbox":
+            if name in checkbox_values:
+                raise ProtocolChangedError(
+                    f"несколько флажков {name!r} требуют нескольких значений"
+                )
+            checkbox_values[name] = (
+                (attributes.get("value") or "") if "value" in attributes else "on"
+            )
             if "checked" in attributes:
                 checked.add(name)
             continue
-
-        if node.tag == "textarea":
-            fields[name] = node.text() or ""
-            continue
-
-        fields[name] = attributes.get("value") or ""
+        if kind == "radio":
+            if "checked" not in attributes:
+                continue
+            value = attributes.get("value") if "value" in attributes else "on"
+        elif node.tag == "textarea":
+            value = node.text() or ""
+        elif node.tag == "select":
+            options = node.css("option")
+            selected = [one for one in options if "selected" in one.attributes]
+            if "multiple" in attributes or len(selected) > 1:
+                raise ProtocolChangedError(
+                    f"поле {name!r} требует нескольких значений: плоская форма их потеряет"
+                )
+            option = selected[0] if selected else (options[0] if options else None)
+            if option is None:
+                raise ProtocolChangedError(f"у поля {name!r} нет вариантов")
+            value = (
+                option.attributes.get("value") if "value" in option.attributes else option.text()
+            )
+        else:
+            value = attributes.get("value") or ""
+        if name in fields:
+            raise ProtocolChangedError(
+                f"повтор поля {name!r}: сохранение потеряет одно из значений"
+            )
+        fields[name] = value or ""
 
     for required in ("csrf_token", "offer_id", "node_id", "price", "form_created_at"):
         if required not in fields:
@@ -254,11 +288,12 @@ def parse_lot_form(html: str, *, observed_at: datetime) -> LotForm:
         # Единственный носитель признака во всём проекте, и читается он
         # НАЛИЧИЕМ пометки, а не значением.
         is_active=ACTIVE_FIELD in checked,
-        revision=_revision_of(fields, frozenset(checked)),
+        revision=_revision_of({**fields, **checkbox_values}, frozenset(checked)),
         fields=fields,
         checked=frozenset(checked),
         observed_at=observed_at,
         completeness=Completeness.COMPLETE,
         reason="all_fields_parsed",
         defects=(),
+        _checkbox_values=checkbox_values,
     )

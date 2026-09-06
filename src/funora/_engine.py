@@ -74,6 +74,7 @@ from ._diff import (
     thread_cursor,
 )
 from ._extract import observe_locale
+from ._field_schema import FieldSchema, parse_field_schema
 from ._gate import check_capability
 from ._host import host_of
 from ._identity import REGISTRY, Identity, identity_of
@@ -160,6 +161,7 @@ from .errors import (
     RateLimitedError,
     TransportError,
     UnexpectedResponseError,
+    UnsupportedCapabilityError,
     UsageError,
     ValidationError,
 )
@@ -513,7 +515,8 @@ def integrity_verified(observation: Observation) -> bool:
 PageT = TypeVar(
     "PageT",
     bound=(
-        "OrdersPage | ChatsPage | Thread | ReviewsPage | BalancePage | ShowcasePage | CatalogPage"
+        "OrdersPage | ChatsPage | Thread | ReviewsPage | BalancePage | ShowcasePage | "
+        "CatalogPage | FieldSchema"
     ),
 )
 
@@ -582,6 +585,7 @@ IMPLEMENTED: Final[frozenset[Capability]] = frozenset(
         Capability.ACCOUNT_BALANCE,
         Capability.LOTS_SHOWCASE,
         Capability.CATALOG_CATEGORIES,
+        Capability.CATALOG_FIELD_SCHEMA,
         Capability.ACCOUNT_PROFILE,
         Capability.CHATS_SEND_TEXT,
         Capability.LOTS_LIST_OWN,
@@ -1035,7 +1039,13 @@ class Engine:
         )
 
     def send_image(
-        self, node_id: str, content: bytes, *, filename: str, content_type: str = "image/png"
+        self,
+        node_id: str,
+        content: bytes,
+        *,
+        filename: str,
+        content_type: str = "image/png",
+        declared_cold: bool = False,
     ) -> Generator[Request, Reply, SendResult]:
         """Отправляет изображение в переписку.
 
@@ -1111,6 +1121,9 @@ class Engine:
                 "прочитан, а не выдуман"
             )
 
+        anchor = take_anchor(observation.html)
+        self._reserve_outbound(cleaned, anchor, declared_cold=declared_cold)
+
         yield from self.spend_budget(_class_of(capability), cost=1.0)
         uploaded = yield Upload(
             UPLOAD_CHAT_PATH,
@@ -1141,7 +1154,7 @@ class Engine:
                 "ЧУЖОЙ файл"
             )
 
-        data = {
+        data: dict[str, object] = {
             "node": context.node_name.value,
             "last_message": int(context.last_message.value),
             # Содержимое пусто НАРОЧНО: наблюдено, что при картинке текста в
@@ -1150,29 +1163,8 @@ class Engine:
             "content": "",
             "image_id": file_id,
         }
-        reply = yield Submit(
-            RUNNER_PATH,
-            {
-                "objects": json.dumps(
-                    [
-                        {
-                            "type": "chat_node",
-                            "id": context.node_name.value,
-                            "tag": context.chat_tag.value,
-                            "data": {**data, "image_id": file_id},
-                        }
-                    ],
-                    ensure_ascii=False,
-                ),
-                "request": json.dumps({"action": "chat_message", "data": data}, ensure_ascii=False),
-                "csrf_token": token.reveal(),
-            },
-            dict(RUNNER_HEADERS),
-        )
-        if not isinstance(reply, Observation):
-            raise TypeError(f"на просьбу Submit ожидалось наблюдение, получено {type(reply)}")
-
-        result = classify_send_response(reply.html, sent_to=context.node_name.value)
+        yield from self.spend_budget(_class_of(capability), cost=1.0)
+        result = yield from self._submit_message(context, data)
         if result.outcome is SendOutcome.CONFIRMED:
             self._state.capabilities[capability] = CapabilityState.SUPPORTED
         return result
@@ -1341,7 +1333,7 @@ class Engine:
         # СОДЕРЖИМОЕ ПУСТОЕ, И ПОЛЯ request НЕТ ВОВСЕ. Это ровно то обращение,
         # которое делает сама страница при открытой переписке: опрос без
         # действия. Положить сюда действие значило бы отправить сообщение.
-        data = {
+        data: dict[str, object] = {
             "node": context.node_name.value,
             "last_message": int(context.last_message.value),
             "content": "",
@@ -1440,63 +1432,15 @@ class Engine:
                 "имени диалога, его метки и защитного токена, нельзя"
             )
         anchor = take_anchor(observation.html)
-        self._bind_account(anchor.own_href)
+        self._reserve_outbound(cleaned, anchor, declared_cold=declared_cold)
 
-        # Ограничитель спрашивается ПЕРВЫМ среди пределов. Ждать он не умеет и
-        # не должен: его пределы часовые.
-        now_ms = int(datetime.now(UTC).timestamp() * 1000)
-        refusal = self._state.outbound.check(
-            cleaned, now_ms=now_ms, now_s=monotonic(), declared_cold=declared_cold
-        )
-        if refusal is not None:
-            raise _outbound_error(refusal)
-
-        # Попытка записывается ВПЕРЕДИ запроса. Форма отказа канала не
-        # наблюдалась, и «не засчитаем, раз не подтвердилось» означало бы не
-        # считать ровно те отправки, которые могли уйти.
-        self._state.outbound.record(cleaned, now_ms=now_ms, now_s=monotonic())
-        # Реестр сохраняется СРАЗУ, а не в конце шага. Перезапуск между
-        # отправкой и концом шага иначе терял бы её из реестра - то есть ровно
-        # в том случае, ради которого реестр и заведён.
-        self._save_ledger(now_ms=now_ms)
-
-        node_name = context.node_name.value
-        data = {
-            "node": node_name,
+        data: dict[str, object] = {
+            "node": context.node_name.value,
             "last_message": int(context.last_message.value),
             "content": text,
         }
-        token = context.csrf_token
-        if token is None:  # pragma: no cover - can_send уже это проверил
-            raise ProtocolChangedError("защитного токена на странице нет")
-
         yield from self.spend_budget(_class_of(capability), cost=1.0)
-        reply = yield Submit(
-            RUNNER_PATH,
-            {
-                # Подписка ровно на один узел - тот самый диалог. Канал
-                # подтверждает только подписанное, а полная подписка недостижима:
-                # метка закладок не наблюдалась.
-                "objects": json.dumps(
-                    [
-                        {
-                            "type": "chat_node",
-                            "id": node_name,
-                            "tag": context.chat_tag.value,
-                            "data": data,
-                        }
-                    ],
-                    ensure_ascii=False,
-                ),
-                "request": json.dumps({"action": "chat_message", "data": data}, ensure_ascii=False),
-                "csrf_token": token.reveal(),
-            },
-            dict(RUNNER_HEADERS),
-        )
-        if not isinstance(reply, Observation):
-            raise TypeError(f"на просьбу Submit ожидалось наблюдение, получено {type(reply)}")
-
-        result = classify_send_response(reply.html, sent_to=node_name)
+        result = yield from self._submit_message(context, data)
 
         # СВЕРКА ДЕЛАЕТСЯ ТОЛЬКО ТАМ, ГДЕ ИСХОДА НЕ НАБЛЮДАЛИ. При подтверждённом
         # ответ канала сам несёт новое сообщение, и читать историю незачем:
@@ -1514,6 +1458,57 @@ class Engine:
             None,
         )
         return result
+
+    def _reserve_outbound(self, node_id: str, anchor: Anchor, *, declared_cold: bool) -> None:
+        self._bind_account(anchor.own_href)
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+        refusal = self._state.outbound.check(
+            node_id, now_ms=now_ms, now_s=monotonic(), declared_cold=declared_cold
+        )
+        if refusal is not None:
+            raise _outbound_error(refusal)
+        self._state.outbound.record(node_id, now_ms=now_ms, now_s=monotonic())
+        self._save_ledger(now_ms=now_ms)
+
+    def _submit_message(
+        self, context: RunnerContext, data: dict[str, object]
+    ) -> Generator[Request, Reply, SendResult]:
+        """Отправляет один раз; потерянный ответ остаётся неопределённым исходом."""
+        token = context.csrf_token
+        assert token is not None  # Оба вызывающих уже проверили can_send.
+        try:
+            reply = yield Submit(
+                RUNNER_PATH,
+                {
+                    "objects": json.dumps(
+                        [
+                            {
+                                "type": "chat_node",
+                                "id": context.node_name.value,
+                                "tag": context.chat_tag.value,
+                                "data": data,
+                            }
+                        ],
+                        ensure_ascii=False,
+                    ),
+                    "request": json.dumps(
+                        {"action": "chat_message", "data": data}, ensure_ascii=False
+                    ),
+                    "csrf_token": token.reveal(),
+                },
+                dict(RUNNER_HEADERS),
+            )
+        except TransportError:
+            return classify_send_response(
+                "", sent_to=context.node_name.value, transport_failed=True
+            )
+        if not isinstance(reply, Observation):
+            raise TypeError(f"на просьбу Submit ожидалось наблюдение, получено {type(reply)}")
+        if reply.status == 429:
+            self._identity.note_limit(monotonic(), retry_after_ms=reply.retry_after_ms)
+        return classify_send_response(
+            reply.html, sent_to=context.node_name.value, http_status=reply.status
+        )
 
     def _reconcile_send(
         self, node_id: str, anchor: Anchor
@@ -2082,6 +2077,25 @@ class Engine:
         page = parse_own_lots(observation.html, observed_at=datetime.now(UTC))
         self._note_success(capability, page.completeness, None)
         return page
+
+    def read_field_schema(self, section_id: str) -> Generator[Request, Reply, FieldSchema]:
+        section_id = _digits(section_id, "раздела")
+        capability = Capability.CATALOG_FIELD_SCHEMA
+        observation = yield from self.fetch_ok(
+            capability, f"/lots/{section_id}/", session_required=False
+        )
+        try:
+            schema = parse_field_schema(
+                observation.html, section_id=section_id, observed_at=datetime.now(UTC)
+            )
+        except UnsupportedCapabilityError:
+            # Отсутствие полей одного раздела не запрещает чтение другого.
+            self._state.capabilities[capability] = CapabilityState.UNKNOWN
+            raise
+        if not integrity_verified(observation):
+            schema = unverified(schema)
+        self._note_success(capability, schema.completeness, None)
+        return schema
 
     def read_catalog(self) -> Generator[Request, Reply, CatalogPage]:
         """Читает каталог с корня площадки.
@@ -3828,16 +3842,26 @@ class Engine:
         batches = build_subscription(wanted, channel.tags)
 
         yield from self.spend_budget(RequestClass.POLL, cost=1.0)
-        reply = yield Submit(
-            RUNNER_PATH,
-            {
-                "objects": json.dumps(batches[0], ensure_ascii=False),
-                "csrf_token": token.reveal(),
-            },
-            dict(RUNNER_HEADERS),
-        )
+        try:
+            reply = yield Submit(
+                RUNNER_PATH,
+                {
+                    "objects": json.dumps(batches[0], ensure_ascii=False),
+                    "csrf_token": token.reveal(),
+                },
+                dict(RUNNER_HEADERS),
+            )
+        except TransportError as exc:
+            return ChannelSignal.DEGRADED, type(exc).__name__
         if not isinstance(reply, Observation):
             raise TypeError(f"на просьбу Submit ожидалось наблюдение, получено {type(reply)}")
+
+        if reply.status == 429:
+            self._identity.note_limit(monotonic(), retry_after_ms=reply.retry_after_ms)
+            yield from self.wait_out_cooldown()
+            return ChannelSignal.DEGRADED, "http_429"
+        if reply.status != 200 or not integrity_verified(reply):
+            return ChannelSignal.DEGRADED, "channel_response_unusable"
 
         try:
             answer = parse_updates_answer(reply.html)
@@ -3934,7 +3958,7 @@ class Engine:
         """
         plan = schedule or Schedule()
         dedup = Deduplicator()
-        state = StateFile(Path(state_path)) if state_path is not None else None
+        state = StateFile(Path(state_path)) if state_path is not None else self._ledger
         if state is not None and self._ledger is None:
             # Файл наблюдения становится и реестром отправок. Иначе бот, честно
             # передавший state_path, всё равно отправлял бы без долговечного

@@ -376,6 +376,9 @@ def test_unbuildable_models_say_so() -> None:
         "showcase-section",
         # Каталог читается с 0.13.0: игры, их варианты и разделы каждого.
         "catalog-game",
+        "field-schema",
+        "field-definition",
+        "field-option",
         "catalog-page",
         "catalog-section",
         # Чтение аккаунта, проверка сессии и профиль возможностей - с 0.14.0.

@@ -24,12 +24,12 @@
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
 from ._canonical import canonical_dumps
+from ._fileio import atomic_write, file_lock
 from .contract import ADAPTER_FAMILY as _ADAPTER_FAMILY
 from .contract import CANONICAL_FORM_VERSION
 from .errors import CursorIncompatibleError, StateSchemaIncompatibleError
@@ -168,7 +168,12 @@ class StateFile:
             )
 
         payload = raw.get("payload")
-        return payload if isinstance(payload, dict) else {}
+        if not isinstance(payload, dict):
+            raise StateSchemaIncompatibleError(
+                f"файл состояния {self.path}: payload обязан быть объектом; "
+                "начать с пустым журналом значило бы забыть уже выполненные действия"
+            )
+        return payload
 
     def update(self, patch: dict[str, Any]) -> None:
         """Правит часть состояния, не трогая остального.
@@ -195,9 +200,10 @@ class StateFile:
             StateSchemaIncompatibleError: Если существующий файл не читается.
             CursorIncompatibleError: Если он снят с другого семейства адаптера.
         """
-        current = self.load()
-        current.update(patch)
-        self.save(current)
+        with file_lock(self.path.with_suffix(self.path.suffix + ".lock")):
+            current = self.load()
+            current.update(patch)
+            self._save(current)
 
     def save(self, payload: dict[str, Any]) -> None:
         """Записывает состояние.
@@ -213,25 +219,16 @@ class StateFile:
         Returns:
             None
         """
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.path.with_suffix(self.path.suffix + ".tmp")
+        with file_lock(self.path.with_suffix(self.path.suffix + ".lock")):
+            self._save(payload)
 
-        # Каноническая форма, а не json.dumps с умолчаниями. Прежде файл
-        # штамповал в себя canonical_form_version и писался с пробелами после
-        # двоеточия и запятой, с числами с плавающей точкой и без нормализации
-        # Unicode: то есть утверждал про себя то, чего никто не делал.
+    def _save(self, payload: dict[str, Any]) -> None:
         body = canonical_dumps(
             {
                 "format": STATE_FORMAT,
                 "adapter_family": ADAPTER_FAMILY,
-                # Версия канонической формы записывается вместе с остальным.
-                # Она меняется отдельно от версии спецификации: одна и та же
-                # модель может сериализоваться по-новому, и это ломает
-                # сохранённые отпечатки. Файл, не помнящий её, нельзя проверить
-                # на пригодность - можно только надеяться.
                 "canonical_form_version": CANONICAL_FORM_VERSION,
                 "payload": payload,
             }
         )
-        temporary.write_text(body, encoding="utf-8", newline="\n")
-        os.replace(temporary, self.path)
+        atomic_write(self.path, body)

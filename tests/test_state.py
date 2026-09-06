@@ -93,7 +93,7 @@ def test_write_is_atomic(tmp_path: Path) -> None:
     """
     state = StateFile(tmp_path / "state.json")
     state.save({"dedup": {}})
-    assert [p.name for p in tmp_path.iterdir()] == ["state.json"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["state.json", "state.json.lock"]
 
 
 def test_truncated_file_is_loud(tmp_path: Path) -> None:

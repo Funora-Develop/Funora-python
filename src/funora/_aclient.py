@@ -45,6 +45,7 @@ from ._engine import (
     Submit,
     Upload,
 )
+from ._field_schema import FieldSchema
 from ._host import host_of
 from ._identity import REGISTRY
 from ._lot_form import LotForm
@@ -390,6 +391,7 @@ class AsyncChatsService:
         *,
         filename: str,
         content_type: str = "image/png",
+        declared_cold: bool = False,
     ) -> SendResult:
         """Отправляет изображение в переписку.
 
@@ -416,7 +418,11 @@ class AsyncChatsService:
         """
         return await self._client.run(
             self._client.engine.send_image(
-                node_id, content, filename=filename, content_type=content_type
+                node_id,
+                content,
+                filename=filename,
+                content_type=content_type,
+                declared_cold=declared_cold,
             )
         )
 
@@ -863,6 +869,10 @@ class AsyncCatalogService:
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
         return await self._client.run(self._client.engine.read_catalog())
+
+    async def field_schema(self, section_id: str) -> FieldSchema:
+        """Читает поля фильтра раздела; неполнота требует явного принятия."""
+        return await self._client.run(self._client.engine.read_field_schema(section_id))
 
 
 class AsyncClient:

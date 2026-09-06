@@ -2,8 +2,8 @@
 
 ## Чего ещё нет
 
-Пакета на PyPI нет: `pip install funora` установит не то, что вы ищете. Пока
-ставится из исходников.
+Эта сборка ещё не опубликована на PyPI. Устанавливайте её из исходников или
+из собранного wheel.
 
 ```bash
 git clone https://github.com/Funora-Develop/Funora-python.git
@@ -55,3 +55,25 @@ print(funora.__version__)
 .venv/Scripts/python.exe -m pip install -e ".[docs]"
 .venv/Scripts/python.exe -m mkdocs serve
 ```
+
+
+## Проверки и сборка пакета
+
+Для полного прогона нужна соседняя рабочая копия `Funora-spec` версии `0.46.0`.
+CI закреплён на ревизии `ce93dd5c6ba597bda37f3b38faa7ac8e4d9cecbf`.
+Укажите корень спецификации через `FUNORA_SPEC_DIR`.
+
+```bash
+python -m pip install -e ".[dev,docs]" build twine
+python -m pytest -q --cov=funora --cov-fail-under=94
+python tools/codegen.py --check
+python -m mkdocs build --strict
+python -m build
+python -m twine check dist/*
+python tools/check_distribution.py dist
+```
+
+Последняя команда устанавливает wheel в отдельное временное окружение и
+проверяет импорт публичного API и CLI вне дерева исходников. Перед публикацией
+CI также требует совпадения тега `v<версия>` с `pyproject.toml` и
+`funora.__version__`. Публикация выполняется только после полного набора CI.

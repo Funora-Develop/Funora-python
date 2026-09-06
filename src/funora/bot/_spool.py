@@ -34,6 +34,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
 
+from .._fileio import atomic_write, file_lock
 from ..errors import UsageError, ValidationError
 from ._outbox import SendCommand
 
@@ -167,45 +168,43 @@ class Spool:
             ValidationError: Если ключ непригоден для имени файла.
             UsageError: Если очередь переполнена.
         """
-        key = command.idempotency_key
-        if not _KEY.match(key):
-            raise ValidationError(
-                f"ключ идемпотентности {key!r} не годится для очереди в каталоге: "
-                "он становится частью имени файла, а в имени позволены только "
-                "латиница, цифры, точка, дефис и подчёркивание, не длиннее 120 "
-                "знаков. Косая черта увела бы задание в чужой каталог"
-            )
+        with file_lock(self._root / ".lock"):
+            key = command.idempotency_key
+            if not _KEY.fullmatch(key):
+                raise ValidationError(
+                    f"ключ идемпотентности {key!r} не годится для очереди в каталоге: "
+                    "он становится частью имени файла, а в имени позволены только "
+                    "латиница, цифры, точка, дефис и подчёркивание, не длиннее 120 "
+                    "знаков. Косая черта увела бы задание в чужой каталог"
+                )
 
-        if self._known(key):
-            return False
+            if self._known(key):
+                return False
 
-        ready = self._root / _READY
-        waiting = sorted(ready.iterdir())
-        if len(waiting) >= self._max:
-            raise UsageError(
-                f"очередь исходящих переполнена: {len(waiting)} заданий ждут "
-                f"отправки при пределе {self._max}. Наблюдение разбирает её по "
-                "нескольку за шаг, и класть быстрее, чем она вычерпывается, "
-                "значит копить сообщения, которые уйдут с опозданием на часы"
-            )
+            ready = self._root / _READY
+            waiting = sorted(ready.iterdir())
+            if len(waiting) >= self._max:
+                raise UsageError(
+                    f"очередь исходящих переполнена: {len(waiting)} заданий ждут "
+                    f"отправки при пределе {self._max}. Наблюдение разбирает её по "
+                    "нескольку за шаг, и класть быстрее, чем она вычерпывается, "
+                    "значит копить сообщения, которые уйдут с опозданием на часы"
+                )
 
-        payload = {
-            "chat_id": command.chat_id,
-            "text": command.text,
-            "idempotency_key": key,
-            "declared_cold": command.declared_cold,
-            "at": datetime.now(UTC).isoformat(),
-        }
-        target = ready / self._name_for(key, waiting)
-        # Исключительное создание, а не проверка с последующей записью: между
-        # проверкой и записью успевает вклиниться второй процесс, и одно из двух
-        # заданий пропало бы молча.
-        try:
-            with open(target, "x", encoding="utf-8", newline="\n") as handle:
-                json.dump(payload, handle, ensure_ascii=False, sort_keys=True)
-        except FileExistsError:
-            return False
-        return True
+            payload = {
+                "chat_id": command.chat_id,
+                "text": command.text,
+                "idempotency_key": key,
+                "declared_cold": command.declared_cold,
+                "at": datetime.now(UTC).isoformat(),
+            }
+            target = ready / self._name_for(key, waiting)
+            # Проверка и публикация идут под общей блокировкой; временный файл
+            # становится видимым заданием только после полной записи.
+            if target.exists():
+                return False
+            atomic_write(target, json.dumps(payload, ensure_ascii=False, sort_keys=True))
+            return True
 
     @staticmethod
     def _name_for(key: str, waiting: list[Path]) -> str:
@@ -247,7 +246,7 @@ class Spool:
             return True
         for where in (_READY, _TAKEN, _STUCK):
             for path in (self._root / where).iterdir():
-                if path.name.endswith(f"-{key}.json") or path.name == f"{key}.json":
+                if self._key_of(path) == key:
                     return True
         return False
 
@@ -267,29 +266,34 @@ class Spool:
         Возвращает:
             tuple[str, ...]: Ключи заданий с неизвестной судьбой.
         """
-        stranded: list[str] = []
-        for path in sorted((self._root / _TAKEN).iterdir()):
-            key = self._key_of(path)
-            target = self._root / _STUCK / path.name
-            os.replace(path, target)
-            self._record(
-                SpoolOutcome(
-                    idempotency_key=key,
-                    state="stuck",
-                    detail="процесс не дожил до записи исхода: сообщение могло уйти",
-                    at=datetime.now(UTC).isoformat(),
+        with file_lock(self._root / ".lock"):
+            stranded: list[str] = []
+            for path in sorted((self._root / _TAKEN).iterdir()):
+                key = self._key_of(path)
+                previous = self.outcome(key)
+                if previous is not None and previous.state != "stuck":
+                    path.unlink()
+                    continue
+                target = self._root / _STUCK / path.name
+                os.replace(path, target)
+                self._record(
+                    SpoolOutcome(
+                        idempotency_key=key,
+                        state="stuck",
+                        detail="процесс не дожил до записи исхода: сообщение могло уйти",
+                        at=datetime.now(UTC).isoformat(),
+                    )
                 )
-            )
-            stranded.append(key)
+                stranded.append(key)
 
-        if stranded:
-            _log.warning(
-                "заданий с неизвестной судьбой: %d. Они не будут отправлены "
-                "повторно - посмотрите переписку и решите сами: %s",
-                len(stranded),
-                ", ".join(stranded),
-            )
-        return tuple(stranded)
+            if stranded:
+                _log.warning(
+                    "заданий с неизвестной судьбой: %d. Они не будут отправлены "
+                    "повторно - посмотрите переписку и решите сами: %s",
+                    len(stranded),
+                    ", ".join(stranded),
+                )
+            return tuple(stranded)
 
     def take(self, limit: int) -> list[SpoolEntry]:
         """Забирает из очереди до указанного числа заданий.
@@ -304,39 +308,40 @@ class Spool:
         Возвращает:
             list[SpoolEntry]: Взятые задания в порядке поступления.
         """
-        taken: list[SpoolEntry] = []
-        for path in sorted((self._root / _READY).iterdir()):
-            if len(taken) >= max(0, limit):
-                break
+        with file_lock(self._root / ".lock"):
+            taken: list[SpoolEntry] = []
+            for path in sorted((self._root / _READY).iterdir()):
+                if len(taken) >= max(0, limit):
+                    break
 
-            target = self._root / _TAKEN / path.name
-            try:
-                os.replace(path, target)
-            except OSError:
-                # Задание перехватил кто-то другой либо файл исчез. Ни то, ни
-                # другое не повод останавливать разбор остальных.
-                continue
+                target = self._root / _TAKEN / path.name
+                try:
+                    os.replace(path, target)
+                except OSError:
+                    # Задание перехватил кто-то другой либо файл исчез. Ни то, ни
+                    # другое не повод останавливать разбор остальных.
+                    continue
 
-            command = self._read(target)
-            if command is None:
-                # Непригодное задание не отправляется и не возвращается в
-                # очередь: оно вернулось бы снова и снова. Уходит в застрявшие,
-                # где его увидит человек.
-                key = self._key_of(target)
-                os.replace(target, self._root / _STUCK / target.name)
-                self._record(
-                    SpoolOutcome(
-                        idempotency_key=key,
-                        state="stuck",
-                        detail="файл задания непригоден: отправлять нечего",
-                        at=datetime.now(UTC).isoformat(),
+                command = self._read(target)
+                if command is None:
+                    # Непригодное задание не отправляется и не возвращается в
+                    # очередь: оно вернулось бы снова и снова. Уходит в застрявшие,
+                    # где его увидит человек.
+                    key = self._key_of(target)
+                    os.replace(target, self._root / _STUCK / target.name)
+                    self._record(
+                        SpoolOutcome(
+                            idempotency_key=key,
+                            state="stuck",
+                            detail="файл задания непригоден: отправлять нечего",
+                            at=datetime.now(UTC).isoformat(),
+                        )
                     )
-                )
-                _log.warning("задание %s непригодно и перенесено в застрявшие", key)
-                continue
+                    _log.warning("задание %s непригодно и перенесено в застрявшие", key)
+                    continue
 
-            taken.append(SpoolEntry(command=command, path=target))
-        return taken
+                taken.append(SpoolEntry(command=command, path=target))
+            return taken
 
     def settle(self, entry: SpoolEntry, *, state: str, detail: str) -> None:
         """Закрывает задание, записав исход.
@@ -349,18 +354,19 @@ class Spool:
         Возвращает:
             None
         """
-        self._record(
-            SpoolOutcome(
-                idempotency_key=entry.command.idempotency_key,
-                state=state,
-                detail=detail,
-                at=datetime.now(UTC).isoformat(),
+        with file_lock(self._root / ".lock"):
+            self._record(
+                SpoolOutcome(
+                    idempotency_key=entry.command.idempotency_key,
+                    state=state,
+                    detail=detail,
+                    at=datetime.now(UTC).isoformat(),
+                )
             )
-        )
-        # Файл задания снимается ПОСЛЕ записи исхода. Обратный порядок оставил
-        # бы задание, которого нет ни во взятых, ни в отработанных, - и повтор
-        # с тем же ключом прошёл бы как новый.
-        entry.path.unlink(missing_ok=True)
+            # Файл задания снимается ПОСЛЕ записи исхода. Обратный порядок оставил
+            # бы задание, которого нет ни во взятых, ни в отработанных, - и повтор
+            # с тем же ключом прошёл бы как новый.
+            entry.path.unlink(missing_ok=True)
 
     def outcome(self, key: str) -> SpoolOutcome | None:
         """Читает исход задания. Звать можно из любого процесса.
@@ -372,6 +378,8 @@ class Spool:
             SpoolOutcome | None: Исход либо None, если задание ещё не
             отработано.
         """
+        if not isinstance(key, str) or not _KEY.fullmatch(key):
+            raise ValidationError("непригодный ключ результата очереди")
         path = self._root / _DONE / f"{key}.json"
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
@@ -423,10 +431,7 @@ class Spool:
         # Через временное имя и переименование: читатель из другого процесса
         # иначе застал бы файл наполовину записанным и счёл бы исход
         # непригодным.
-        temporary = target.with_suffix(".partial")
-        with open(temporary, "w", encoding="utf-8", newline="\n") as handle:
-            json.dump(payload, handle, ensure_ascii=False, sort_keys=True)
-        os.replace(temporary, target)
+        atomic_write(target, json.dumps(payload, ensure_ascii=False, sort_keys=True))
 
     @staticmethod
     def _key_of(path: Path) -> str:
@@ -468,9 +473,11 @@ class Spool:
             return None
         if not isinstance(text, str) or not text:
             return None
-        if not isinstance(key, str) or not _KEY.match(key):
+        if not isinstance(key, str) or not _KEY.fullmatch(key):
             return None
 
+        if key != Spool._key_of(path):
+            return None
         cold = raw.get("declared_cold")
         return SendCommand(
             chat_id=chat_id,

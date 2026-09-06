@@ -35,6 +35,8 @@ from typing import Final
 
 from selectolax.parser import HTMLParser, Node
 
+from ._extract import attribute as _attribute
+from ._extract import text as _text
 from ._observed import Observed
 from ._result import Completeness, Defect, Severity
 from .errors import IncompleteResultError, ProtocolChangedError
@@ -161,42 +163,6 @@ class CatalogPage:
                 "Передайте accept_incomplete=True, если готовы работать с неполными данными"
             )
         return self._games
-
-
-def _text(node: Node | None, name: str) -> Observed[str]:
-    """Извлекает текст узла как наблюдение.
-
-    Args:
-        node (Node | None): Узел либо None.
-        name (str): Имя поля для причины отсутствия.
-
-    Returns:
-        Observed[str]: Наблюдение.
-    """
-    if node is None:
-        return Observed.missing(f"selector_no_match:{name}")
-    value = " ".join((node.text() or "").split())
-    return Observed.present(value) if value else Observed.empty("")
-
-
-def _attribute(node: Node | None, name: str, field_name: str) -> Observed[str]:
-    """Читает атрибут, различая три исхода.
-
-    Args:
-        node (Node | None): Узел либо None.
-        name (str): Имя атрибута.
-        field_name (str): Имя поля для причины отсутствия.
-
-    Returns:
-        Observed[str]: Наблюдение.
-    """
-    if node is None:
-        return Observed.missing(f"selector_no_match:{field_name}")
-    attributes = node.attributes or {}
-    if name not in attributes:
-        return Observed.missing(f"attribute_absent:{field_name}")
-    value = (attributes.get(name) or "").strip()
-    return Observed.present(value) if value else Observed.empty("")
 
 
 def _section(link: Node, index: int, game_href: str | None) -> CatalogSection:

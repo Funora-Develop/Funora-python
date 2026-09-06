@@ -321,11 +321,21 @@ class AutoDelivery:
         if self._persist is not None:
             self._persist()
 
-        return self._send(
-            chat_id,
-            self._plan.goods[decision.offer_id],
-            # Ключ идемпотентности - сам заказ. По одному заказу выдают один
-            # раз, и ключ обязан говорить именно это, а не «эта попытка».
-            f"delivery:{decision.order_id}",
-            self._plan.declared_cold,
-        )
+        try:
+            return self._send(
+                chat_id,
+                self._plan.goods[decision.offer_id],
+                f"delivery:{decision.order_id}",
+                self._plan.declared_cold,
+            )
+        except Exception:
+            self._ledger.settle(decision.order_id, "queue_failed")
+            if self._persist is not None:
+                self._persist()
+            if self._on_hold is not None:
+                self._on_hold(
+                    DeliveryDecision(
+                        decision.order_id, False, "queue_failed", offer_id=decision.offer_id
+                    )
+                )
+            raise

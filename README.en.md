@@ -24,10 +24,10 @@
 
 ## Status: `draft`
 
-There is no released package and nothing to install yet. The contract is not
-stabilised and still changes.
+The working version can be installed from source or built as a wheel. The
+contract is still a draft; a successful build does not certify live account operations.
 
-Thirty-three operations work: twenty-two reads and eleven writes - sending text and images, marking a chat read, leaving and removing a review, changing a lot price, raising offers, and activating or deactivating a lot.
+Thirty-four operations are implemented and tested: twenty-three reads and eleven writes - sending text and images, marking a chat read, leaving and removing a review, changing a lot price, raising offers, activating or deactivating a lot, switching the display currency, and refunding an order.
 
 **The guide lives in [docs/index.md](docs/index.md).** It builds into a site
 (`mkdocs serve`) and is checked by the same run as the code: examples are parsed
@@ -98,9 +98,11 @@ async with AsyncClient(EnvSecretProvider()) as client:
 | `client.account.switch_currency(code)` | the display currency switched |
 | `client.account.capabilities()` | which of the declared capabilities are available |
 | `client.catalog.categories()` | the marketplace sections |
+| `client.catalog.field_schema(section_id)` | section filters, choices and ranges |
+| `client.chats.history_before(node_id, before_message_id=...)` | earlier chat messages |
+| `client.market.calculate_chip_prices(game_id, price)` | prices on the quantity marketplace |
 
-There are two write operations, and each carries its own cost of getting it
-wrong.
+Write operations require explicit outcomes and preservation of the previous state.
 
 **Sending text** - [its own guide chapter](docs/guide/sending.md): a send has
 three outcomes rather than two, and the third one, "unknown", is what the chapter
@@ -124,68 +126,31 @@ A command claimed by a process that then died is never sent again: its fate is
 unknown, and a person decides about it. The whole picture is in the [bot
 chapter](docs/guide/bot.md).
 
-The public section listing is parsed too, but has no operation: the `Offer` model
-requires an id, a price and a category, and the page carries none of the three.
+The unfinished mechanisms and their reasons are tracked in
+`Funora-spec/spec/conformance/not-implemented.yaml`. Having all service methods
+implemented does not mean the entire cross-language contract is complete.
 
-Sending an image, marking read, paging chat history backwards, the section field
-schema, the account transaction history, the order event feed, the interface
-locale and two lot write operations - activate and deactivate - are declared by
-the contract and not written: nobody has observed the requests the marketplace
-makes for them. Calling them raises `NotImplementedOperationError` - a refusal
-from Funora itself, not a built-in Python error.
+## Current limits
 
-The full list, with a reason on every row, lives in the registry at
-`spec/conformance/not-implemented.yaml`. It is not a reference but a build
-condition: an operation that is declared and silently absent does not pass the
-gate.
+- Withdrawals: the form is observed, but the response and second factor are not handled.
+- Pagination of long order lists and account transactions: the meaning of
+  `continue` is still unknown. Earlier chat messages have a separate operation.
+- Replay of missed channel events by position: the implementation currently
+  re-reads pages and uses persisted watch cursors.
+- Separate transport isolation for public reads and preemption of in-flight requests.
 
-## Observed, but not an operation
+Order states `paid`, `closed`, and `refunded` are recognised. Other carriers
+produce an unobserved value. Delivery must require a specific state; a chat
+message is not proof of payment.
 
-Three of the marketplace's write endpoints have been observed as **forms** - the
-address and the fields are visible, but nobody has sent the request:
+`orders.details()` reads numeric amounts and currency codes from the structured
+response. Exact timestamps remain unavailable where only display text is supplied.
 
-| Endpoint | What it is | What is missing |
-|---|---|---|
-| `POST /orders/refund` | refunding an order | the response |
-| `POST /withdraw/withdraw` | withdrawing funds | the response; needs 2FA |
-| `POST /users/transactions` | paging the account ledger | the meaning of `continue` |
+Order refunds are implemented: the available form is checked before submission,
+and the result is determined from the response. Tests against recorded responses
+do not replace verification on a live test account.
 
-A write operation that cannot tell success from refusal will not be added here:
-it would report success always. Refunds and withdrawals are also irreversible and
-both are about money.
-
-## What the SDK cannot do, and why that is stated here
-
-Sections like this are usually buried. It sits in plain view because everything
-listed affects whether this library is worth taking today.
-
-**It tells apart two order states out of however many exist.** It reads `paid`
-and `closed`; refunds, disputes and rejections exist but never made it into a
-snapshot, and we have seen no carriers for them. An order in a third state yields
-an unobserved value - not the nearest match and not `unknown`. The latter would
-claim we read the status and failed to recognise it, when in fact we did not read
-it at all.
-
-The practical consequence: a handler shaped like «if not `closed`, we owe
-delivery» will behave on such an order in a way its author did not intend. Ask
-about a specific state, and handle separately the case where the state was not
-read.
-
-And `paid` itself is not financial confirmation. It means the marketplace shows
-the paid state in the sales section; it can be reversed after the fact, and it
-does not replace your own check where the cost of being wrong is high.
-
-**It gives neither a numeric amount nor an exact time.** There is no
-machine-readable time on the orders page at all, and no currency was observed.
-Only display text.
-
-**It does not treat a chat message as proof of payment.** Even a correctly
-identified platform message is not proof: it could belong to another order, be
-stale, or follow a reversed payment. The platform itself warns about this as the
-first message in every dialog. The sales list is the only source of truth.
-
-**It does not page through long lists.** No pagination markup was observed, and
-promising a cursor the adapter cannot produce is worse than promising nothing.
+See the [SDK limits](docs/limits.md) and [observation plan](docs/observation-plan.md).
 
 ## How it works
 
