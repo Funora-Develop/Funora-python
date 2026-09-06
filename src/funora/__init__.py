@@ -70,7 +70,7 @@ from ._raise import RaiseResult
 from ._refund import RefundResult
 from ._retry import Attempt, Safety, plan_attempt, policy_for
 from ._review_write import ReviewResult
-from ._reviews import Review, ReviewsPage
+from ._reviews import Review, ReviewsCursor, ReviewsPage
 from ._runner import SendResult
 from ._secret import (
     CallableSecretProvider,
@@ -197,6 +197,7 @@ __all__ = [
     "WithdrawalOption",
     "Transaction",
     "ReviewsPage",
+    "ReviewsCursor",
     "Review",
     "OwnLotsPage",
     "CurrencySwitch",

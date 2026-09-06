@@ -88,7 +88,7 @@ async with AsyncClient(EnvSecretProvider()) as client:
 | `client.market.offers(node_id)` | публичные предложения раздела: чужие цены и продавцы |
 | `client.market.snapshot(node_id)` | снимок выдачи для сравнения во времени |
 | `client.market.chips(node_id)` | второй рынок: предложения по количеству |
-| `client.reviews.get(user_id)` | отзывы |
+| `client.reviews.get(user_id, cursor=None)` | страница отзывов и курсор продолжения |
 | `client.reviews.leave(order_id, rating=..., text=...)` | отзыв к заказу |
 | `client.reviews.remove(order_id)` | отзыв снят |
 | `client.account.get()` | личность аккаунта |
@@ -97,7 +97,7 @@ async with AsyncClient(EnvSecretProvider()) as client:
 | `client.account.balance()` | баланс и операции |
 | `client.account.switch_currency(code)` | валюта показа сменена |
 | `client.account.capabilities()` | что из объявленного доступно |
-| `client.catalog.categories()` | разделы площадки |
+| `client.catalog.categories(refresh=False)` | разделы площадки с кэшем |
 | `client.catalog.field_schema(section_id)` | поля фильтров раздела, варианты выбора и диапазоны |
 | `client.chats.history_before(node_id, before_message_id=...)` | предыдущие сообщения переписки |
 | `client.market.calculate_chip_prices(game_id, price)` | расчёт цены на рынке по количеству |

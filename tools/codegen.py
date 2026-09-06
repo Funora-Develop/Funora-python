@@ -995,6 +995,8 @@ def render_retry(spec: Path) -> str:
         str: Содержимое модуля.
     """
     doc = _load(spec, "spec/protocol/retry-policy.yaml")
+    if (doc.get("conformance") or {}).get("suite") != "retries":
+        raise SystemExit("spec/protocol/retry-policy.yaml: поддерживается набор retries")
 
     rule = doc.get("fail_closed_rule") or {}
     named = list(rule.get("applies_to") or [])
@@ -1892,6 +1894,8 @@ def render_events(spec: Path) -> str:
     out.append("#: совпадению: в реализации оно было литералом. Слишком малое\n")
     out.append("#: значение вытесняет запись о доставленном событии до истечения\n")
     out.append("#: срока, и событие приходит второй раз - тихо и не всегда.\n")
+    if dedup.get("eviction") != "lru":
+        raise SystemExit("spec/events/delivery.yaml: поддерживается только eviction: lru")
     out.append(f"MIN_ENTRIES_PER_KEY: Final[int] = {dedup['min_entries_per_key']}\n")
 
     out.append("\n#: Сколько хранится запись о доставленном событии, миллисекунды.\n")
@@ -2296,17 +2300,38 @@ def render_operations(spec: Path) -> str:
     out.append('    request_provenance: str = ""\n')
     out.append('    provenance_source: str = ""\n')
     out.append('    provenance_rests_on: str = ""\n')
+    out.append("    cache_ttl_ms: int = 0\n")
+    out.append("    cache_invalidate_on: tuple[str, ...] = ()\n")
 
     out.append("\n\n#: Операции служб по идентификатору.\n")
     out.append("OPERATIONS: Final[dict[str, Operation]] = {\n")
     for name in sorted(operations):
         body = operations[name]
+        cache = body.get("cacheable")
+        if cache is not None:
+            if name != "catalog.categories" or set(cache) - {"ttl_ms", "invalidate_on", "notes"}:
+                raise SystemExit(f"spec/services: неподдерживаемое правило кэша {name}")
+            if type(cache.get("ttl_ms")) is not int or cache["ttl_ms"] <= 0:
+                raise SystemExit(f"spec/services: {name} требует положительный ttl_ms")
+            if set(cache.get("invalidate_on", [])) != {
+                "adapter_version_change",
+                "protocol_changed",
+                "session_change",
+            }:
+                raise SystemExit(f"spec/services: неподдерживаемая инвалидация кэша {name}")
         out.append(f'    "{name}": Operation(\n')
         out.append(f'        name="{name}",\n')
         out.append(f'        capability="{body["capability"]}",\n')
         out.append(f"        safety=Safety.{body['safety'].upper()},\n")
         out.append(f'        request_class="{body["request_class"]}",\n')
         out.append(f'        returns="{body["returns"]}",\n')
+        if cache is not None:
+            out.append(f"        cache_ttl_ms={cache['ttl_ms']},\n")
+            out.append(
+                "        cache_invalidate_on=("
+                + ", ".join(json.dumps(value) for value in cache["invalidate_on"])
+                + "),\n"
+            )
         # Пустой перечень и отсутствующий - разные вещи. Пустой говорит «эта
         # операция не отказывает», и это утверждение, за которое отвечают.
         # Отсутствующий не говорит ничего, и вызывающему нечего выписать в

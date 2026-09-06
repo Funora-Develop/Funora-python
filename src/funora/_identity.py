@@ -32,6 +32,7 @@ from typing import Final
 
 from ._budget import Budget
 from .budget import RATE_LIMIT_RESPONSE, RequestClass
+from .retry import RETRY_POLICIES
 
 __all__ = ["Identity", "IdentityRegistry", "REGISTRY", "identity_of"]
 
@@ -80,7 +81,7 @@ class Identity:
     capacity_factor: float = 1.0
     cooldown_until: float = 0.0
     limits_seen: int = 0
-    window_started_at: float = 0.0
+    window_started_at: float | None = None
     successes: int = 0
 
     def is_cooling(self, now: float) -> bool:
@@ -115,7 +116,7 @@ class Identity:
             None
         """
         window_ms = RATE_LIMIT_RESPONSE.window_ms
-        if self.window_started_at == 0.0 or (now - self.window_started_at) * 1000 > window_ms:
+        if self.window_started_at is None or (now - self.window_started_at) * 1000 > window_ms:
             self.window_started_at = now
             self.limits_seen = 0
 
@@ -136,7 +137,10 @@ class Identity:
         # ограничение и переходит в блокировку.
         cooldown_ms = RATE_LIMIT_RESPONSE.cooldown_ms * self.limits_seen
         if retry_after_ms is not None:
-            cooldown_ms = max(cooldown_ms, retry_after_ms)
+            # Заголовок ограничен и для общей паузы, иначе предел политики
+            # повтора обходится вторым ожиданием перед следующим запросом.
+            limit = RETRY_POLICIES["funora.transport.rate_limited"].max_retry_after_ms
+            cooldown_ms = max(cooldown_ms, min(max(0, retry_after_ms), limit))
         self.cooldown_until = now + cooldown_ms / 1000
         self.budget.scale(self.capacity_factor)
 

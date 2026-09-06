@@ -116,7 +116,7 @@ from ._review_write import (
     ReviewResult,
     parse_review_response,
 )
-from ._reviews import ReviewsPage, parse_reviews_page
+from ._reviews import ReviewsCursor, ReviewsPage, parse_reviews_page
 from ._runner import (
     Anchor,
     RunnerContext,
@@ -463,6 +463,8 @@ class _State:
     #: Без него реализация пошла бы на площадку каждый тик - ровно то, чего
     #: обещание операции запрещает.
     health_cached: SessionHealth | None = None
+    catalog_cached: CatalogPage | None = None
+    catalog_cached_at: float = 0.0
     health_checked_at: float = 0.0
 
     capabilities: dict[Capability, CapabilityState] = field(
@@ -2097,7 +2099,7 @@ class Engine:
         self._note_success(capability, schema.completeness, None)
         return schema
 
-    def read_catalog(self) -> Generator[Request, Reply, CatalogPage]:
+    def read_catalog(self, *, refresh: bool = False) -> Generator[Request, Reply, CatalogPage]:
         """Читает каталог с корня площадки.
 
         Yields:
@@ -2109,12 +2111,34 @@ class Engine:
         Raises:
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
-        observation = yield from self.fetch_ok(Capability.CATALOG_CATEGORIES, CATALOG_PATH)
+        if self._stopped is not None:
+            raise self._stopped
+        cached = self._state.catalog_cached
+        ttl = OPERATIONS["catalog.categories"].cache_ttl_ms / 1000
+        if not refresh and cached is not None and monotonic() - self._state.catalog_cached_at < ttl:
+            return cached
+        self._state.catalog_cached = None
+        observation = yield from self.fetch_ok(
+            Capability.CATALOG_CATEGORIES, CATALOG_PATH, session_required=False
+        )
         page = parse_catalog(observation.html, observed_at=datetime.now(UTC))
         if not integrity_verified(observation):
             page = unverified(page)
         self._note_success(Capability.CATALOG_CATEGORIES, page.completeness, None)
+        if page.completeness is Completeness.COMPLETE:
+            self._state.catalog_cached = page
+            self._state.catalog_cached_at = monotonic()
         return page
+
+    def _invalidate_catalog(self, reason: str) -> None:
+        if reason in OPERATIONS["catalog.categories"].cache_invalidate_on:
+            self._state.catalog_cached = None
+
+    def note_operation_error(self, error: FunoraError) -> None:
+        if isinstance(error, AuthenticationError):
+            self._invalidate_catalog("session_change")
+        elif isinstance(error, ProtocolChangedError):
+            self._invalidate_catalog("protocol_changed")
 
     def read_balance(self) -> Generator[Request, Reply, BalancePage]:
         """Читает страницу баланса: балансы по валютам и операции по счёту.
@@ -2244,6 +2268,7 @@ class Engine:
             ) from exc
 
         result = parse_currency_switch(payload, requested=wanted, observed_at=datetime.now(UTC))
+        self._invalidate_catalog("session_change")
         self._state.capabilities[capability] = CapabilityState.SUPPORTED
         return result
 
@@ -2725,7 +2750,9 @@ class Engine:
         self._note_success(capability, page.completeness, None)
         return page
 
-    def read_reviews(self, user_id: str) -> Generator[Request, Reply, ReviewsPage]:
+    def read_reviews(
+        self, user_id: str, *, cursor: ReviewsCursor | None = None
+    ) -> Generator[Request, Reply, ReviewsPage]:
         """Читает отзывы с профиля продавца.
 
         Отдельной страницы у отзывов нет: они лежат на профиле, и запрос идёт
@@ -2754,8 +2781,30 @@ class Engine:
             )
 
         capability = Capability.REVIEWS_GET
-        observation = yield from self.fetch_ok(capability, PROFILE_PATH.format(user_id=cleaned))
-        page = parse_reviews_page(observation.html, observed_at=datetime.now(UTC))
+        if cursor is not None and (
+            not isinstance(cursor, ReviewsCursor)
+            or cursor.user_id != cleaned
+            or not isinstance(cursor.value, str)
+            or not cursor.value.strip()
+        ):
+            raise ValidationError(
+                "курсор должен принадлежать выбранному продавцу и содержать значение"
+            )
+        observation = yield from self.fetch_ok(
+            capability,
+            PROFILE_PATH.format(user_id=cleaned) if cursor is None else "/users/reviews",
+            session_required=False,
+            fields=None
+            if cursor is None
+            else {
+                "user_id": cleaned,
+                "continue": cursor.value,
+                "filter": "",
+            },
+        )
+        page = parse_reviews_page(observation.html, observed_at=datetime.now(UTC), user_id=cleaned)
+        if cursor is not None and page.next_cursor == cursor:
+            raise ProtocolChangedError("сервер повторил курсор отзывов")
         if not integrity_verified(observation):
             page = unverified(page)
         self._note_success(capability, page.completeness, page)
@@ -3082,7 +3131,12 @@ class Engine:
         return thread, own_href
 
     def fetch_ok(
-        self, capability: Capability, path: str, *, session_required: bool = True
+        self,
+        capability: Capability,
+        path: str,
+        *,
+        session_required: bool = True,
+        fields: dict[str, str] | None = None,
     ) -> Generator[Request, Reply, Observation]:
         """Получает пригодный для разбора ответ по нормативному порядку шагов.
 
@@ -3143,7 +3197,9 @@ class Engine:
             cost = 1.0 if (attempt == 1 or COUNTS_RETRIES) else 0.0
             yield from self.spend_budget(_class_of(capability), cost=cost)
             try:
-                reply = yield Fetch(path)
+                reply = yield (
+                    Fetch(path) if fields is None else Submit(path, fields, RUNNER_HEADERS)
+                )
                 if not isinstance(reply, Observation):
                     # Нарушение договора между ядром и драйвером. Ошибка не из
                     # иерархии Funora намеренно: политика повторов её не увидит
@@ -3180,13 +3236,16 @@ class Engine:
                     final_url=observation.final_url,
                     html=observation.html,
                     expected_host=host,
-                    identity_css=DEFAULT_IDENTITY_CSS,
+                    identity_css=DEFAULT_IDENTITY_CSS
+                    if fields is None or session_required
+                    else None,
                     declared_length=observation.declared_length,
                     received_length=observation.content_length,
                     content_encoding=observation.content_encoding,
                 )
                 self.note_locale(observation.html)
-                self.note_health(verdict)
+                if verdict.cls is not ResponseClass.OK or verdict.reason == "identity_confirmed":
+                    self.note_health(verdict)
                 # Вердикт запоминается ДО возможного отказа: проверка сессии
                 # отчитывается о состоянии, а не падает от него.
                 self._state.last_verdict = verdict
@@ -3200,6 +3259,7 @@ class Engine:
                     and not session_required
                     and verdict.cls is ResponseClass.LOGIN_REQUIRED
                 ):
+                    self.note_operation_error(error)
                     _log.debug("чтение %s идёт без сессии: страница публичная", capability.value)
                     error = None
                 if error is not None:
@@ -3256,7 +3316,6 @@ class Engine:
                     attempt,
                 )
                 yield Pause(plan.delay_ms)
-                attempt += 1
                 continue
             except FunoraError as exc:
                 self._note_failure(capability, exc)
@@ -3284,7 +3343,8 @@ class Engine:
                 yield Pause(plan.delay_ms)
                 continue
 
-            self._state.session_ever_valid = True
+            if verdict.reason == "identity_confirmed":
+                self._state.session_ever_valid = True
             return observation
 
     def _follow(
@@ -3548,6 +3608,8 @@ class Engine:
             return
 
         known = self._state.locale.or_none()
+        if known is not None and known != observed.value:
+            self._invalidate_catalog("session_change")
         self._state.locale = observed
         if observed.value == known:
             return
@@ -3634,6 +3696,7 @@ class Engine:
         Returns:
             None
         """
+        self._invalidate_catalog("session_change")
         if self._stopped is None:
             return
         _log.warning(
@@ -4005,7 +4068,9 @@ class Engine:
 
         if state is not None:
             stored = state.load()
-            restored = dedup.restore(stored.get("dedup", {}), monotonic())
+            restored = dedup.restore(
+                stored.get("dedup", {}), monotonic(), ordering=stored.get("dedup_order")
+            )
             if restored:
                 _log.info("восстановлено записей гашения: %d", restored)
 
@@ -4318,6 +4383,7 @@ class Engine:
                 state.update(
                     {
                         "dedup": dedup.snapshot(now),
+                        "dedup_order": dedup.snapshot_order(),
                         # Номера попыток переживают перезапуск вместе с гашением.
                         # Иначе перезапуск обнулял бы их, и событие, падавшее
                         # пятый раз, приходило бы с номером один - то есть
@@ -4412,6 +4478,7 @@ class Engine:
         Returns:
             None
         """
+        self.note_operation_error(error)
         if getattr(error, "provisional", False):
             return
         if isinstance(error, NetworkError):

@@ -304,10 +304,11 @@ def _run_scenario(scenario: dict[str, Any]) -> list[list[str]]:
                     "момент стенных часов сохранять состояние"
                 )
             state = dedup.snapshot(monotonic(wall_now), wall_ms=wall_now)
+            ordering = dedup.snapshot_order()
             dedup = Deduplicator(ttl_ms=scenario["ttl_ms"])
             uptime_base = float(restart["uptime_s"])
             wall_base = wall_now
-            dedup.restore(state, uptime_base, wall_ms=wall_now)
+            dedup.restore(state, uptime_base, wall_ms=wall_now, ordering=ordering)
             delivered.append([])
             continue
 
@@ -508,6 +509,94 @@ def _run_outbound(scenario: dict[str, Any]) -> list[str]:
     return decisions
 
 
+def _run_retries(scenario: dict[str, Any]) -> dict[str, Any]:
+    """Ведёт настоящий цикл чтения с подставными ответами и виртуальным сном."""
+    from unittest.mock import patch
+
+    from ._budget import Budget
+    from ._engine import Engine, Fetch, Pause
+    from ._identity import Identity
+    from ._retry import plan_attempt
+    from ._transport import Observation, TransportSettings
+    from .errors import ERROR_BY_STABLE_ID
+
+    clock = [0.0]
+    journal: list[dict[str, Any]] = []
+    responses = iter(scenario["responses"])
+    requests = 0
+    budget = Budget(names=())
+    engine = Engine(TransportSettings(), budget, identity=Identity("retries", budget=budget))
+
+    def record(error: FunoraError, **kwargs: Any) -> Any:
+        plan = plan_attempt(error, **kwargs, rand=lambda: float(scenario.get("random", 0.5)))
+        journal.append(
+            {
+                "attempt": kwargs["attempt"],
+                "classified_as": type(error).stable_id,
+                "retried": plan.retry,
+                "delay_ms": plan.delay_ms,
+                "reason_code": plan.reason,
+            }
+        )
+        return plan
+
+    core = engine.fetch_ok(Capability.REVIEWS_GET, "/users/1/")
+    with (
+        patch("funora._engine.monotonic", lambda: clock[0]),
+        patch("funora._engine.plan_attempt", record),
+    ):
+        try:
+            request = next(core)
+            while True:
+                if isinstance(request, Pause):
+                    clock[0] += request.ms / 1000
+                    request = core.send(None)
+                    continue
+                if not isinstance(request, Fetch):
+                    raise TypeError(f"неожиданная просьба чтения: {type(request)}")
+                response = next(responses, None)
+                if response is None:
+                    raise ValidationError("цикл запросил ответ за пределами сценария")
+                requests += 1
+                if "error" in response:
+                    error_class = ERROR_BY_STABLE_ID[response["error"]]
+                    error = error_class("сценарий повторов")
+                    if not isinstance(error, FunoraError):
+                        raise ValidationError("ошибка сценария вне иерархии Funora")
+                    error.provisional = bool(response.get("provisional", False))  # type: ignore[attr-defined]
+                    request = core.throw(error)
+                else:
+                    html = '<div class="navbar-toggle-logged"></div>'
+                    request = core.send(
+                        Observation(
+                            status=int(response.get("status", 200)),
+                            final_url="https://funpay.com/users/1/",
+                            html=html,
+                            elapsed_ms=0,
+                            redirects=0,
+                            content_length=len(html),
+                            declared_length=len(html),
+                            retry_after_ms=response.get("retry_after_ms"),
+                        )
+                    )
+        except StopIteration:
+            journal.append(
+                {
+                    "attempt": requests,
+                    "classified_as": "ok",
+                    "retried": False,
+                    "delay_ms": 0,
+                    "reason_code": "completed",
+                }
+            )
+        except FunoraError:
+            if not journal or journal[-1]["retried"]:
+                raise
+        finally:
+            core.close()
+    return {"retry_trace": journal, "requests": requests, "waited_ms": round(clock[0] * 1000)}
+
+
 def answer(case: dict[str, Any]) -> dict[str, Any]:
     """Отвечает на один случай набора.
 
@@ -543,6 +632,10 @@ def answer(case: dict[str, Any]) -> dict[str, Any]:
                     "not_implemented": trace["requires"],
                 }
             return {"id": case_id, "outcome": "pass", "sent": _run_trace(trace)}
+
+        if kind == "retries":
+            scenario = _scenario(case["vector"], "retries.vectors.json")
+            return {"id": case_id, "outcome": "pass", **_run_retries(scenario)}
 
         if kind == "outbound_governor":
             scenario = _scenario(case["vector"], "outbound-governor.vectors.json")

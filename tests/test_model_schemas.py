@@ -363,6 +363,7 @@ def test_unbuildable_models_say_so() -> None:
         # лежал в проекте. Обе модели собираются разбором целиком.
         "review",
         "reviews-page",
+        "reviews-cursor",
         # Страница одного заказа читается с 0.10.0. Order с неё по-прежнему
         # не собирается: сторон она не разделяет, кода валюты не даёт.
         "order-view",
@@ -406,4 +407,33 @@ def test_unbuildable_models_say_so() -> None:
             continue
         assert doc.get("x-funora-not-implemented") is True, (
             f"{name}: модель не собирается ни одной реализацией и об этом не предупреждает"
+        )
+
+
+def test_reviews_continuation_matches_both_models():
+    from test_reviews_pagination import page
+
+    from funora._reviews import parse_reviews_page
+
+    result = parse_reviews_page(page("next"), WHEN, user_id="123")
+    check(_as_json(result.next_cursor), _schema("reviews-cursor"))
+    check(
+        _page_as_json(result, "entries", result.rows(accept_incomplete=True)),
+        _schema("reviews-page"),
+    )
+
+
+def test_nullable_reference_rejects_wrong_types_and_unknown_keywords():
+    import pytest
+    from _schema_check import SchemaError, UnsupportedKeyword, _check_value
+
+    prop = _schema("reviews-page")["properties"]["next_cursor"]
+    _check_value(None, prop, "cursor")
+    with pytest.raises(SchemaError):
+        _check_value("wrong", prop, "cursor")
+    with pytest.raises(UnsupportedKeyword):
+        _check_value(
+            None,
+            {"anyOf": [{"type": "null", "x-funora-nullable": "not_applicable"}, {"unknown": 1}]},
+            "cursor",
         )

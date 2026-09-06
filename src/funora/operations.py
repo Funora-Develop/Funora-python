@@ -96,6 +96,8 @@ class Operation:
     request_provenance: str = ""
     provenance_source: str = ""
     provenance_rests_on: str = ""
+    cache_ttl_ms: int = 0
+    cache_invalidate_on: tuple[str, ...] = ()
 
 
 #: Операции служб по идентификатору.
@@ -170,6 +172,8 @@ OPERATIONS: Final[dict[str, Operation]] = {
         safety=Safety.SAFE,
         request_class="interactive",
         returns="CatalogPage",
+        cache_ttl_ms=86400000,
+        cache_invalidate_on=("adapter_version_change", "protocol_changed", "session_change"),
         errors=(
             "funora.protocol.changed",
             "funora.transport",
@@ -573,6 +577,7 @@ OPERATIONS: Final[dict[str, Operation]] = {
         request_class="interactive",
         returns="ReviewsPage",
         errors=(
+            "funora.validation",
             "funora.auth.session_expired",
             "funora.protocol.changed",
             "funora.transport",

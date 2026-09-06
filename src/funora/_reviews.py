@@ -40,7 +40,7 @@ from ._result import Completeness, Defect, Severity, collect_rows
 from .errors import IncompleteResultError, ProtocolChangedError
 from .extraction import SELECTORS
 
-__all__ = ["Review", "ReviewsPage", "parse_reviews_page"]
+__all__ = ["Review", "ReviewsCursor", "ReviewsPage", "parse_reviews_page"]
 
 #: Внешний контейнер таблицы отзывов.
 _TABLE: Final[str] = SELECTORS["reviews.table"]
@@ -119,6 +119,14 @@ class Review:
 
 
 @dataclass(frozen=True, slots=True)
+class ReviewsCursor:
+    """Непрозрачный указатель следующей страницы отзывов одного продавца."""
+
+    user_id: str
+    value: str = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True)
 class ReviewsPage:
     """Результат чтения отзывов.
 
@@ -142,6 +150,7 @@ class ReviewsPage:
     rows_accepted: int
     rows_rejected: int
     defects: tuple[Defect, ...] = ()
+    next_cursor: ReviewsCursor | None = None
     _entries: tuple[Review, ...] = field(repr=False, default=())
 
     def rows(self, *, accept_incomplete: bool = False) -> tuple[Review, ...]:
@@ -378,7 +387,54 @@ def _totality(tree: HTMLParser) -> tuple[Completeness, str]:
     return Completeness.COMPLETE, "all_rows_parsed"
 
 
-def parse_reviews_page(html: str, observed_at: datetime) -> ReviewsPage:
+def _next_cursor(
+    tree: HTMLParser, defects: list[Defect], user_id: str | None
+) -> ReviewsCursor | None:
+    forms = tree.css(_PAGE_FORM)
+    buttons = tree.css(_CONTINUE)
+    if len(forms) > 1 or len(buttons) > 1:
+        defects.append(
+            Defect(Severity.PAGE, "pagination_controls_ambiguous", "несколько форм или кнопок")
+        )
+        return None
+    if not forms or not buttons:
+        return None  # Полнота отдельно учитывает отсутствие управляющих узлов.
+    visible = "hidden" not in (buttons[0].attributes.get("class") or "").split()
+    values = {}
+    for name, selector in (
+        ("user_id", SELECTORS["reviews.pagination.fields.user_id"]),
+        ("continue", SELECTORS["reviews.pagination.fields.continue"]),
+        ("filter", SELECTORS["reviews.pagination.fields.filter"]),
+    ):
+        nodes = tree.css(selector)
+        if len(nodes) > 1:
+            defects.append(Defect(Severity.PAGE, "pagination_fields_ambiguous", name))
+            return None
+        if nodes:
+            values[name] = nodes[0].attributes.get("value") or ""
+    owner = values.get("user_id")
+    if owner and user_id is not None and owner != user_id:
+        raise ProtocolChangedError("форма отзывов принадлежит другому продавцу")
+    token = values.get("continue", "")
+    if not visible:
+        if token:
+            defects.append(
+                Defect(Severity.PAGE, "pagination_controls_conflict", "скрытая кнопка с курсором")
+            )
+        return None
+    if not owner or not token or values.get("filter", ""):
+        defects.append(
+            Defect(
+                Severity.PAGE, "pagination_cursor_missing", "форма не содержит пригодного курсора"
+            )
+        )
+        return None
+    return ReviewsCursor(owner, token)
+
+
+def parse_reviews_page(
+    html: str, observed_at: datetime, *, user_id: str | None = None
+) -> ReviewsPage:
     """Разбирает страницу профиля и собирает отзывы.
 
     Args:
@@ -462,6 +518,7 @@ def parse_reviews_page(html: str, observed_at: datetime) -> ReviewsPage:
     # пустота объявляется полным чтением по позитивному признаку. Здесь снимка
     # нет, и признака нет: отличить продавца без отзывов от переименованного
     # класса строки нечем.
+    next_cursor = _next_cursor(tree, defects, user_id)
     if not rows_total:
         completeness, reason = Completeness.UNKNOWN, "empty_list_not_observed"
     elif any(one.severity is Severity.PAGE for one in defects):
@@ -473,6 +530,7 @@ def parse_reviews_page(html: str, observed_at: datetime) -> ReviewsPage:
 
     return ReviewsPage(
         completeness=completeness,
+        next_cursor=next_cursor,
         reason=reason,
         observed_at=observed_at,
         rows_total=rows_total,

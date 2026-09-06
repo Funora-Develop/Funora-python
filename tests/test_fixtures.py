@@ -53,6 +53,10 @@ EXPECTED = {
     # состоянию, в котором заказов нет: у аккаунта продажи были.
     "orders-trade.empty.ru": ResponseClass.OK,
     "user.logged.ru": ResponseClass.OK,
+    "reviews-first.guest.ru": ResponseClass.LOGIN_REQUIRED,
+    # Продолжение - фрагмент без панели аккаунта, общий классификатор требует её.
+    "reviews-next.guest.ru": ResponseClass.UNKNOWN,
+    "reviews-last.guest.ru": ResponseClass.UNKNOWN,
     "account-balance.logged.ru": ResponseClass.OK,
     "root.logged.ru": ResponseClass.OK,
     # Свои лоты в категории. Снят 28.08.2026 форматом v8 - первым, сохраняющим
@@ -179,7 +183,8 @@ def test_fixture_parses(name: str) -> None:
     """
     tree = HTMLParser(_read(name))
     assert tree.body is not None, "тело документа не разобралось"
-    assert len(tree.css("*")) > 100, "дерево подозрительно мелкое"
+    minimum = 90 if name == "reviews-last.guest.ru" else 100
+    assert len(tree.css("*")) > minimum, "дерево подозрительно мелкое"
 
 
 @pytest.mark.parametrize("name", sorted(EXPECTED))

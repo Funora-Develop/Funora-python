@@ -18,6 +18,7 @@ import logging
 from collections.abc import Callable, Generator
 from dataclasses import replace
 from pathlib import Path
+from threading import Lock
 from time import monotonic, sleep
 from typing import TYPE_CHECKING, Final, TypeVar
 
@@ -56,7 +57,7 @@ from ._proxies import DEFAULT_ACCOUNT, Proxy, ProxyPool
 from ._raise import RaiseResult
 from ._refund import RefundResult
 from ._review_write import ReviewResult
-from ._reviews import ReviewsPage
+from ._reviews import ReviewsCursor, ReviewsPage
 from ._runner import SendResult
 from ._secret import Secret, SecretProvider
 from ._showcase import ShowcasePage
@@ -406,12 +407,11 @@ class ReviewsService:
     def __init__(self, client: Client) -> None:
         self._client = client
 
-    def get(self, user_id: str) -> ReviewsPage:
+    def get(self, user_id: str, *, cursor: ReviewsCursor | None = None) -> ReviewsPage:
         """Читает отзывы с профиля продавца.
 
-        Полнота здесь означает «разобраны все строки, которые страница отдала»,
-        а не «прочитаны все отзывы продавца»: сверить их число не с чем. Разница
-        объявлена записью reviews_page_totality в реестре неисполненного.
+        Следующую страницу запрашивают с next_cursor предыдущего результата.
+        Отсутствие курсора само по себе не означает полноту: проверяйте completeness.
 
         Args:
             user_id (str): Идентификатор продавца. Тот самый, что стоит в адресе
@@ -424,7 +424,7 @@ class ReviewsService:
             ValidationError: Если идентификатор непригоден для подстановки.
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
-        return self._client.run(self._client.engine.read_reviews(user_id))
+        return self._client.run(self._client.engine.read_reviews(user_id, cursor=cursor))
 
     def leave(self, order_id: str, *, rating: int, text: str = "") -> ReviewResult:
         """Пишет отзыв к заказу либо правит уже написанный.
@@ -875,12 +875,13 @@ class CatalogService:
         client (Client): Клиент, которому принадлежит сервис.
     """
 
-    __slots__ = ("_client",)
+    __slots__ = ("_client", "_lock")
 
     def __init__(self, client: Client) -> None:
         self._client = client
+        self._lock = Lock()
 
-    def categories(self) -> CatalogPage:
+    def categories(self, *, refresh: bool = False) -> CatalogPage:
         """Читает каталог: игры, их варианты и разделы каждого.
 
         Читается только основной список. Избранное повторяет его целиком -
@@ -892,7 +893,8 @@ class CatalogService:
         Raises:
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
-        return self._client.run(self._client.engine.read_catalog())
+        with self._lock:
+            return self._client.run(self._client.engine.read_catalog(refresh=refresh))
 
     def field_schema(self, section_id: str) -> FieldSchema:
         """Читает поля фильтра раздела; неполнота требует явного принятия."""
@@ -1242,6 +1244,9 @@ class Client:
                 request = core.throw(failure) if failure is not None else core.send(reply)
             except StopIteration as stop:
                 return stop.value  # type: ignore[no-any-return]
+            except FunoraError as exc:
+                self.engine.note_operation_error(exc)
+                raise
             failure = None
             reply = None
 

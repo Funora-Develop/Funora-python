@@ -60,7 +60,7 @@ from ._proxies import DEFAULT_ACCOUNT, Proxy, ProxyPool
 from ._raise import RaiseResult
 from ._refund import RefundResult
 from ._review_write import ReviewResult
-from ._reviews import ReviewsPage
+from ._reviews import ReviewsCursor, ReviewsPage
 from ._runner import SendResult
 from ._secret import Secret, SecretProvider
 from ._showcase import ShowcasePage
@@ -196,11 +196,11 @@ class AsyncReviewsService:
     def __init__(self, client: AsyncClient) -> None:
         self._client = client
 
-    async def get(self, user_id: str) -> ReviewsPage:
+    async def get(self, user_id: str, *, cursor: ReviewsCursor | None = None) -> ReviewsPage:
         """Читает отзывы с профиля продавца.
 
-        Полнота здесь означает «разобраны все строки, которые страница отдала»,
-        а не «прочитаны все отзывы продавца»: сверить их число не с чем.
+        Следующую страницу запрашивают с next_cursor предыдущего результата.
+        Отсутствие курсора само по себе не означает полноту: проверяйте completeness.
 
         Args:
             user_id (str): Идентификатор продавца. Тот самый, что стоит в адресе
@@ -213,7 +213,7 @@ class AsyncReviewsService:
             ValidationError: Если идентификатор непригоден для подстановки.
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
-        return await self._client.run(self._client.engine.read_reviews(user_id))
+        return await self._client.run(self._client.engine.read_reviews(user_id, cursor=cursor))
 
     async def leave(self, order_id: str, *, rating: int, text: str = "") -> ReviewResult:
         """Пишет отзыв к заказу либо правит уже написанный.
@@ -851,12 +851,13 @@ class AsyncCatalogService:
         client (AsyncClient): Клиент, которому принадлежит сервис.
     """
 
-    __slots__ = ("_client",)
+    __slots__ = ("_client", "_lock")
 
     def __init__(self, client: AsyncClient) -> None:
         self._client = client
+        self._lock = asyncio.Lock()
 
-    async def categories(self) -> CatalogPage:
+    async def categories(self, *, refresh: bool = False) -> CatalogPage:
         """Читает каталог: игры, их варианты и разделы каждого.
 
         Читается только основной список. Избранное повторяет его целиком -
@@ -868,7 +869,8 @@ class AsyncCatalogService:
         Raises:
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
-        return await self._client.run(self._client.engine.read_catalog())
+        async with self._lock:
+            return await self._client.run(self._client.engine.read_catalog(refresh=refresh))
 
     async def field_schema(self, section_id: str) -> FieldSchema:
         """Читает поля фильтра раздела; неполнота требует явного принятия."""
@@ -1175,6 +1177,9 @@ class AsyncClient:
             except StopIteration as stop:
                 result: T = stop.value
                 return result
+            except FunoraError as exc:
+                self.engine.note_operation_error(exc)
+                raise
             failure = None
             reply = None
 

@@ -35,6 +35,7 @@ from typing import Final
 
 from ._diff import Event
 from .budget import SCHEDULING, Scheduling
+from .errors import StateSchemaIncompatibleError
 from .events import DEDUP_TTL_MS, EVENT_LANE, MIN_ENTRIES_PER_KEY
 
 __all__ = ["Schedule", "Deduplicator", "UNSAFE_FLOOR_MARK"]
@@ -248,6 +249,8 @@ class Deduplicator:
 
             key = (event.ordering_key, event.id)
             if event.id in bucket or key in in_batch:
+                if event.id in bucket:
+                    bucket.move_to_end(event.id)
                 self._suppressed += 1
                 continue
 
@@ -318,8 +321,17 @@ class Deduplicator:
             if bucket
         }
 
+    def snapshot_order(self) -> dict[str, list[str]]:
+        """Сохраняет LRU отдельно от меток TTL: JSON сортирует ключи объектов."""
+        return {key: list(bucket) for key, bucket in self._seen.items() if bucket}
+
     def restore(
-        self, state: dict[str, dict[str, int]], now: float, *, wall_ms: int | None = None
+        self,
+        state: dict[str, dict[str, int]],
+        now: float,
+        *,
+        wall_ms: int | None = None,
+        ordering: dict[str, list[str]] | None = None,
     ) -> int:
         """Восстанавливает состояние гашения из сохранённого.
 
@@ -340,17 +352,41 @@ class Deduplicator:
         Returns:
             int: Сколько записей восстановлено.
         """
+        if not isinstance(state, dict) or any(
+            not isinstance(key, str)
+            or not isinstance(bucket, dict)
+            or any(
+                not isinstance(event_id, str) or type(stamp) is not int
+                for event_id, stamp in bucket.items()
+            )
+            for key, bucket in state.items()
+        ):
+            raise StateSchemaIncompatibleError("непригодное состояние гашения повторов")
+        if ordering is not None and (
+            not isinstance(ordering, dict)
+            or any(
+                not isinstance(key, str)
+                or not isinstance(values, list)
+                or any(not isinstance(value, str) for value in values)
+                or len(set(values)) != len(values)
+                for key, values in ordering.items()
+            )
+        ):
+            raise StateSchemaIncompatibleError("непригодный порядок LRU")
         moment = _now_ms() if wall_ms is None else wall_ms
         restored = 0
         for key, bucket in state.items():
             target: OrderedDict[str, float] = OrderedDict()
-            for event_id, stamp in bucket.items():
+            for event_id, stamp in sorted(bucket.items(), key=lambda item: item[1]):
                 # Метка из будущего означает, что системные часы подвели назад.
                 # Считать её свежей безопаснее, чем просроченной: лишнее
                 # гашение задержит событие, недостающее выдаст товар дважды.
                 elapsed = max(0.0, (moment - stamp) / 1000)
                 target[event_id] = now - elapsed
             self._evict(target, now)
+            for event_id in (ordering or {}).get(key, []):
+                if event_id in target:
+                    target.move_to_end(event_id)
             while len(target) > self._entries_per_key:
                 target.popitem(last=False)
             if target:

@@ -1,0 +1,12 @@
+{
+  "captured_at": "2026-09-06",
+  "captured_by": "read-only anonymous HTTP observation; funora._skeleton.skeletonize",
+  "format": "structural-skeleton-v9",
+  "http_status": 200,
+  "locale": "ru",
+  "path": "/users/{n}/",
+  "authentication": "guest",
+  "note": "Первая страница публичного профиля, без фильтра. Текст, идентификаторы и значения полей обезличены. Сырой HTML не сохранялся.",
+  "captured_format": "structural-skeleton-v9",
+  "converted": false
+}

@@ -69,13 +69,33 @@ with Client(EnvSecretProvider()) as client:
 
 ## Отзывы
 
-```python
-with Client(EnvSecretProvider()) as client:
-    page = client.reviews.get("987654")
+`reviews.get(user_id, cursor=None)` читает одну страницу. Пример ограничивает
+число запросов; замените идентификатор на нужного продавца.
 
-    for review in page.rows():
-        print(review.rating, review.author_name.or_none(), review.text.or_none())
+```python
+from funora import Completeness
+
+with Client(EnvSecretProvider()) as client:
+    cursor = None
+    for _ in range(10):
+        page = client.reviews.get("987654", cursor=cursor)
+        for review in page.rows(accept_incomplete=True):
+            print(review.rating, review.author_name.or_none(), review.text.or_none())
+        if page.defects:
+            print("Чтение повреждено:", page.defects)
+            break
+        cursor = page.next_cursor
+        if cursor is None:
+            print("Конец подтверждён:", page.completeness is Completeness.COMPLETE)
+            break
+    else:
+        print("Достигнут предел страниц; продолжение:", cursor)
 ```
+
+Курсор берётся из формы ответа и привязан к продавцу. Повторённый сервером
+курсор вызывает `ProtocolChangedError`. `next_cursor=None` при неполном
+результате не доказывает конец выдачи. Страницы не объединяются автоматически;
+фильтр по оценке пока не поддерживается. У `AsyncClient` тот же вызов с `await`.
 
 ## Разделы площадки
 

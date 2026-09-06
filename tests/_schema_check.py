@@ -65,6 +65,7 @@ _PROPERTY_KEYWORDS: frozenset[str] = frozenset(
         "x-funora-nullable",
         "x-funora-observed-value",
         "$ref",
+        "anyOf",
     }
 )
 
@@ -189,6 +190,20 @@ def _check_value(value: Any, schema: dict[str, Any], where: str) -> None:
         UnsupportedKeyword: Если описание пользуется незнакомым словом.
     """
     _check_keywords(schema, _PROPERTY_KEYWORDS, where)
+
+    if "anyOf" in schema:
+        branches = schema["anyOf"]
+        if not isinstance(branches, list) or not branches:
+            raise UnsupportedKeyword(f"{where}: anyOf требует непустой список схем")
+        matches = False
+        for branch in branches:
+            try:
+                _check_value(value, branch, where)
+            except SchemaError:
+                continue
+            matches = True
+        if not matches:
+            _fail(where, "значение не входит ни в одну ветвь anyOf")
 
     domain = schema.get("x-funora-type")
     if domain is not None:

@@ -219,6 +219,9 @@ SELECTORS: Final[dict[str, str]] = {
     "reviews.filter": ".reviews-filter",
     "reviews.filter.endpoint": 'form[action$="/users/reviews"]',
     "reviews.pagination.continue_button": "button.dyn-table-continue",
+    "reviews.pagination.fields.continue": 'form.dyn-table-form input[name="continue"]',
+    "reviews.pagination.fields.filter": 'form.dyn-table-form input[name="filter"]',
+    "reviews.pagination.fields.user_id": 'form.dyn-table-form input[name="user_id"]',
     "reviews.pagination.form": "form.dyn-table-form",
     "reviews.row": ".review-item",
     "reviews.row.wrapper": ".review-container",
@@ -341,6 +344,7 @@ SELECTOR_GROUPS: Final[dict[str, tuple[str, ...]]] = {
     ),
     "orders.fields.status.carriers": (".tc-status",),
     "session.content_markers": (
+        ".review-container",
         ".navbar-toggle-logged",
         ".orders-table",
         ".chat-contacts",
