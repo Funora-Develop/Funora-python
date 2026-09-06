@@ -40,6 +40,20 @@ from funora._client import CatalogService
 from funora._aclient import AsyncCatalogService
 assert callable(CatalogService.field_schema)
 assert callable(AsyncCatalogService.field_schema)
+from funora import Client, AsyncClient
+from funora.errors import ConfigurationError
+with Client(public_only=True, account_id='package-check') as client:
+    try:
+        client.orders.list()
+    except ConfigurationError:
+        pass
+    else:
+        raise AssertionError('anonymous client accepted a private operation')
+import asyncio
+async def check_async():
+    async with AsyncClient(public_only=True):
+        pass
+asyncio.run(check_async())
 print('wheel imports and public API: OK')
 """,
             ],

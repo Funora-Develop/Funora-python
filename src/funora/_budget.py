@@ -201,9 +201,10 @@ class Budget:
             нормативен: сначала общее, потом ведро аккаунта.
     """
 
-    __slots__ = ("_buckets", "_demanded_at", "_suspended_until", "_lock")
+    __slots__ = ("_buckets", "_demanded_at", "_suspended_until", "_lock", "_accounts")
 
     def __init__(self, names: tuple[str, ...] = ("host", "account")) -> None:
+        self._accounts: dict[str, Budget] = {}
         self._lock = RLock()
         self._buckets = tuple(TokenBucket(BUCKETS[name]) for name in names)
         #: Когда каждый класс последний раз просил бюджет.
@@ -218,6 +219,28 @@ class Budget:
         #: Вторая ступень реакции на ограничение частоты. Снятие держится до
         #: конца остывания идентичности.
         self._suspended_until: dict[RequestClass, float] = {}
+
+    def for_account(self, account: str) -> Budget:
+        """Возвращает личное ведро под общим сетевым пределом и общей блокировкой."""
+        if not isinstance(account, str) or not account.strip():
+            raise ValueError("ключ аккаунта не может быть пустым")
+        with self._lock:
+            if account not in self._accounts:
+                child = Budget(names=())
+                child._lock = self._lock
+                child._demanded_at = self._demanded_at
+                child._suspended_until = self._suspended_until
+                buckets = []
+                for bucket in self._buckets:
+                    if bucket.limits.name == "account":
+                        own = TokenBucket(bucket.limits)
+                        own.scale(bucket.factor)
+                        buckets.append(own)
+                    else:
+                        buckets.append(bucket)
+                child._buckets = tuple(buckets)
+                self._accounts[account] = child
+            return self._accounts[account]
 
     def suspend(self, classes: tuple[RequestClass, ...], *, until: float) -> None:
         """Снимает классы запросов с очереди до названного момента.
@@ -379,6 +402,8 @@ class Budget:
                 )
             for bucket in self._buckets:
                 bucket.scale(factor)
+            for account in self._accounts.values():
+                account.scale(factor)
 
     def require(
         self,

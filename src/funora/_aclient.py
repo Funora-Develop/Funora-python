@@ -72,6 +72,7 @@ from ._watch import Router, adispatch
 from ._whoami import Account, CapabilityProfile, SessionHealth
 from .capabilities import Capability, CapabilityState
 from .errors import ConfigurationError, FunoraError, HandlerError
+from .operations import OPERATIONS
 
 if TYPE_CHECKING:
     from ._transport import Observation
@@ -514,7 +515,7 @@ class AsyncAccountService:
         Returns:
             CapabilityProfile: Состояние каждой возможности контракта.
         """
-        return self._client.engine.capability_profile()
+        return self._client._capability_profile()
 
     async def balance(self) -> BalancePage:
         """Читает баланс аккаунта и операции по счёту.
@@ -786,7 +787,7 @@ class AsyncMarketService:
             ValidationError: Если номер непригоден для подстановки.
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
-        return await self._client.run(self._client.engine.read_market(node_id))
+        return await self._client._read("market.offers", lambda engine: engine.read_market(node_id))
 
     async def snapshot(self, node_id: str) -> MarketSnapshot:
         """Снимает состояние выдачи для сравнения во времени.
@@ -802,7 +803,9 @@ class AsyncMarketService:
             ValidationError: Если номер непригоден для подстановки.
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
-        return await self._client.run(self._client.engine.read_market_snapshot(node_id))
+        return await self._client._read(
+            "market.snapshot", lambda engine: engine.read_market_snapshot(node_id)
+        )
 
     async def chips(self, node_id: str) -> ChipsPage:
         """Читает публичные предложения раздела ЧИПОВ - второго рынка.
@@ -820,7 +823,7 @@ class AsyncMarketService:
             ValidationError: Если номер непригоден для подстановки.
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
-        return await self._client.run(self._client.engine.read_chips(node_id))
+        return await self._client._read("chips.offers", lambda engine: engine.read_chips(node_id))
 
     async def calculate_chip_prices(self, game_id: str, price: str) -> PriceCalculation:
         """Считает цену покупателя на рынке по количеству.
@@ -888,6 +891,13 @@ class AsyncClient:
             вызывающий включает явно, соглашаясь на возможную смену контракта.
         transport (AsyncFetcher | None): Готовый транспорт. Нужен там, где
             вызывающий собирает его сам, и в проверках.
+        public_transport (AsyncFetcher | None): Отдельный транспорт рынка без секрета.
+            При подставном transport передаётся явно; иначе создаётся лениво.
+        public_only (bool): Работа без секрета, только market.offers,
+            market.snapshot и market.chips. Личный транспорт и файл состояния не принимаются.
+        account_id (str): Устойчивый ключ аккаунта для квоты и привязки прокси.
+            По умолчанию self: клиенты без ключа делят персональную квоту.
+            Ключ не подтверждает авторизацию; её проверяет ответ площадки.
         budget (Budget | None): Общий бюджет запросов. Передаётся, когда в одном
             процессе живут несколько клиентов: площадке видна сетевая
             идентичность, а не то, сколько клиентов мы завели у себя.
@@ -905,12 +915,17 @@ class AsyncClient:
             здесь - потерянная прежняя цена: истории цен у площадки нет.
 
     Raises:
-        ConfigurationError: Если не передано ни секрета, ни транспорта. Повтор
+        ConfigurationError: Если параметры несовместимы или личному клиенту
+            не передано ни секрета, ни транспорта. Повтор
             здесь не поможет, исправлять надо вызов.
     """
 
     __slots__ = (
         "_fetcher",
+        "_public_fetcher",
+        "_public_engine",
+        "_custom_transport",
+        "_closed",
         "account",
         "catalog",
         "chats",
@@ -929,6 +944,9 @@ class AsyncClient:
         settings: TransportSettings | None = None,
         experimental: frozenset[Capability] | None = None,
         transport: AsyncFetcher | None = None,
+        public_transport: AsyncFetcher | None = None,
+        public_only: bool = False,
+        account_id: str = DEFAULT_ACCOUNT,
         budget: Budget | None = None,
         proxies: tuple[Proxy, ...] = (),
         state_path: str | Path | None = None,
@@ -936,42 +954,55 @@ class AsyncClient:
         unsafe_price_changes_without_audit: bool = False,
     ) -> None:
         resolved_settings = settings or TransportSettings()
-
-        if transport is not None:
-            self._fetcher = transport
-        elif secret is not None:
-            resolved = secret if isinstance(secret, Secret) else secret.get("golden_key")
-            self._fetcher = AsyncFetcher(resolved, settings=resolved_settings)
-        else:
+        if not isinstance(account_id, str) or not account_id.strip():
+            raise ConfigurationError("account_id должен быть непустой строкой")
+        if public_only and (secret is not None or transport is not None or state_path is not None):
             raise ConfigurationError(
-                "клиенту нужен либо секрет, либо готовый транспорт: без них "
-                "обратиться к площадке не от кого"
+                "public_only не принимает секрет, личный транспорт или файл состояния"
             )
-
-        # Пул заводится до движка: бюджет берётся у выбранной идентичности, а
-        # выбор идентичности - его работа.
+        if public_transport is not None and public_transport is transport:
+            raise ConfigurationError("публичный и личный транспорт должны быть разными")
+        if isinstance(public_transport, AsyncFetcher) and public_transport._secret is not None:
+            raise ConfigurationError("публичный транспорт не должен содержать секрет")
+        if not public_only and secret is None and transport is None:
+            raise ConfigurationError(
+                "клиенту нужен либо секрет, либо готовый транспорт; для рынка есть public_only=True"
+            )
         self.pool = ProxyPool(
-            proxies,
-            host=host_of(resolved_settings.base_url) or resolved_settings.base_url,
+            proxies, host=host_of(resolved_settings.base_url) or resolved_settings.base_url
         )
-
-        # Идентичность выбирается один раз и передаётся движку: ограничение
-        # частоты обязано дойти до неё, а не до безымянного бюджета. Наблюдение
-        # перепривяжет аккаунт к другой, если эта остынет.
-        identity_name, proxy_url = self.pool.choose(DEFAULT_ACCOUNT)
+        identity_name, proxy_url = self.pool.choose(account_id)
         identity = REGISTRY.get(identity_name)
         if proxy_url is not None:
             resolved_settings = replace(resolved_settings, proxy_url=proxy_url)
-
+        root_budget = budget or identity.budget
         self.engine = Engine(
             resolved_settings,
-            budget or identity.budget,
+            budget
+            if budget is not None and account_id == DEFAULT_ACCOUNT
+            else root_budget.for_account("account:" + account_id),
             experimental or frozenset(),
             identity,
             state_path=state_path,
             unsafe_sends_without_ledger=unsafe_sends_without_ledger,
             unsafe_price_changes_without_audit=unsafe_price_changes_without_audit,
         )
+        self._public_engine = Engine(
+            resolved_settings,
+            root_budget.for_account("public_read"),
+            experimental or frozenset(),
+            identity,
+        )
+        self._closed = False
+        self._custom_transport = transport is not None
+        self._public_fetcher = public_transport
+        self._fetcher: AsyncFetcher | None = None
+        if transport is not None:
+            self._fetcher = transport
+        elif secret is not None:
+            resolved = secret if isinstance(secret, Secret) else secret.get("golden_key")
+            self._fetcher = AsyncFetcher(resolved, settings=resolved_settings)
+
         self.orders = AsyncOrdersService(self)
         self.chats = AsyncChatsService(self)
         self.reviews = AsyncReviewsService(self)
@@ -979,6 +1010,16 @@ class AsyncClient:
         self.lots = AsyncLotsService(self)
         self.catalog = AsyncCatalogService(self)
         self.market = AsyncMarketService(self)
+
+    async def _read(
+        self, operation: str, build: Callable[[Engine], Generator[Request, Reply, T]]
+    ) -> T:
+        engine = (
+            self._public_engine
+            if OPERATIONS[operation].transport_lane == "public_read"
+            else self.engine
+        )
+        return await self.run(build(engine), engine=engine)
 
     async def __aenter__(self) -> AsyncClient:
         """Входит в асинхронный контекстный менеджер.
@@ -1005,7 +1046,13 @@ class AsyncClient:
         Returns:
             None
         """
-        await self._fetcher.close()
+        self._closed = True
+        try:
+            if self._fetcher is not None:
+                await self._fetcher.close()
+        finally:
+            if self._public_fetcher is not None:
+                await self._public_fetcher.close()
 
     @property
     def locale(self) -> Observed[str]:
@@ -1020,7 +1067,8 @@ class AsyncClient:
             Observed[str]: Локаль либо причина, по которой её не видно. До
             первого чтения - не наблюдалась.
         """
-        return self.engine._state.locale
+        engine = self._public_engine if self._fetcher is None else self.engine
+        return engine._state.locale
 
     @property
     def stopped(self) -> FunoraError | None:
@@ -1033,7 +1081,8 @@ class AsyncClient:
         Returns:
             FunoraError | None: Ошибка либо None, если клиент работает.
         """
-        return self.engine.stopped
+        engine = self._public_engine if self._fetcher is None else self.engine
+        return engine.stopped
 
     def resume(self) -> None:
         """Снимает полную остановку и разрешает снова ходить на площадку.
@@ -1047,6 +1096,20 @@ class AsyncClient:
             None
         """
         self.engine.resume()
+        self._public_engine.resume()
+
+    def _capability_profile(self) -> CapabilityProfile:
+        profile = self.engine.capability_profile()
+        return replace(
+            profile,
+            _states={
+                capability: self._public_engine._state.capabilities[capability]
+                if (operation := OPERATIONS.get(capability.value))
+                and operation.transport_lane == "public_read"
+                else state
+                for capability, state in profile._states.items()
+            },
+        )
 
     def capability(self, capability: Capability) -> CapabilityState:
         """Возвращает текущее состояние возможности.
@@ -1057,7 +1120,13 @@ class AsyncClient:
         Returns:
             CapabilityState: Состояние, каким его видит клиент сейчас.
         """
-        return self.engine.capability(capability)
+        operation = OPERATIONS.get(capability.value)
+        engine = (
+            self._public_engine
+            if operation and operation.transport_lane == "public_read"
+            else self.engine
+        )
+        return engine.capability(capability)
 
     async def watch(
         self,
@@ -1134,6 +1203,7 @@ class AsyncClient:
         self,
         core: Generator[Request, Reply, T],
         *,
+        engine: Engine | None = None,
         router: Router | None = None,
         concurrency: int = 1,
         on_handler_error: Callable[[HandlerError], None] | None = None,
@@ -1147,6 +1217,8 @@ class AsyncClient:
 
         Args:
             core (Generator[Request, Reply, T]): Сопрограмма ядра.
+            engine (Engine | None): Принадлежащее клиенту ядро выбранной полосы.
+                По умолчанию личное; публичное допускает только чтение рынка.
             router (Router | None): Реестр обработчиков. Нужен только тем
                 сопрограммам, которые просят раздать события.
             concurrency (int): Сколько ключей упорядочивания раздавать
@@ -1169,6 +1241,21 @@ class AsyncClient:
         Raises:
             FunoraError: Любая ошибка, которую ядро не погасило повтором.
         """
+        active = self.engine if engine is None else engine
+        if self._closed or active not in (self.engine, self._public_engine):
+            core.close()
+            raise ConfigurationError("клиент закрыт либо ядро принадлежит другому клиенту")
+        if active is self._public_engine and self._public_fetcher is None:
+            if self._custom_transport:
+                core.close()
+                raise ConfigurationError(
+                    "для подставного клиента передайте отдельный public_transport"
+                )
+            self._public_fetcher = AsyncFetcher(None, settings=active._settings)
+        fetcher = self._public_fetcher if active is self._public_engine else self._fetcher
+        if fetcher is None:
+            core.close()
+            raise ConfigurationError("public_only разрешает только операции публичной полосы")
         reply: Reply = None
         failure: FunoraError | None = None
         while True:
@@ -1178,8 +1265,11 @@ class AsyncClient:
                 result: T = stop.value
                 return result
             except FunoraError as exc:
-                self.engine.note_operation_error(exc)
+                active.note_operation_error(exc)
                 raise
+            if active is self._public_engine and not isinstance(request, (Fetch, Pause)):
+                core.close()
+                raise ConfigurationError("публичная полоса рынка допускает только чтение")
             failure = None
             reply = None
 
@@ -1203,23 +1293,25 @@ class AsyncClient:
                     await asyncio.sleep(remaining / 1000)
             elif isinstance(request, Fetch):
                 try:
-                    reply = await self._fetch(request.path)
+                    reply = await (
+                        self._fetch(request.path)
+                        if active is self.engine
+                        else fetcher.fetch(request.path)
+                    )
                 except FunoraError as exc:
                     failure = exc
             elif isinstance(request, Submit):
                 # Отправка идёт мимо _fetch нарочно: у записи своё правило -
                 # переход в ответ на неё не повторяется.
                 try:
-                    reply = await self._fetcher.submit(
-                        request.path, request.fields, request.headers
-                    )
+                    reply = await fetcher.submit(request.path, request.fields, request.headers)
                 except FunoraError as exc:
                     failure = exc
             elif isinstance(request, Upload):
                 # Загрузка идёт мимо _fetch по той же причине, что и отправка
                 # формы: переход в ответ на запись не повторяется.
                 try:
-                    reply = await self._fetcher.upload(
+                    reply = await fetcher.upload(
                         request.path,
                         field=request.field,
                         filename=request.filename,
@@ -1234,9 +1326,7 @@ class AsyncClient:
                 # поля формы. Правило перехода при этом ЧТЕНИЯ, а не записи -
                 # повтор здесь безвреден.
                 try:
-                    reply = await self._fetcher.query(
-                        request.path, request.payload, request.headers
-                    )
+                    reply = await fetcher.query(request.path, request.payload, request.headers)
                 except FunoraError as exc:
                     failure = exc
             elif isinstance(request, Ask):
@@ -1245,7 +1335,7 @@ class AsyncClient:
                 # переехала», а «нас выкинуло на страницу», и разбирать её как
                 # объект нельзя.
                 try:
-                    reply = await self._fetcher.ask(request.path, request.headers)
+                    reply = await fetcher.ask(request.path, request.headers)
                 except FunoraError as exc:
                     failure = exc
             elif isinstance(request, Deliver):
@@ -1278,4 +1368,6 @@ class AsyncClient:
         Raises:
             FunoraError: При сетевом отказе либо непригодном ответе.
         """
+        if self._fetcher is None:
+            raise ConfigurationError("личный транспорт недоступен")
         return await self._fetcher.fetch(path)

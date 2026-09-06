@@ -2301,12 +2301,28 @@ def render_operations(spec: Path) -> str:
     out.append('    provenance_source: str = ""\n')
     out.append('    provenance_rests_on: str = ""\n')
     out.append("    cache_ttl_ms: int = 0\n")
+    out.append('    transport_lane: str = "authenticated"\n')
     out.append("    cache_invalidate_on: tuple[str, ...] = ()\n")
 
     out.append("\n\n#: Операции служб по идентификатору.\n")
     out.append("OPERATIONS: Final[dict[str, Operation]] = {\n")
     for name in sorted(operations):
         body = operations[name]
+        lane = body.get("transport_lane", "authenticated")
+        expected_lane = (
+            "public_read"
+            if name in {"market.offers", "market.snapshot", "chips.offers"}
+            else "authenticated"
+        )
+        if lane != expected_lane or (lane == "public_read" and body["safety"] != "safe"):
+            raise SystemExit(f"spec/services: неподдерживаемая транспортная полоса {name}: {lane}")
+        expected_governor = (
+            "outbound_message" if name in {"chats.send_text", "chats.send_image"} else None
+        )
+        if body.get("governor") != expected_governor:
+            raise SystemExit(f"spec/services: неподдерживаемый ограничитель отправки {name}")
+        if name == "market.snapshot" and body.get("completeness_required") is not True:
+            raise SystemExit("spec/services: market.snapshot обязан сохранять полноту чтения")
         cache = body.get("cacheable")
         if cache is not None:
             if name != "catalog.categories" or set(cache) - {"ttl_ms", "invalidate_on", "notes"}:
@@ -2325,6 +2341,8 @@ def render_operations(spec: Path) -> str:
         out.append(f"        safety=Safety.{body['safety'].upper()},\n")
         out.append(f'        request_class="{body["request_class"]}",\n')
         out.append(f'        returns="{body["returns"]}",\n')
+        if lane != "authenticated":
+            out.append(f'        transport_lane="{lane}",\n')
         if cache is not None:
             out.append(f"        cache_ttl_ms={cache['ttl_ms']},\n")
             out.append(

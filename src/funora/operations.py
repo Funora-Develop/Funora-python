@@ -97,6 +97,7 @@ class Operation:
     provenance_source: str = ""
     provenance_rests_on: str = ""
     cache_ttl_ms: int = 0
+    transport_lane: str = "authenticated"
     cache_invalidate_on: tuple[str, ...] = ()
 
 
@@ -343,6 +344,7 @@ OPERATIONS: Final[dict[str, Operation]] = {
         safety=Safety.SAFE,
         request_class="monitoring",
         returns="ChipsPage",
+        transport_lane="public_read",
         errors=(
             "funora.capability.unsupported",
             "funora.protocol.changed",
@@ -483,6 +485,7 @@ OPERATIONS: Final[dict[str, Operation]] = {
         safety=Safety.SAFE,
         request_class="monitoring",
         returns="MarketPage",
+        transport_lane="public_read",
         errors=(
             "funora.protocol.changed",
             "funora.transport.rate_limited",
@@ -495,6 +498,7 @@ OPERATIONS: Final[dict[str, Operation]] = {
         safety=Safety.SAFE,
         request_class="monitoring",
         returns="MarketSnapshot",
+        transport_lane="public_read",
         errors=(
             "funora.protocol.changed",
             "funora.transport.rate_limited",
