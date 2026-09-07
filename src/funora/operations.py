@@ -192,6 +192,19 @@ OPERATIONS: Final[dict[str, Operation]] = {
             "funora.transport",
         ),
     ),
+    "catalog.search": Operation(
+        name="catalog.search",
+        capability="catalog.search",
+        safety=Safety.SAFE,
+        request_class="interactive",
+        returns="CatalogPage",
+        transport_lane="public_read",
+        errors=(
+            "funora.validation",
+            "funora.protocol.changed",
+            "funora.transport",
+        ),
+    ),
     "chats.buyer_viewing": Operation(
         name="chats.buyer_viewing",
         capability="chats.buyer_viewing",

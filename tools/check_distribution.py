@@ -40,6 +40,8 @@ position = funora.ReviewsCursor("123", "opaque")
 assert funora.ReviewsCursor.from_token(position.to_token()) == position
 from funora._client import CatalogService
 from funora._aclient import AsyncCatalogService
+assert callable(CatalogService.search)
+assert callable(AsyncCatalogService.search)
 assert callable(CatalogService.field_schema)
 assert callable(AsyncCatalogService.field_schema)
 from funora import Client, AsyncClient

@@ -16,6 +16,8 @@ import codegen
     "service, operation, field, value",
     [
         ("market", "market.offers", "transport_lane", None),
+        ("catalog", "catalog.search", "transport_lane", "authenticated"),
+        ("catalog", "catalog.search", "safety", "unsafe"),
         ("chips", "chips.offers", "transport_lane", None),
         ("market", "market.snapshot", "transport_lane", "authenticated"),
         ("market", "market.offers", "transport_lane", "unknown"),

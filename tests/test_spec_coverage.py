@@ -333,6 +333,7 @@ OPERATION_METHOD: dict[str, tuple[str, str]] = {
     "capabilities": ("AccountService", "capabilities"),
     "session.health": ("AccountService", "health"),
     "catalog.categories": ("CatalogService", "categories"),
+    "catalog.search": ("CatalogService", "search"),
     "catalog.field_schema": ("CatalogService", "field_schema"),
     "lots.showcase": ("LotsService", "showcase"),
     "orders.get": ("OrdersService", "get"),

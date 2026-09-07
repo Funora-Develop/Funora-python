@@ -27,7 +27,7 @@
 The working version can be installed from source or built as a wheel. The
 contract is still a draft; a successful build does not certify live account operations.
 
-Thirty-four operations are implemented and tested: twenty-three reads and eleven writes - sending text and images, marking a chat read, leaving and removing a review, changing a lot price, raising offers, activating or deactivating a lot, switching the display currency, and refunding an order.
+Thirty-five operations are implemented and tested: twenty-four reads and eleven writes - sending text and images, marking a chat read, leaving and removing a review, changing a lot price, raising offers, activating or deactivating a lot, switching the display currency, and refunding an order.
 
 **The guide lives in [docs/index.md](docs/index.md).** It builds into a site
 (`mkdocs serve`) and is checked by the same run as the code: examples are parsed
@@ -98,6 +98,7 @@ async with AsyncClient(EnvSecretProvider()) as client:
 | `client.account.switch_currency(code)` | the display currency switched |
 | `client.account.capabilities()` | which of the declared capabilities are available |
 | `client.catalog.categories()` | the marketplace sections |
+| `client.catalog.search(query)` | public game search; completeness of matches remains unconfirmed |
 | `client.catalog.field_schema(section_id)` | section filters, choices and ranges |
 | `client.chats.history_before(node_id, before_message_id=...)` | earlier chat messages |
 | `client.market.calculate_chip_prices(game_id, price)` | prices on the quantity marketplace |

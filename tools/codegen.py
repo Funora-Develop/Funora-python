@@ -2349,7 +2349,7 @@ def render_operations(spec: Path) -> str:
         lane = body.get("transport_lane", "authenticated")
         expected_lane = (
             "public_read"
-            if name in {"market.offers", "market.snapshot", "chips.offers"}
+            if name in {"market.offers", "market.snapshot", "chips.offers", "catalog.search"}
             else "authenticated"
         )
         if lane != expected_lane or (lane == "public_read" and body["safety"] != "safe"):

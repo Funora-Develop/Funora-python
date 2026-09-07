@@ -50,7 +50,7 @@ from ._calc import (
     PriceCalculation,
     parse_calculation,
 )
-from ._catalog import CatalogPage, parse_catalog
+from ._catalog import CatalogPage, normalize_catalog_query, parse_catalog, parse_catalog_search
 from ._chat_history import (
     CHAT_HISTORY_PATH,
     HISTORY_HEADERS,
@@ -436,6 +436,26 @@ Request = Fetch | Submit | Upload | Query | Ask | Pause | Deliver
 Reply = Observation | StepResult | None
 
 
+CATALOG_SEARCH_PATH: Final[str] = "/games/promoFilter"
+
+
+def public_read_request(request: Request) -> bool:
+    """Публичный POST разрешён только для наблюдённой формы поиска игр."""
+    if isinstance(request, (Fetch, Pause)):
+        return True
+    if not (
+        isinstance(request, Submit)
+        and request.path == CATALOG_SEARCH_PATH
+        and set(request.fields) == {"query"}
+        and request.headers == RUNNER_HEADERS
+    ):
+        return False
+    try:
+        return normalize_catalog_query(request.fields["query"]) == request.fields["query"]
+    except ValidationError:
+        return False
+
+
 @dataclass
 class _State:
     """Состояние клиента, живущее между вызовами.
@@ -598,6 +618,7 @@ IMPLEMENTED: Final[frozenset[Capability]] = frozenset(
         Capability.ACCOUNT_BALANCE,
         Capability.LOTS_SHOWCASE,
         Capability.CATALOG_CATEGORIES,
+        Capability.CATALOG_SEARCH,
         Capability.CATALOG_FIELD_SCHEMA,
         Capability.ACCOUNT_PROFILE,
         Capability.CHATS_SEND_TEXT,
@@ -2140,6 +2161,21 @@ class Engine:
         if page.completeness is Completeness.COMPLETE:
             self._state.catalog_cached = page
             self._state.catalog_cached_at = monotonic()
+        return page
+
+    def read_catalog_search(self, query: str) -> Generator[Request, Reply, CatalogPage]:
+        """Ищет игры публичной формой, не изменяя кэш полного каталога."""
+        query = normalize_catalog_query(query)
+        observation = yield from self.fetch_ok(
+            Capability.CATALOG_SEARCH,
+            CATALOG_SEARCH_PATH,
+            session_required=False,
+            fields={"query": query},
+        )
+        page = parse_catalog_search(observation.html, query, datetime.now(UTC))
+        if not integrity_verified(observation):
+            page = unverified(page)
+        self._note_success(Capability.CATALOG_SEARCH, page.completeness, None)
         return page
 
     def _invalidate_catalog(self, reason: str) -> None:
@@ -4480,7 +4516,9 @@ class Engine:
             #
             # Состояние возможности при этом понижается так же -
             # повреждённое чтение остаётся повреждённым, о чём бы оно ни было.
-            _log.warning("чтение %s неполно: замечены повреждения страницы", capability.value)
+            _log.warning(
+                "полнота чтения %s не подтверждена: %s", capability.value, completeness.value
+            )
             return
 
         # Предупреждение пишется независимо от того, признал ли вызывающий

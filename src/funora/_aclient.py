@@ -44,6 +44,7 @@ from ._engine import (
     Request,
     Submit,
     Upload,
+    public_read_request,
 )
 from ._field_schema import FieldSchema
 from ._host import host_of
@@ -881,6 +882,12 @@ class AsyncCatalogService:
         async with self._lock:
             return await self._client.run(self._client.engine.read_catalog(refresh=refresh))
 
+    async def search(self, query: str) -> CatalogPage:
+        """Ищет игры без секрета; games() требует явного принятия неполной выдачи."""
+        return await self._client._read(
+            "catalog.search", lambda engine: engine.read_catalog_search(query)
+        )
+
     async def field_schema(self, section_id: str) -> FieldSchema:
         """Читает поля фильтра раздела; неполнота требует явного принятия."""
         return await self._client.run(self._client.engine.read_field_schema(section_id))
@@ -900,7 +907,8 @@ class AsyncClient:
         public_transport (AsyncFetcher | None): Отдельный транспорт рынка без секрета.
             При подставном transport передаётся явно; иначе создаётся лениво.
         public_only (bool): Работа без секрета, только market.offers,
-            market.snapshot и market.chips. Личный транспорт и файл состояния не принимаются.
+            market.snapshot, market.chips и catalog.search.
+            Личный транспорт и файл состояния не принимаются.
         account_id (str): Устойчивый ключ аккаунта для квоты и привязки прокси.
             По умолчанию self: клиенты без ключа делят персональную квоту.
             Ключ не подтверждает авторизацию; её проверяет ответ площадки.
@@ -1275,9 +1283,9 @@ class AsyncClient:
             except FunoraError as exc:
                 active.note_operation_error(exc)
                 raise
-            if active is self._public_engine and not isinstance(request, (Fetch, Pause)):
+            if active is self._public_engine and not public_read_request(request):
                 core.close()
-                raise ConfigurationError("публичная полоса рынка допускает только чтение")
+                raise ConfigurationError("публичная полоса допускает только чтение")
             failure = None
             reply = None
 

@@ -438,3 +438,21 @@ def test_nullable_reference_rejects_wrong_types_and_unknown_keywords():
             {"anyOf": [{"type": "null", "x-funora-nullable": "not_applicable"}, {"unknown": 1}]},
             "cursor",
         )
+
+
+@pytest.mark.parametrize(
+    "query,html", [(None, "root.logged.ru"), ("game", "catalog-search.guest.ru")]
+)
+def test_catalog_page_and_search_share_the_schema(query, html):
+    from funora._catalog import parse_catalog, parse_catalog_search
+
+    page = (
+        parse_catalog(_page(html), WHEN)
+        if query is None
+        else parse_catalog_search(json.dumps({"html": _page(html)}), query, WHEN)
+    )
+    check(
+        _page_as_json(page, "games", page.games(accept_incomplete=True)),
+        _schema("catalog-page"),
+        where="каталог и поиск",
+    )

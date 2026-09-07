@@ -123,6 +123,8 @@ SELECTORS: Final[dict[str, str]] = {
     "catalog.lists.favourites": "div.promo-games.promo-games-fav",
     "catalog.lists.letter_groups": ".promo-games-all .promo-game-list > .promo-game-list-title",
     "catalog.search.form": "form.promo-games-filter",
+    "catalog.search.letter_groups": ".promo-games .promo-game-list-header",
+    "catalog.search.response": "body > div.promo-games",
     "catalog.sections.link": ".promo-game-item > ul.list-inline > li > a",
     "catalog.sections.list": ".promo-game-item > ul.list-inline",
     "catalog.sections.list.within_card": "ul.list-inline",

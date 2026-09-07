@@ -37,6 +37,7 @@ _SPEC_DIR = os.environ.get("FUNORA_SPEC_DIR")
 
 #: Ожидаемый вердикт для каждой фикстуры.
 EXPECTED = {
+    "catalog-search.guest.ru": ResponseClass.UNKNOWN,
     "order.logged.ru": ResponseClass.OK,
     "orders-trade.logged.ru": ResponseClass.OK,
     # Тот же список, снятый ДЕВЯТЬЮ ДНЯМИ ПОЗЖЕ и вчетверо длиннее: тридцать
@@ -183,7 +184,7 @@ def test_fixture_parses(name: str) -> None:
     """
     tree = HTMLParser(_read(name))
     assert tree.body is not None, "тело документа не разобралось"
-    minimum = 90 if name == "reviews-last.guest.ru" else 100
+    minimum = 90 if name in {"reviews-last.guest.ru", "catalog-search.guest.ru"} else 100
     assert len(tree.css("*")) > minimum, "дерево подозрительно мелкое"
 
 

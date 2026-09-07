@@ -1,0 +1,234 @@
+<html>
+  <head></head>
+  <body>
+    <div class="promo-games">
+      <div class="container">
+        <div class="content-with-cd">
+          <div class="promo-game-list-header">
+            <div class="title-mini">
+              T1:a
+            </div>
+          </div>
+          <div class="promo-game-list">
+            <div class="row row-10 flex">
+              <div class="col-md-3 col-xs-6">
+                <div class="promo-game-item">
+                  <div class="game-title" data-id="T2:d#1">
+                    <a href="https://funpay.com/lots/{n1}/">
+                      T9:a
+                    </a>
+                  </div>
+                  <ul class="list-inline" data-id="T2:d#1">
+                    <li>
+                      <a href="https://funpay.com/lots/{n1}/">
+                        T8:c
+                      </a>
+                    </li>
+                    <li>
+                      <a href="https://funpay.com/lots/{n2}/">
+                        T5:c
+                      </a>
+                    </li>
+                    <li>
+                      <a href="https://funpay.com/lots/{n3}/">
+                        T9:a
+                      </a>
+                    </li>
+                    <li>
+                      <a href="https://funpay.com/lots/{n4}/">
+                        T6:c
+                      </a>
+                    </li>
+                    <li>
+                      <a href="https://funpay.com/lots/{n5}/">
+                        T5:c
+                      </a>
+                    </li>
+                    <li>
+                      <a href="https://funpay.com/lots/{n6}/">
+                        T8:c
+                      </a>
+                    </li>
+                    <li>
+                      <a href="https://funpay.com/lots/{n7}/">
+                        T5:c
+                      </a>
+                    </li>
+                    <li>
+                      <a href="https://funpay.com/lots/{n8}/">
+                        T6:c
+                      </a>
+                    </li>
+                    <li>
+                      <a href="https://funpay.com/lots/{n9}/">
+                        T9:as
+                      </a>
+                    </li>
+                    <li>
+                      <a href="https://funpay.com/lots/{n10}/">
+                        T7:c
+                      </a>
+                    </li>
+                    <li>
+                      <a href="https://funpay.com/lots/{n11}/">
+                        T5:c
+                      </a>
+                    </li>
+                    <li>
+                      <a href="https://funpay.com/lots/{n12}/">
+                        T11:cp
+                      </a>
+                    </li>
+                    <li>
+                      <a href="https://funpay.com/lots/{n13}/">
+                        T12:as
+                      </a>
+                    </li>
+                    <li>
+                      <a href="https://funpay.com/lots/{n14}/">
+                        T16:cs
+                      </a>
+                    </li>
+                    <li>
+                      <a href="https://funpay.com/lots/{n15}/">
+                        T6:c
+                      </a>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+              <div class="col-md-3 col-xs-6">
+                <div class="promo-game-item">
+                  <div class="game-title" data-id="T3:d#2">
+                    <a href="https://funpay.com/lots/{n16}/">
+                      T18:as
+                    </a>
+                  </div>
+                  <ul class="list-inline" data-id="T3:d#2">
+                    <li>
+                      <a href="https://funpay.com/lots/{n16}/">
+                        T8:c
+                      </a>
+                    </li>
+                    <li>
+                      <a href="https://funpay.com/lots/{n17}/">
+                        T5:c
+                      </a>
+                    </li>
+                    <li>
+                      <a href="https://funpay.com/lots/{n18}/">
+                        T8:c
+                      </a>
+                    </li>
+                    <li>
+                      <a href="https://funpay.com/lots/{n19}/">
+                        T6:c
+                      </a>
+                    </li>
+                    <li>
+                      <a href="https://funpay.com/lots/{n20}/">
+                        T9:as
+                      </a>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+              <div class="col-md-3 col-xs-6">
+                <div class="promo-game-item">
+                  <div class="game-title" data-id="T3:d#3">
+                    <a href="https://funpay.com/lots/{n21}/">
+                      T17:as
+                    </a>
+                  </div>
+                  <ul class="list-inline" data-id="T3:d#3">
+                    <li>
+                      <a href="https://funpay.com/lots/{n21}/">
+                        T8:c
+                      </a>
+                    </li>
+                    <li>
+                      <a href="https://funpay.com/lots/{n22}/">
+                        T5:c
+                      </a>
+                    </li>
+                    <li>
+                      <a href="https://funpay.com/lots/{n23}/">
+                        T8:c
+                      </a>
+                    </li>
+                    <li>
+                      <a href="https://funpay.com/lots/{n24}/">
+                        T6:c
+                      </a>
+                    </li>
+                    <li>
+                      <a href="https://funpay.com/lots/{n25}/">
+                        T17:cs
+                      </a>
+                    </li>
+                    <li>
+                      <a href="https://funpay.com/lots/{n26}/">
+                        T6:c
+                      </a>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="promo-games">
+      <div class="container">
+        <div class="content-with-cd">
+          <div class="promo-game-list-header">
+            <div class="title-mini">
+              T1:a
+            </div>
+          </div>
+          <div class="promo-game-list">
+            <div class="row row-10 flex">
+              <div class="col-md-3 col-xs-6">
+                <div class="promo-game-item">
+                  <div class="game-title" data-id="T3:d#4">
+                    <a href="https://funpay.com/lots/{n27}/">
+                      T7:acs
+                    </a>
+                  </div>
+                  <ul class="list-inline" data-id="T3:d#4">
+                    <li>
+                      <a href="https://funpay.com/lots/{n27}/">
+                        T8:c
+                      </a>
+                    </li>
+                    <li>
+                      <a href="https://funpay.com/lots/{n28}/">
+                        T5:c
+                      </a>
+                    </li>
+                    <li>
+                      <a href="https://funpay.com/lots/{n29}/">
+                        T5:c
+                      </a>
+                    </li>
+                    <li>
+                      <a href="https://funpay.com/lots/{n30}/">
+                        T6:c
+                      </a>
+                    </li>
+                    <li>
+                      <a href="https://funpay.com/lots/{n31}/">
+                        T17:cs
+                      </a>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
