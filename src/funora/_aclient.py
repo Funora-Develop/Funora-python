@@ -1100,14 +1100,16 @@ class AsyncClient:
 
     def _capability_profile(self) -> CapabilityProfile:
         profile = self.engine.capability_profile()
+        public = self._public_engine.capability_profile()
         return replace(
             profile,
-            _states={
-                capability: self._public_engine._state.capabilities[capability]
+            observed_at=max(profile.observed_at, public.observed_at),
+            _evaluations={
+                capability: public.evaluation_of(capability)
                 if (operation := OPERATIONS.get(capability.value))
                 and operation.transport_lane == "public_read"
-                else state
-                for capability, state in profile._states.items()
+                else evaluation
+                for capability, evaluation in profile.evaluations().items()
             },
         )
 

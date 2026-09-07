@@ -136,7 +136,14 @@ from ._updates import build_subscription, parse_updates_answer
 from ._verdicts import error_for
 from ._viewing import VIEWING_OBJECT, BuyerViewing, parse_buyer_viewing
 from ._watch import Router, StepResult, health_changed, incomplete, loss, primed
-from ._whoami import Account, CapabilityProfile, SessionHealth, parse_account, parse_app_data
+from ._whoami import (
+    Account,
+    CapabilityProfile,
+    SessionHealth,
+    _CapabilityStates,
+    parse_account,
+    parse_app_data,
+)
 from .budget import (
     COUNTS_REDIRECTS,
     COUNTS_RETRIES,
@@ -146,7 +153,7 @@ from .budget import (
     WAIT_GUARD_MS,
     RequestClass,
 )
-from .capabilities import CAPABILITY_INITIAL, Capability, CapabilityState
+from .capabilities import Capability, CapabilityState
 from .contract import SUPPORTED_LOCALES
 from .errors import (
     AuthenticationError,
@@ -428,7 +435,7 @@ class _State:
     """Состояние клиента, живущее между вызовами.
 
     Attributes:
-        capabilities (dict[Capability, CapabilityState]): Текущие состояния
+        capabilities (_CapabilityStates): Текущие состояния
             возможностей. Начальные берутся из спецификации.
         session_ever_valid (bool): Подтверждалась ли сессия хоть раз. Отличает
             истёкшую сессию от неверного секрета, а это разные диагнозы с разным
@@ -467,9 +474,7 @@ class _State:
     catalog_cached_at: float = 0.0
     health_checked_at: float = 0.0
 
-    capabilities: dict[Capability, CapabilityState] = field(
-        default_factory=lambda: dict(CAPABILITY_INITIAL)
-    )
+    capabilities: _CapabilityStates = field(default_factory=_CapabilityStates)
     session_ever_valid: bool = False
     opted_in: frozenset[Capability] = frozenset()
     health: Health = INITIAL_HEALTH
@@ -1032,13 +1037,7 @@ class Engine:
         Returns:
             CapabilityProfile: Состояние каждой возможности.
         """
-        return CapabilityProfile(
-            observed_at=datetime.now(UTC),
-            _states={
-                one: self._state.capabilities.get(one, CAPABILITY_INITIAL[one])
-                for one in Capability
-            },
-        )
+        return self._state.capabilities.snapshot()
 
     def send_image(
         self,
@@ -2146,6 +2145,11 @@ class Engine:
             self._invalidate_catalog("session_change")
         elif isinstance(error, ProtocolChangedError):
             self._invalidate_catalog("protocol_changed")
+        else:
+            return
+        self._state.capabilities.invalidate()
+        self._state.health_cached = None
+        self._state.locale = Observed.missing("capability_profile_invalidated")
 
     def read_balance(self) -> Generator[Request, Reply, BalancePage]:
         """Читает страницу баланса: балансы по валютам и операции по счёту.
@@ -3266,7 +3270,7 @@ class Engine:
                     and not session_required
                     and verdict.cls is ResponseClass.LOGIN_REQUIRED
                 ):
-                    self.note_operation_error(error)
+                    self._invalidate_catalog("session_change")
                     _log.debug("чтение %s идёт без сессии: страница публичная", capability.value)
                     error = None
                 if error is not None:
@@ -3704,6 +3708,9 @@ class Engine:
             None
         """
         self._invalidate_catalog("session_change")
+        self._state.capabilities.reset()
+        self._state.health_cached = None
+        self._state.locale = Observed.missing("resumed")
         if self._stopped is None:
             return
         _log.warning(

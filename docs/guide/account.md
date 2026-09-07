@@ -62,10 +62,25 @@ with Client(EnvSecretProvider()) as client:
     profile = client.account.capabilities()
 
     print(profile.state_of(Capability.CHATS_SEND_TEXT))
+    evaluation = profile.evaluation_of(Capability.CHATS_SEND_TEXT)
+    print(evaluation.evaluated_at, evaluation.source)
 ```
 
 Состояний пять: `SUPPORTED`, `UNSUPPORTED`, `EXPERIMENTAL`, `DEGRADED`,
-`UNKNOWN`. Профиль - снимок на момент `observed_at`, а не вечная истина.
+`UNKNOWN`. `observed_at` показывает время сборки снимка, а `evaluated_at` -
+время оценки конкретной возможности. Повторное чтение профиля не обновляет
+оценки и не обращается к сети.
+
+`source` различает начальную таблицу (`static`), результат обычной операции
+(`probe`) и сброс после отказа (`observed_failure`). Это основание оценки,
+а не способ определения функции из реестра спецификации.
+
+Ошибка авторизации или `ProtocolChangedError` сбрасывает наблюдения своей
+полосы в `UNKNOWN`, сохраняя ограничения из начального контракта. Сброс
+консервативный: касается всей полосы, поскольку общий шаблон мог измениться
+сразу на нескольких страницах. Публичный рынок и личная сессия независимы.
+Следующая успешная операция обновляет свою оценку; `resume()` возвращает
+обе полосы к начальной таблице. Старые объекты профиля остаются снимками.
 
 ## Отзывы
 

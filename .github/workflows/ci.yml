@@ -33,7 +33,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: Funora-Develop/Funora-spec
-          ref: 9947787574685c644227bc5f819e75dba5d7c2d0 # контракт 0.49.0
+          ref: 25ecbbf627b4bb581fe91702fef37b87bd324abe # контракт 0.50.0
           path: .funora-spec
           persist-credentials: false
 

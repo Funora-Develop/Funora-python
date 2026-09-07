@@ -96,7 +96,7 @@ from ._updates import (
 from ._verdicts import error_for
 from ._viewing import BuyerViewing
 from ._watch import Router, StepResult, adispatch, dispatch
-from ._whoami import Account, CapabilityProfile, SessionHealth
+from ._whoami import Account, CapabilityEvaluation, CapabilityProfile, SessionHealth
 from .capabilities import CAPABILITY_INITIAL, Capability, CapabilityState
 from .errors import ERROR_BY_ABI_CODE, ERROR_BY_STABLE_ID, FunoraError
 from .events import EventType
@@ -192,6 +192,7 @@ __all__ = [
     "Account",
     "SessionHealth",
     "CapabilityProfile",
+    "CapabilityEvaluation",
     "BalancePage",
     "WithdrawalChannel",
     "WithdrawalOption",

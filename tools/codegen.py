@@ -401,6 +401,15 @@ def render_capabilities(spec: Path) -> str:
         str: Содержимое модуля.
     """
     doc = _load(spec, "spec/capabilities.yaml")
+    expected_profile = {
+        "network": "none",
+        "evaluation_sources": ["static", "probe", "observed_failure"],
+        "invalidate_on": ["authentication_error", "protocol_changed"],
+        "invalidation_scope": "transport_lane",
+        "reset_on": "resume",
+    }
+    if doc.get("probe", {}).get("profile") != expected_profile:
+        raise SystemExit("правила профиля возможностей не поддержаны реализацией")
     states: dict[str, Any] = doc["states"]
     caps: dict[str, Any] = doc["capabilities"]
 
