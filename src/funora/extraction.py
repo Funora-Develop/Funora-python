@@ -26,6 +26,9 @@ __all__ = [
     "ROW_MARKER_BY_STATUS",
     "PRESENCE_BY_CLASS",
     "CURRENCY_BY_SYMBOL",
+    "MONEY_MIN_MINOR",
+    "MONEY_MAX_MINOR",
+    "MONEY_MAX_SCALE",
     "AMBIGUOUS_CURRENCY_SYMBOLS",
     "ATTRIBUTES",
     "QUERY_PARAMS",
@@ -387,6 +390,9 @@ SELECTOR_GROUPS: Final[dict[str, tuple[str, ...]]] = {
         ".param-item.chat-panel",
     ),
 }
+MONEY_MIN_MINOR: Final[int] = -9223372036854775808
+MONEY_MAX_MINOR: Final[int] = 9223372036854775807
+MONEY_MAX_SCALE: Final[int] = 6
 
 
 #: Код валюты по знаку, которым площадка выводит цену.

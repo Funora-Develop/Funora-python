@@ -35,6 +35,15 @@ def check_distribution(directory: Path) -> None:
 from importlib.metadata import version
 import funora
 assert funora.__version__ == version('funora')
+from funora._money import parse_display_price
+from funora.errors import ValidationError
+assert parse_display_price("0.000012", "€") == funora.Money(12, "EUR", 6)
+try:
+    funora.Money(2**63, "RUB")
+except ValidationError:
+    pass
+else:
+    raise AssertionError("Money accepted int64 overflow")
 assert all(hasattr(funora, name) for name in funora.__all__)
 position = funora.ReviewsCursor("123", "opaque")
 assert funora.ReviewsCursor.from_token(position.to_token()) == position

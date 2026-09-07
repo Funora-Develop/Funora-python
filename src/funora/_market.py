@@ -36,9 +36,10 @@ from urllib.parse import parse_qsl, urlsplit
 
 from selectolax.parser import HTMLParser, Node
 
+from ._money import Money, parse_display_price
 from ._observed import Observed
 from ._result import Completeness, Defect, Severity
-from .errors import IncompleteResultError, ProtocolChangedError
+from .errors import IncompleteResultError, ProtocolChangedError, ValidationError
 from .extraction import ATTRIBUTES, QUERY_PARAMS, SELECTORS
 
 __all__ = ["MarketOffer", "MarketPage", "parse_market"]
@@ -101,6 +102,7 @@ class MarketOffer:
         price_text (Observed[str]): Цена без знака валюты.
         currency_symbol_text (Observed[str]): Знак валюты.
         sort_value (Observed[str]): Значение сортировки ячейки цены.
+        price (Observed[Money]): Показанная цена при scale 6, без округления.
         promoted (bool): Помечено ли предложение поднятым.
         row_index (int): Место строки, считая с нуля.
     """
@@ -119,6 +121,7 @@ class MarketOffer:
     sort_value: Observed[str]
     promoted: bool
     row_index: int
+    price: Observed[Money] = field(default_factory=lambda: Observed.missing("price_not_normalized"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -313,6 +316,23 @@ def _row(node: Node, index: int) -> tuple[MarketOffer, list[Defect]]:
                 field_name="offer_id",
             )
         )
+    price_text = _own_text(node.css_first(_PRICE_TEXT), "price_text")
+    currency_symbol = _text(node.css_first(_CURRENCY), "currency_symbol_text")
+    price: Observed[Money] = Observed.missing("price_source_unobserved")
+    if price_text.is_observed and currency_symbol.is_observed:
+        try:
+            price = Observed.present(parse_display_price(price_text.value, currency_symbol.value))
+        except ValidationError:
+            price = Observed.missing("price_not_normalizable")
+            defects.append(
+                Defect(
+                    severity=Severity.FIELD,
+                    code="price_not_normalizable",
+                    detail="показанная цена не переводится в Money без потери точности",
+                    row_index=index,
+                    field_name="price",
+                )
+            )
     return (
         MarketOffer(
             offer_id=offer_id,
@@ -327,8 +347,9 @@ def _row(node: Node, index: int) -> tuple[MarketOffer, list[Defect]]:
             server_id=_attribute(node, _SERVER_ID, "server_id"),
             filter_type=_attribute(node, _FILTER_TYPE, "filter_type"),
             description_text=_text(node.css_first(_DESCRIPTION), "description_text"),
-            price_text=_own_text(node.css_first(_PRICE_TEXT), "price_text"),
-            currency_symbol_text=_text(node.css_first(_CURRENCY), "currency_symbol_text"),
+            price_text=price_text,
+            currency_symbol_text=currency_symbol,
+            price=price,
             sort_value=_attribute(price_cell, _SORT_VALUE, "sort_value"),
             promoted=bool(classes & {_PROMO, _PROMOTED}),
             row_index=index,

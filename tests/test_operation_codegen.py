@@ -66,3 +66,37 @@ def test_wrong_budget_unit_is_rejected(tmp_path, bucket, unit):
     path.write_text(yaml.safe_dump(doc))
     with pytest.raises(SystemExit):
         codegen.render_budget(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "path,value",
+    [
+        ("properties.amount_minor.format", "float"),
+        ("properties.amount_minor.minimum", -1),
+        ("properties.amount_minor.minimum", float(-(2**63))),
+        ("properties.amount_minor.maximum", 2**63),
+        ("properties.scale.minimum", False),
+        ("properties.scale.maximum", 4),
+        ("properties.scale.maximum", 6.0),
+        ("market_display.scale", 4),
+        ("market_display.scale", 6.0),
+        ("market_display.decimal_separator", ","),
+        ("market_display.grouping_separator", ","),
+        ("market_display.source", "sort_value"),
+    ],
+)
+def test_money_contract_cannot_change_precision_or_source_silently(tmp_path, path, value):
+    spec = os.environ.get("FUNORA_SPEC_DIR")
+    if not spec:
+        pytest.skip("FUNORA_SPEC_DIR не задана")
+    shutil.copytree(Path(spec) / "spec", tmp_path / "spec")
+    file = tmp_path / "spec/types.yaml"
+    doc = yaml.safe_load(file.read_text())
+    target = doc["types"]["money"]
+    parts = path.split(".")
+    for key in parts[:-1]:
+        target = target[key]
+    target[parts[-1]] = value
+    file.write_text(yaml.safe_dump(doc))
+    with pytest.raises(SystemExit):
+        codegen.render_extraction(tmp_path)

@@ -30,7 +30,7 @@ __all__ = [
 ]
 
 #: Версия спецификации, которую реализует пакет.
-SPEC_VERSION: Final[str] = "0.53.0"
+SPEC_VERSION: Final[str] = "0.54.0"
 
 #: Состояние спецификации: draft либо released.
 #:

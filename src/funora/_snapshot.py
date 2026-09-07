@@ -10,11 +10,10 @@
 наблюдаем только 31.08.2026, с формата скелета v9. До него этого модуля не могло
 существовать.
 
-ЧЕГО ЗДЕСЬ НЕТ И ПОЧЕМУ. Порождения событий рынка. Контракт объявляет у
-market.offer.appeared обязательным поле price типа Money, а Money требует кода
-валюты, которого страница не даёт. Событие об исчезновении вдобавок требует
-счётчика подряд идущих отсутствий - его ведёт тот, кто хранит снимки, а не
-чистое сравнение.
+Порождения событий рынка здесь нет. Показанная цена теперь нормализуется в
+Money без округления; неизвестный формат остаётся явно ненаблюдённым. Событие
+об исчезновении требует счётчика подряд идущих отсутствий - его ведёт тот,
+кто хранит снимки, а не чистое сравнение.
 
 Поэтому здесь выдаётся РАЗНИЦА как данные, а не события. Разница честна: по ней
 видно, что появилось, что пропало и у чего сменилась цена. Объявленные события
@@ -23,12 +22,14 @@ market.offer.appeared обязательным поле price типа Money, а
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from hashlib import sha256
 from typing import Final
 
 from ._market import MarketPage
+from ._money import Money
+from ._observed import Observed
 from ._result import Completeness
 from .errors import UsageError
 
@@ -59,6 +60,7 @@ class SnapshotEntry:
             ценой: смена знака при том же числе - это смена цены.
         seller_href (str): Ссылка на профиль продавца.
         position (int): Место в выдаче, считая с нуля.
+        price (Observed[Money]): Показанная цена при scale 6 либо причина отсутствия.
     """
 
     offer_id: str
@@ -66,6 +68,7 @@ class SnapshotEntry:
     currency_symbol_text: str
     seller_href: str
     position: int
+    price: Observed[Money] = field(default_factory=lambda: Observed.missing("price_not_normalized"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,6 +194,7 @@ def snapshot_of(page: MarketPage, *, node_id: str) -> MarketSnapshot:
             currency_symbol_text=one.currency_symbol_text.or_none() or "",
             seller_href=one.seller_href.or_none() or "",
             position=one.row_index,
+            price=one.price,
         )
 
     return MarketSnapshot(
@@ -253,9 +257,11 @@ def compare(before: MarketSnapshot, after: MarketSnapshot) -> MarketDiff:
         was = before.offers.get(key)
         if was is None:
             continue
-        if (was.price_text, was.currency_symbol_text) != (
-            now.price_text,
-            now.currency_symbol_text,
+        if (
+            was.price.value != now.price.value
+            if was.price.is_observed and now.price.is_observed
+            else (was.price_text, was.currency_symbol_text)
+            != (now.price_text, now.currency_symbol_text)
         ):
             price_changed.append(PriceChange(offer_id=key, before=was, after=now))
         if was.seller_href != now.seller_href:

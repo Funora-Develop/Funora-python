@@ -2852,6 +2852,9 @@ def render_extraction(spec: Path) -> str:
         "ROW_MARKER_BY_STATUS",
         "PRESENCE_BY_CLASS",
         "CURRENCY_BY_SYMBOL",
+        "MONEY_MIN_MINOR",
+        "MONEY_MAX_MINOR",
+        "MONEY_MAX_SCALE",
         "AMBIGUOUS_CURRENCY_SYMBOLS",
         "ATTRIBUTES",
         "QUERY_PARAMS",
@@ -2985,6 +2988,41 @@ def render_extraction(spec: Path) -> str:
 
     # --- Знак валюты и её код ------------------------------------------------
     money = _load(spec, "spec/types.yaml")["types"]["money"]
+    props = money["properties"]
+    amount, scale = props["amount_minor"], props["scale"]
+    if (
+        any(
+            type(value) is not int
+            for value in (
+                amount.get("minimum"),
+                amount.get("maximum"),
+                scale.get("minimum"),
+                scale.get("maximum"),
+            )
+        )
+        or amount.get("format") != "int64"
+        or amount.get("minimum") != -(2**63)
+        or amount.get("maximum") != 2**63 - 1
+        or scale.get("minimum") != 0
+        or scale.get("maximum") != 6
+        or type(scale.get("maximum")) is not int
+    ):
+        raise SystemExit("spec/types.yaml: неподдерживаемые границы Money")
+    display = money.get("market_display", {})
+    expected = {
+        "scale": 6,
+        "decimal_separator": ".",
+        "grouping_separator": " ",
+        "source": "displayed_text",
+    }
+    if (
+        type(display.get("scale")) is not int
+        or {key: display.get(key) for key in expected} != expected
+    ):
+        raise SystemExit("spec/types.yaml: неподдерживаемый формат цены рынка")
+    out.append(f"MONEY_MIN_MINOR: Final[int] = {amount['minimum']}\n")
+    out.append(f"MONEY_MAX_MINOR: Final[int] = {amount['maximum']}\n")
+    out.append(f"MONEY_MAX_SCALE: Final[int] = {scale['maximum']}\n")
     table = money.get("symbol_table") or {}
     if not table:
         raise SystemExit(

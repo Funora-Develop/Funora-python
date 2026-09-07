@@ -456,3 +456,24 @@ def test_catalog_page_and_search_share_the_schema(query, html):
         _schema("catalog-page"),
         where="каталог и поиск",
     )
+
+
+@pytest.mark.parametrize("scale", [0, 2, 6])
+def test_money_matches_its_schema_at_supported_precisions(scale):
+    from funora import Money
+
+    check(_as_json(Money(2**63 - 1, "RUB", scale)), _schema("money"), where="точная сумма")
+
+
+def test_normalized_market_price_matches_both_models():
+    from test_market_money import html
+
+    from funora._market import parse_market
+    from funora._snapshot import snapshot_of
+
+    page = parse_market(html("0.000012", "€"), observed_at=WHEN)
+    offer = page.offers(accept_incomplete=True)[0]
+    entry = snapshot_of(page, node_id="922").offers["123"]
+    assert offer.price.value.amount_minor == 12
+    check(_as_json(offer), _schema("market-offer"), where="предложение с ценой")
+    check(_as_json(entry), _schema("market-snapshot-entry"), where="снимок с ценой")
