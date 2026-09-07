@@ -2033,6 +2033,21 @@ def render_contract(spec: Path) -> str:
         SystemExit: Если в файле версии незнакомый ключ.
     """
     doc = _load(spec, "spec/version.yaml")
+    cursor = _load(spec, "spec/types.yaml")["types"]["cursor"]["encoding"]
+    expected_cursor = {
+        "format_version": 1,
+        "max_token_bytes": 16384,
+        "alphabet": "base64url_unpadded",
+        "envelope": "canonical_json",
+        "owner_and_position": "base64url_utf8",
+        "kinds": ["chats.history_before", "reviews.get"],
+    }
+    if (
+        cursor != expected_cursor
+        or type(cursor["format_version"]) is not int
+        or type(cursor["max_token_bytes"]) is not int
+    ):
+        raise SystemExit("формат курсора не поддержан реализацией")
 
     known = {
         "spec_version",
@@ -2084,6 +2099,8 @@ def render_contract(spec: Path) -> str:
         "__all__ = [\n"
         '    "SPEC_VERSION",\n'
         '    "SPEC_STATUS",\n'
+        '    "CURSOR_FORMAT_VERSION",\n'
+        '    "MAX_CURSOR_BYTES",\n'
         '    "CANONICAL_FORM_VERSION",\n'
         '    "RUNNER_PROTOCOL",\n'
         '    "SUPPORTED_LOCALES",\n'
@@ -2107,6 +2124,10 @@ def render_contract(spec: Path) -> str:
     out.append("#: может сериализоваться по-новому, и это ломает сохранённые\n")
     out.append("#: отпечатки и ключи гашения повторов.\n")
     out.append(f"CANONICAL_FORM_VERSION: Final[int] = {doc['canonical_form_version']}\n")
+
+    out.append("\n#: Формат и предельный размер переносимого курсора пагинации.\n")
+    out.append(f"CURSOR_FORMAT_VERSION: Final[int] = {cursor['format_version']}\n")
+    out.append(f"MAX_CURSOR_BYTES: Final[int] = {cursor['max_token_bytes']}\n")
 
     out.append("\n#: Версия протокола запуска набора соответствия.\n")
     out.append(f"RUNNER_PROTOCOL: Final[int] = {doc['runner_protocol']}\n")

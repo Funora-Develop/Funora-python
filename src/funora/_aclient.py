@@ -197,7 +197,7 @@ class AsyncReviewsService:
     def __init__(self, client: AsyncClient) -> None:
         self._client = client
 
-    async def get(self, user_id: str, *, cursor: ReviewsCursor | None = None) -> ReviewsPage:
+    async def get(self, user_id: str, *, cursor: ReviewsCursor | str | None = None) -> ReviewsPage:
         """Читает отзывы с профиля продавца.
 
         Следующую страницу запрашивают с next_cursor предыдущего результата.
@@ -332,7 +332,9 @@ class AsyncChatsService:
         """
         return await self._client.run(self._client.engine.read_thread(node_id))
 
-    async def history_before(self, node_id: str, *, before_message_id: str) -> ChatHistory:
+    async def history_before(
+        self, node_id: str, *, before_message_id: str | None = None, cursor: str | None = None
+    ) -> ChatHistory:
         """Догружает сообщения переписки СТАРШЕ указанного.
 
         ЗАПРОС ЗАИМСТВОВАН ЦЕЛИКОМ - и адрес, и оба имени параметров, и форма
@@ -346,19 +348,23 @@ class AsyncChatsService:
 
         Args:
             node_id (str): Идентификатор диалога.
-            before_message_id (str): Курсор - идентификатор сообщения, от
-                которого просят назад. Только цифры.
+            before_message_id (str | None): Идентификатор сообщения для первого
+                запроса назад. Только цифры ASCII; не передаётся вместе с cursor.
+            cursor (str | None): Сохранённый next_cursor предыдущей страницы.
 
         Returns:
             ChatHistory: Догруженные сообщения вместе с признаком конца.
 
         Raises:
             ValidationError: Если идентификатор либо курсор непригодны.
-            CursorIncompatibleError: Если площадка вернула не ту сторону.
+            CursorIncompatibleError: Если токен несовместим или принадлежит
+                другой переписке либо площадка вернула не ту сторону.
             FunoraError: Если ответ непригоден.
         """
         return await self._client.run(
-            self._client.engine.read_history_before(node_id, before_message_id=before_message_id)
+            self._client.engine.read_history_before(
+                node_id, before_message_id=before_message_id, cursor=cursor
+            )
         )
 
     async def mark_read(self, node_id: str) -> None:

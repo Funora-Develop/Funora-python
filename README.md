@@ -99,7 +99,7 @@ async with AsyncClient(EnvSecretProvider()) as client:
 | `client.account.capabilities()` | что из объявленного доступно |
 | `client.catalog.categories(refresh=False)` | разделы площадки с кэшем |
 | `client.catalog.field_schema(section_id)` | поля фильтров раздела, варианты выбора и диапазоны |
-| `client.chats.history_before(node_id, before_message_id=...)` | предыдущие сообщения переписки |
+| `client.chats.history_before(node_id, cursor=...)` | предыдущие сообщения и сохраняемый курсор |
 | `client.market.calculate_chip_prices(game_id, price)` | расчёт цены на рынке по количеству |
 
 ## Реакция за секунды, а не за минуты

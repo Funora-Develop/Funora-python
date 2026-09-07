@@ -51,7 +51,13 @@ from ._calc import (
     parse_calculation,
 )
 from ._catalog import CatalogPage, parse_catalog
-from ._chat_history import CHAT_HISTORY_PATH, HISTORY_HEADERS, ChatHistory, parse_history
+from ._chat_history import (
+    CHAT_HISTORY_PATH,
+    HISTORY_HEADERS,
+    ChatHistory,
+    parse_history,
+    valid_message_position,
+)
 from ._chats import ChatsPage, parse_chats_page
 from ._chips import ChipsPage, parse_chips
 from ._classify import DEFAULT_IDENTITY_CSS, ResponseClass, Verdict, classify
@@ -61,6 +67,7 @@ from ._currency_switch import (
     CurrencySwitch,
     parse_currency_switch,
 )
+from ._cursor import decode_cursor
 from ._delivered import DeliveryLedger
 from ._diff import (
     UNREAD_STATUS,
@@ -2762,7 +2769,7 @@ class Engine:
         return page
 
     def read_reviews(
-        self, user_id: str, *, cursor: ReviewsCursor | None = None
+        self, user_id: str, *, cursor: ReviewsCursor | str | None = None
     ) -> Generator[Request, Reply, ReviewsPage]:
         """Читает отзывы с профиля продавца.
 
@@ -2792,6 +2799,10 @@ class Engine:
             )
 
         capability = Capability.REVIEWS_GET
+        if isinstance(cursor, str):
+            cursor = ReviewsCursor.from_token(cursor)
+            if cursor.user_id != cleaned:
+                raise CursorIncompatibleError("курсор принадлежит другому продавцу")
         if cursor is not None and (
             not isinstance(cursor, ReviewsCursor)
             or cursor.user_id != cleaned
@@ -3001,7 +3012,7 @@ class Engine:
         return thread
 
     def read_history_before(
-        self, node_id: str, *, before_message_id: str
+        self, node_id: str, *, before_message_id: str | None = None, cursor: str | None = None
     ) -> Generator[Request, Reply, ChatHistory]:
         """Догружает сообщения переписки СТАРШЕ указанного.
 
@@ -3044,18 +3055,22 @@ class Engine:
                 f"{len(node)} знаков иного вида. Проверка идёт до сети: "
                 "подставленный в адрес мусор отправил бы запрос неизвестно куда"
             )
-        cursor = before_message_id.strip()
-        # Курсор строже узла: на нём стоит СВЕРКА НАПРАВЛЕНИЯ, а сверять можно
-        # только числа. Пропусти мы сюда «12a» - и единственная проверка чужого
-        # утверждения об этой точке молча перестала бы работать.
-        if not cursor.isdigit():
-            raise ValidationError(
-                f"курсор догрузки обязан быть числом, получено {cursor!r}. На нём "
-                "стоит сверка направления листания - единственное, чем мы "
-                "проверяем чужое утверждение об этой точке, - и на нечисловом "
-                "курсоре сверка молча пропустила бы всё"
+        if (before_message_id is None) == (cursor is None):
+            raise ValidationError("передайте ровно один из before_message_id и cursor")
+        if cursor is not None:
+            owner, position = decode_cursor(cursor, kind="chats.history_before")
+            if owner != node:
+                raise CursorIncompatibleError("курсор принадлежит другой переписке")
+        else:
+            if not isinstance(before_message_id, str):
+                raise ValidationError("before_message_id должен быть строкой")
+            position = before_message_id.strip()
+        if not valid_message_position(position):
+            error_type = CursorIncompatibleError if cursor is not None else ValidationError
+            raise error_type(
+                "позиция догрузки должна состоять из 1-128 десятичных цифр ASCII: "
+                "иначе сверка направления невозможна"
             )
-
         capability = Capability.CHATS_HISTORY_PAGINATION
         check_capability(
             capability,
@@ -3065,7 +3080,7 @@ class Engine:
 
         yield from self.spend_budget(_class_of(capability), cost=1.0)
         reply = yield Ask(
-            f"{CHAT_HISTORY_PATH}?node={node}&last_message={cursor}",
+            f"{CHAT_HISTORY_PATH}?node={node}&last_message={position}",
             dict(HISTORY_HEADERS),
         )
         if not isinstance(reply, Observation):
@@ -3081,7 +3096,7 @@ class Engine:
         history = parse_history(
             payload,
             chat_id=node,
-            cursor=cursor,
+            cursor=position,
             observed_at=datetime.now(UTC),
             host=host_of(self._settings.base_url),
         )

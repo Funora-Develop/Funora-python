@@ -34,6 +34,7 @@ from typing import Final
 
 from selectolax.parser import HTMLParser, Node
 
+from ._cursor import decode_cursor, encode_cursor
 from ._extract import attribute
 from ._observed import Observed
 from ._result import Completeness, Defect, Severity, collect_rows
@@ -124,6 +125,16 @@ class ReviewsCursor:
 
     user_id: str
     value: str = field(repr=False)
+
+    def to_token(self) -> str:
+        """Сериализует курсор для сохранения между запусками."""
+        return encode_cursor("reviews.get", self.user_id, self.value)
+
+    @classmethod
+    def from_token(cls, token: str) -> ReviewsCursor:
+        """Восстанавливает курсор, проверяя версию, семейство и операцию."""
+        owner, position = decode_cursor(token, kind="reviews.get")
+        return cls(owner, position)
 
 
 @dataclass(frozen=True, slots=True)

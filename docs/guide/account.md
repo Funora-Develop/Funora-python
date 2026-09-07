@@ -112,6 +112,18 @@ with Client(EnvSecretProvider()) as client:
 результате не доказывает конец выдачи. Страницы не объединяются автоматически;
 фильтр по оценке пока не поддерживается. У `AsyncClient` тот же вызов с `await`.
 
+Курсор отзывов также можно сохранить строкой:
+
+```python
+saved = page.next_cursor.to_token() if page.next_cursor is not None else None
+# После перезапуска передайте saved в client.reviews.get(user_id, cursor=saved).
+```
+
+`ReviewsCursor.from_token(saved)` восстанавливает объект. Сырой указатель
+сервера сохраняется без изменения Unicode; несовместимая версия, другая
+операция или продавец дают `CursorIncompatibleError`. Сохраняйте позицию после
+обработки страницы; сам токен не подтверждает, что данные обработаны.
+
 ## Разделы площадки
 
 ```python

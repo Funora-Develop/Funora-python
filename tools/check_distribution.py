@@ -36,6 +36,8 @@ from importlib.metadata import version
 import funora
 assert funora.__version__ == version('funora')
 assert all(hasattr(funora, name) for name in funora.__all__)
+position = funora.ReviewsCursor("123", "opaque")
+assert funora.ReviewsCursor.from_token(position.to_token()) == position
 from funora._client import CatalogService
 from funora._aclient import AsyncCatalogService
 assert callable(CatalogService.field_schema)

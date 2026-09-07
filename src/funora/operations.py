@@ -238,6 +238,7 @@ OPERATIONS: Final[dict[str, Operation]] = {
         request_class="interactive",
         returns="ChatHistory",
         errors=(
+            "funora.validation",
             "funora.capability.unsupported",
             "funora.state.cursor_incompatible",
             "funora.protocol.unexpected_response",
@@ -581,6 +582,7 @@ OPERATIONS: Final[dict[str, Operation]] = {
         request_class="interactive",
         returns="ReviewsPage",
         errors=(
+            "funora.state.cursor_incompatible",
             "funora.validation",
             "funora.auth.session_expired",
             "funora.protocol.changed",
