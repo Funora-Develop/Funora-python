@@ -1796,6 +1796,22 @@ def render_events(spec: Path) -> str:
         str: Содержимое модуля.
     """
     doc = _load(spec, "spec/events/delivery.yaml")
+    pending = doc.get("pending_delivery", {})
+    expected_pending = {
+        "persist_before_handlers": True,
+        "replay_source": "stored_batch",
+        "new_reads": "after_acknowledgement",
+        "acknowledgement": "atomic_cursor_and_pending",
+        "failed_ordering_key": "block_following_events",
+        "state_owner": "exclusive_watch",
+    }
+    if (
+        not isinstance(pending, dict)
+        or pending.get("persist_before_handlers") is not True
+        or any(pending.get(key) != value for key, value in expected_pending.items())
+        or set(pending) - set(expected_pending) - {"rule", "backpressure", "ownership"}
+    ):
+        raise SystemExit("spec/events/delivery.yaml: неподдерживаемый контракт непринятой партии")
     derivation: dict[str, Any] = doc["ordering"]["derivation"]
     identity: dict[str, Any] = doc["identity"]
     dedup: dict[str, Any] = doc["deduplication"]

@@ -33,7 +33,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: Funora-Develop/Funora-spec
-          ref: 9dc5878f553145199a8c0e281a2f728187fcf469 # контракт 0.54.0
+          ref: 1e077fd16ff684efac006784a15b263b7a98ece9 # контракт 0.55.0
           path: .funora-spec
           persist-credentials: false
 
@@ -166,3 +166,4 @@ jobs:
           tests/test_persistence_failures.py tests/test_runtime_failures.py
           tests/test_bot.py tests/test_budget_concurrency.py
           tests/test_http_transport_contract.py
+          tests/test_watch_outbox.py

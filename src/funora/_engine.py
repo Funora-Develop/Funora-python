@@ -36,6 +36,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Lock
 from time import monotonic
 from typing import Any, Final, TypeVar
 from urllib.parse import urlparse
@@ -143,6 +144,7 @@ from ._updates import build_subscription, parse_updates_answer
 from ._verdicts import error_for
 from ._viewing import VIEWING_OBJECT, BuyerViewing, parse_buyer_viewing
 from ._watch import Router, StepResult, health_changed, incomplete, loss, primed
+from ._watch_state import PendingBatch, validate_cursor, watch_lease
 from ._whoami import (
     Account,
     CapabilityProfile,
@@ -817,6 +819,7 @@ class Engine:
 
     __slots__ = (
         "_budget",
+        "_watch_lock",
         "_health_changes",
         "_identity",
         "_delivered",
@@ -841,6 +844,7 @@ class Engine:
         unsafe_price_changes_without_audit: bool = False,
     ) -> None:
         self._settings = settings
+        self._watch_lock = Lock()
         self._budget = budget
         self._state = _State(opted_in=experimental)
 
@@ -850,7 +854,9 @@ class Engine:
         #: снимается перезапуском процесса. Пределы часовые, а память
         #: обнуляется, и тридцать сообщений в час превращаются в тридцать на
         #: запуск. Бот под супервизором обходил бы ограничитель полностью.
-        self._ledger: StateFile | None = StateFile(Path(state_path)) if state_path else None
+        self._ledger: StateFile | None = (
+            StateFile(Path(state_path).resolve()) if state_path else None
+        )
 
         #: Что прочитано с шапки последнего списка диалогов.
         #:
@@ -4046,10 +4052,10 @@ class Engine:
         старт дал бы лавину «изменений» по всем существующим заказам и диалогам
         сразу.
 
-        Базовый снимок сдвигается только после того, как все обработчики
-        отработали. Упавший обработчик оставляет базу на месте, и то же событие
-        приходит снова: гарантия доставки - не менее одного раза, и обработчик
-        обязан быть идемпотентным.
+        Непринятая партия и целевой курсор сохраняются до обработчиков.
+        Повтор использует исходные события, без чтения новых страниц. База
+        сдвигается после подтверждения партии. При прерывании возможен повтор
+        выполненного обработчика: он обязан быть идемпотентным.
 
         Args:
             router (Router): Реестр обработчиков.
@@ -4090,9 +4096,41 @@ class Engine:
         Raises:
             FunoraError: Любая ошибка чтения, которую не удалось повторить.
         """
+        if not isinstance(account_id, str) or not account_id.strip():
+            raise ConfigurationError("watch требует непустой account_id")
+        # Файл и lease используют один путь даже при переданной символической ссылке.
+        state = StateFile(Path(state_path).resolve()) if state_path is not None else self._ledger
+        if (
+            state is not None
+            and self._ledger is not None
+            and state.path.resolve() != self._ledger.path.resolve()
+        ):
+            raise ConfigurationError("watch и исходящие должны использовать один файл состояния")
+        with watch_lease(self._watch_lock, state.path.resolve() if state else None):
+            yield from self._watch_loop(
+                router,
+                account_id=account_id,
+                max_iterations=max_iterations,
+                schedule=schedule,
+                state=state,
+                max_threads_per_step=max_threads_per_step,
+                use_channel=use_channel,
+            )
+
+    def _watch_loop(
+        self,
+        router: Router,
+        *,
+        account_id: str,
+        max_iterations: int | None,
+        schedule: Schedule | None,
+        state: StateFile | None,
+        max_threads_per_step: int,
+        use_channel: bool,
+    ) -> Generator[Request, Reply, None]:
+        """Собирает новую партию только после подтверждения предыдущей."""
         plan = schedule or Schedule()
         dedup = Deduplicator()
-        state = StateFile(Path(state_path)) if state_path is not None else self._ledger
         if state is not None and self._ledger is None:
             # Файл наблюдения становится и реестром отправок. Иначе бот, честно
             # передавший state_path, всё равно отправлял бы без долговечного
@@ -4131,11 +4169,8 @@ class Engine:
         known_chats: dict[str, str] | None = None
         known_threads: dict[str, frozenset[str]] = {}
         pending: list[str] = []
-        # Сколько раз каждое событие уже пробовали доставить. Пустой словарь -
-        # штатное состояние: записи заводятся только на события, которые
-        # обработчик не принял.
-        attempts: dict[str, int] = {}
         greeted = False
+        pending_json: str | None = None
 
         if state is not None:
             stored = state.load()
@@ -4149,16 +4184,27 @@ class Engine:
             # уходил в холодный старт и молча съедал всё, что изменилось за
             # простой: заказ, оплаченный между остановкой и стартом, не порождал
             # события никогда - ни исключения, ни строки в журнале.
-            cursor = stored.get("cursor") or {}
+            cursor = stored.get("cursor", {})
+            if not isinstance(cursor, dict):
+                raise CursorIncompatibleError("неверный курсор watch")
             saved_orders = cursor.get("orders")
-            if isinstance(saved_orders, dict):
-                known_orders = dict(saved_orders)
-            elif saved_orders is not None:
-                # Курсор прежней редакции - список идентификаторов без состояний.
-                # Читается как «заказы известны, состояния нет»: так перезапуск
-                # не порождает лавину событий о создании, а событие об изменении
-                # не выдумывается из непрочитанного состояния.
-                known_orders = dict.fromkeys(saved_orders, UNREAD_STATUS)
+            if isinstance(saved_orders, list):
+                # Старый курсор знал идентификаторы, но не состояния заказов.
+                if not all(isinstance(value, str) and value for value in saved_orders):
+                    raise CursorIncompatibleError("неверные идентификаторы старого курсора watch")
+                saved_orders = dict.fromkeys(saved_orders, UNREAD_STATUS)
+            try:
+                cursor = validate_cursor(
+                    {
+                        "orders": saved_orders,
+                        "chats": cursor.get("chats"),
+                        "threads": cursor.get("threads", {}),
+                        "pending_threads": cursor.get("pending_threads", []),
+                    }
+                )
+            except ValueError as exc:
+                raise CursorIncompatibleError("повреждён курсор watch") from exc
+            known_orders = cursor["orders"]
             if cursor.get("chats") is not None:
                 known_chats = dict(cursor["chats"])
             known_threads = {
@@ -4169,13 +4215,6 @@ class Engine:
             # дочитаться, не дочитался бы уже никогда: событие о нём доставлено,
             # курсор диалогов сдвинут, и повода вернуться к нему больше нет.
             pending = list(cursor.get("pending_threads") or [])
-            restored_attempts = stored.get("attempts")
-            if isinstance(restored_attempts, dict):
-                attempts = {
-                    str(key): int(value)
-                    for key, value in restored_attempts.items()
-                    if isinstance(value, int) and value > 0
-                }
             # Здоровались ли уже. Восстановленный курсор любого из списков
             # означает, что здоровались: watch.primed - событие о начале
             # наблюдения, а не о начале процесса.
@@ -4187,6 +4226,17 @@ class Engine:
                     len(known_chats) if known_chats is not None else "нет",
                 )
 
+            owner = stored.get("watch_owner")
+            if "watch_owner" in stored and owner != account_id:
+                raise CursorIncompatibleError("файл watch принадлежит другому account_id")
+            if "watch_greeted" in stored:
+                if type(stored["watch_greeted"]) is not bool:
+                    raise CursorIncompatibleError("неверный признак начала watch")
+                greeted = stored["watch_greeted"]
+            pending_json = stored.get("watch_pending")
+            if pending_json is not None:
+                PendingBatch.decode(pending_json, account_id=account_id)
+
         # Состояние быстрого пути. Живёт столько же, сколько сам цикл: токен и
         # накопленные метки обнуляются вместе с ним, и это верно - и то, и
         # другое привязано к сеансу.
@@ -4197,295 +4247,283 @@ class Engine:
         step = 0
         while max_iterations is None or step < max_iterations:
             step += 1
+            base_cursor = {
+                "orders": known_orders,
+                "chats": known_chats,
+                "threads": {node: sorted(ids) for node, ids in known_threads.items()},
+                "pending_threads": list(pending),
+            }
 
-            # БЫСТРЫЙ ПУТЬ. Спросить канал дешевле, чем прочитать две страницы,
-            # и ответ приходит за секунды вместо десятков секунд.
-            #
-            # Условий у него четыре, и каждое снимает свой риск:
-            #
-            # уже здоровались - первый проход обязан прочитать страницы, иначе
-            # брать опорную точку будет неоткуда;
-            #
-            # очередь переписок пуста - недочитанное с прошлого шага ждёт
-            # чтения, и тишина канала про него ничего не говорит;
-            #
-            # канал не остывает после отказа;
-            #
-            # токен есть. Токен берётся со страницы, и живёт он неизвестно
-            # сколько: сеанс наблюдения этого не выяснял. Поэтому он не
-            # добывается отдельным чтением - он ПОДБИРАЕТСЯ по дороге, из той
-            # страницы, которую цикл и так прочёл.
-            if use_channel and greeted and not pending and channel_token is not None:
+            if pending_json is None:
+                # БЫСТРЫЙ ПУТЬ. Спросить канал дешевле, чем прочитать две страницы,
+                # и ответ приходит за секунды вместо десятков секунд.
+                #
+                # Условий у него четыре, и каждое снимает свой риск:
+                #
+                # уже здоровались - первый проход обязан прочитать страницы, иначе
+                # брать опорную точку будет неоткуда;
+                #
+                # очередь переписок пуста - недочитанное с прошлого шага ждёт
+                # чтения, и тишина канала про него ничего не говорит;
+                #
+                # канал не остывает после отказа;
+                #
+                # токен есть. Токен берётся со страницы, и живёт он неизвестно
+                # сколько: сеанс наблюдения этого не выяснял. Поэтому он не
+                # добывается отдельным чтением - он ПОДБИРАЕТСЯ по дороге, из той
+                # страницы, которую цикл и так прочёл.
+                if use_channel and greeted and not pending and channel_token is not None:
+                    now = monotonic()
+                    if channel.available(now):
+                        signal, reason = yield from self.listen_once(
+                            channel, own_user_id=channel_user, token=channel_token
+                        )
+                        if signal is ChannelSignal.DEGRADED:
+                            if channel.note_failure(reason, now):
+                                _log.warning(
+                                    "канал обновлений непригоден (%s), наблюдение идёт опросом "
+                                    "страниц ближайшую минуту",
+                                    reason,
+                                )
+                            # Токен сбрасывается вместе с отказом. Что именно
+                            # протухло - токен или сессия, - различить нечем, а
+                            # перечитать страницу цикл всё равно собирается прямо
+                            # сейчас: она и принесёт свежий.
+                            channel_token = None
+                        elif signal is ChannelSignal.QUIET and not channel.watchdog_expired(now):
+                            channel.note_success(now, changed=False)
+                            # СТРАНИЦЫ НЕ ЧИТАЮТСЯ ВОВСЕ. Ради этого всё и затевалось:
+                            # молчащий аккаунт стоит одного маленького запроса в пять
+                            # секунд вместо двух полных страниц.
+                            #
+                            # Пауза короткая, и очередь исходящих разбирается в ней
+                            # так же, как разбиралась в длинной: Pause - единственное
+                            # место, где это происходит, и оно на месте.
+                            yield Pause(CHANNEL_INTERVAL_MS)
+                            continue
+                        else:
+                            channel.note_success(now, changed=True)
+
+                orders = yield from self.read_orders()
+                chats = yield from self.read_chats()
                 now = monotonic()
-                if channel.available(now):
-                    signal, reason = yield from self.listen_once(
-                        channel, own_user_id=channel_user, token=channel_token
+
+                # Токен и собственный идентификатор подбираются из уже прочитанного.
+                # Отдельного чтения ради них нет и быть не должно: чтение страницы
+                # ради того, чтобы не читать страницы, отменило бы всю выгоду.
+                context = self._runner_context
+                if use_channel and context is not None:
+                    if context.csrf_token is not None and context.own_user_id.is_observed:
+                        channel_token = context.csrf_token
+                        channel_user = context.own_user_id.value
+                        if not channel.tags:
+                            channel.tags = seed_tags(context)
+                    elif channel_token is None:
+                        # Токена на странице нет. Это не поломка: страница под
+                        # гостем его не несёт, и чтение под гостем - законное
+                        # состояние. Быстрый путь просто не включится.
+                        _log.debug("на списке диалогов нет защитного токена, канал не слушается")
+
+                # Состояние возможности событий по заказам выставляется ЗДЕСЬ и не
+                # через _note_success: своей операции у неё нет, и в перечне
+                # выполняемых ей не место - события порождает этот цикл.
+                #
+                # Прежде состояние не выставлялось вовсе, и возможность числилась
+                # невыполненной по честной причине: спросить её было можно, а ответ
+                # ни на что не влиял.
+                #
+                # Мерка - полнота списка продаж. Полный список означает, что
+                # пропавшая строка вправду исчезла. На неполном курсор нарочно не
+                # сдвигается, чтобы выпавшие строки не сочли исчезнувшими, а события
+                # по прочитанному всё равно порождаются - и принимающий их за полную
+                # картину ошибается. Пусть он видит об этом пометку.
+                self._state.capabilities[Capability.ORDERS_EVENTS] = (
+                    CapabilityState.SUPPORTED
+                    if orders.completeness is Completeness.COMPLETE
+                    else CapabilityState.DEGRADED
+                )
+
+                chat_events = diff_chats(known_chats, chats, account_id=account_id)
+                # Неполное чтение объявляется вслух и в той же партии, что и события
+                # по нему. Несдвинутый курсор защищает будущее - выпавшие строки не
+                # будут сочтены исчезнувшими, - а настоящее не защищает никак:
+                # события по прочитанному порождаются, и обработчик принимает их за
+                # полную картину.
+                notices = tuple(
+                    incomplete(
+                        account_id,
+                        page.observed_at,
+                        entity=name,
+                        entity_ref=None,
+                        reason=page.reason,
+                        rows_total=page.rows_total,
+                        rows_accepted=page.rows_accepted,
                     )
-                    if signal is ChannelSignal.DEGRADED:
-                        if channel.note_failure(reason, now):
-                            _log.warning(
-                                "канал обновлений непригоден (%s), наблюдение идёт опросом "
-                                "страниц ближайшую минуту",
-                                reason,
-                            )
-                        # Токен сбрасывается вместе с отказом. Что именно
-                        # протухло - токен или сессия, - различить нечем, а
-                        # перечитать страницу цикл всё равно собирается прямо
-                        # сейчас: она и принесёт свежий.
-                        channel_token = None
-                    elif signal is ChannelSignal.QUIET and not channel.watchdog_expired(now):
-                        channel.note_success(now, changed=False)
-                        # СТРАНИЦЫ НЕ ЧИТАЮТСЯ ВОВСЕ. Ради этого всё и затевалось:
-                        # молчащий аккаунт стоит одного маленького запроса в пять
-                        # секунд вместо двух полных страниц.
-                        #
-                        # Пауза короткая, и очередь исходящих разбирается в ней
-                        # так же, как разбиралась в длинной: Pause - единственное
-                        # место, где это происходит, и оно на месте.
-                        yield Pause(CHANNEL_INTERVAL_MS)
-                        continue
-                    else:
-                        channel.note_success(now, changed=True)
-
-            orders = yield from self.read_orders()
-            chats = yield from self.read_chats()
-            now = monotonic()
-
-            # Токен и собственный идентификатор подбираются из уже прочитанного.
-            # Отдельного чтения ради них нет и быть не должно: чтение страницы
-            # ради того, чтобы не читать страницы, отменило бы всю выгоду.
-            context = self._runner_context
-            if use_channel and context is not None:
-                if context.csrf_token is not None and context.own_user_id.is_observed:
-                    channel_token = context.csrf_token
-                    channel_user = context.own_user_id.value
-                    if not channel.tags:
-                        channel.tags = seed_tags(context)
-                elif channel_token is None:
-                    # Токена на странице нет. Это не поломка: страница под
-                    # гостем его не несёт, и чтение под гостем - законное
-                    # состояние. Быстрый путь просто не включится.
-                    _log.debug("на списке диалогов нет защитного токена, канал не слушается")
-
-            # Состояние возможности событий по заказам выставляется ЗДЕСЬ и не
-            # через _note_success: своей операции у неё нет, и в перечне
-            # выполняемых ей не место - события порождает этот цикл.
-            #
-            # Прежде состояние не выставлялось вовсе, и возможность числилась
-            # невыполненной по честной причине: спросить её было можно, а ответ
-            # ни на что не влиял.
-            #
-            # Мерка - полнота списка продаж. Полный список означает, что
-            # пропавшая строка вправду исчезла. На неполном курсор нарочно не
-            # сдвигается, чтобы выпавшие строки не сочли исчезнувшими, а события
-            # по прочитанному всё равно порождаются - и принимающий их за полную
-            # картину ошибается. Пусть он видит об этом пометку.
-            self._state.capabilities[Capability.ORDERS_EVENTS] = (
-                CapabilityState.SUPPORTED
-                if orders.completeness is Completeness.COMPLETE
-                else CapabilityState.DEGRADED
-            )
-
-            chat_events = diff_chats(known_chats, chats, account_id=account_id)
-            # Неполное чтение объявляется вслух и в той же партии, что и события
-            # по нему. Несдвинутый курсор защищает будущее - выпавшие строки не
-            # будут сочтены исчезнувшими, - а настоящее не защищает никак:
-            # события по прочитанному порождаются, и обработчик принимает их за
-            # полную картину.
-            notices = tuple(
-                incomplete(
-                    account_id,
-                    page.observed_at,
-                    entity=name,
-                    entity_ref=None,
-                    reason=page.reason,
-                    rows_total=page.rows_total,
-                    rows_accepted=page.rows_accepted,
+                    for name, page in (("orders", orders), ("chats", chats))
+                    if page.completeness is not Completeness.COMPLETE
                 )
-                for name, page in (("orders", orders), ("chats", chats))
-                if page.completeness is not Completeness.COMPLETE
-            )
-            head = dedup.filter(
-                (
-                    *notices,
-                    *diff_orders(known_orders, orders, account_id=account_id),
-                    *chat_events,
+                head = dedup.filter(
+                    (
+                        *notices,
+                        *diff_orders(known_orders, orders, account_id=account_id),
+                        *chat_events,
+                    ),
+                    now,
+                )
+
+                # В очередь попадают только те диалоги, чьё изменение пережило
+                # гашение. Иначе повторно пришедшее событие заставляло бы перечитать
+                # переписку, в которой ничего нового нет: курсор её уже сдвинут.
+                delivered_ids = {event.id for event in head}
+                for event in chat_events:
+                    if event.id in delivered_ids and event.entity_id not in pending:
+                        pending.append(event.entity_id)
+
+                # Очередь ограничена, и предел объявлен спецификацией. Он нужен:
+                # очередь пополняется на каждом изменении диалога, а вычерпывается
+                # по несколько штук за шаг - у продавца с полусотней активных
+                # переписок она растёт быстрее, чем убывает.
+                #
+                # Выброшенное объявляется вслух. Ограничить и промолчать - худший
+                # исход из возможных: сообщение покупателя не будет прочитано
+                # никогда, и узнать об этом неоткуда.
+                #
+                # Выбрасывается ХВОСТ, а не голова: в голове самые давние диалоги, и
+                # они ждут дольше всех. Выбросить их значило бы гарантировать, что
+                # именно они не дочитаются никогда.
+                dropped = 0
+                if len(pending) > MAX_QUEUE_DEPTH_PER_KEY:
+                    dropped = len(pending) - MAX_QUEUE_DEPTH_PER_KEY
+                    del pending[MAX_QUEUE_DEPTH_PER_KEY:]
+                    _log.warning(
+                        "очередь дочитывания переполнена: %d диалогов выпало, предел %d",
+                        dropped,
+                        MAX_QUEUE_DEPTH_PER_KEY,
+                    )
+
+                messages, thread_cursors, followed = yield from self._follow(
+                    pending,
+                    known_threads,
+                    account_id=account_id,
+                    limit=max_threads_per_step,
+                )
+                losses = (
+                    (loss(account_id, orders.observed_at, lost=dropped, reason="queue_overflow"),)
+                    if dropped
+                    else ()
+                )
+                fresh = (*head, *dedup.filter((*losses, *messages), now))
+
+                # Смены состояния доступа идут первыми в партии. Порядок значим:
+                # получатель, узнав, что автоматика записи приостановлена, обязан
+                # увидеть это ДО событий, на которые он собрался бы отвечать.
+                batch = (*self.drain_health(account_id, orders.observed_at), *fresh)
+                greeting: Event | None = None
+                if not greeted:
+                    # Холодный старт молчит о данных и говорит один раз о себе:
+                    # иначе первый запуск дал бы лавину «изменений» по всему, что
+                    # уже существует. Молчание при этом обеспечивают сами diff_*,
+                    # возвращающие пустое при отсутствии курсора, - а приветствие
+                    # только добавляется к партии, а не заменяет её.
+                    #
+                    # Замена стоила дорого. Курсор заказов снимается лишь с полного
+                    # чтения, поэтому одна пропавшая ячейка в одной строке держала
+                    # признак холодного старта поднятым вечно: события о диалогах
+                    # выбрасывались, а вместо них каждый шаг уходило одно и то же
+                    # приветствие. Наблюдение за перепиской замолкало целиком из-за
+                    # состояния чужой страницы - молча.
+                    # Признак поднимается ПОСЛЕ раздачи, а не здесь. Поднятый
+                    # заранее, он терял приветствие навсегда: обработчик падал на
+                    # первой партии, курсор не двигался, а приветствие второй раз не
+                    # собиралось. И это не единственная потеря - несдвинутый курсор
+                    # держит холодный старт, при котором diff_* молчат по правилу
+                    # первого чтения. Наблюдение замолкало целиком и навсегда, при
+                    # живом цикле и без единой строки в журнале.
+                    greeting = primed(account_id, orders.observed_at, ("orders", "chats"))
+                    batch = (greeting, *batch)
+
+                target: dict[str, Any] = {
+                    "orders": orders_cursor(orders)
+                    if orders.completeness is Completeness.COMPLETE
+                    else known_orders,
+                    "chats": chats_cursor(chats)
+                    if chats.completeness is Completeness.COMPLETE
+                    else known_chats,
+                    "threads": {
+                        node: sorted(ids)
+                        for node, ids in {**known_threads, **thread_cursors}.items()
+                    },
+                    "pending_threads": list(pending),
+                }
+                pending_json = PendingBatch(
+                    tuple(replace(event, delivery=Delivery(attempt=0)) for event in batch),
+                    target,
+                    True,
+                ).encode()
+
+            frozen = PendingBatch.decode(pending_json, account_id=account_id)
+            prepared = replace(
+                frozen,
+                events=tuple(
+                    replace(event, delivery=Delivery(attempt=event.delivery.attempt + 1))
+                    for event in frozen.events
                 ),
-                now,
             )
-
-            # В очередь попадают только те диалоги, чьё изменение пережило
-            # гашение. Иначе повторно пришедшее событие заставляло бы перечитать
-            # переписку, в которой ничего нового нет: курсор её уже сдвинут.
-            delivered_ids = {event.id for event in head}
-            for event in chat_events:
-                if event.id in delivered_ids and event.entity_id not in pending:
-                    pending.append(event.entity_id)
-
-            # Очередь ограничена, и предел объявлен спецификацией. Он нужен:
-            # очередь пополняется на каждом изменении диалога, а вычерпывается
-            # по несколько штук за шаг - у продавца с полусотней активных
-            # переписок она растёт быстрее, чем убывает.
-            #
-            # Выброшенное объявляется вслух. Ограничить и промолчать - худший
-            # исход из возможных: сообщение покупателя не будет прочитано
-            # никогда, и узнать об этом неоткуда.
-            #
-            # Выбрасывается ХВОСТ, а не голова: в голове самые давние диалоги, и
-            # они ждут дольше всех. Выбросить их значило бы гарантировать, что
-            # именно они не дочитаются никогда.
-            dropped = 0
-            if len(pending) > MAX_QUEUE_DEPTH_PER_KEY:
-                dropped = len(pending) - MAX_QUEUE_DEPTH_PER_KEY
-                del pending[MAX_QUEUE_DEPTH_PER_KEY:]
-                _log.warning(
-                    "очередь дочитывания переполнена: %d диалогов выпало, предел %d",
-                    dropped,
-                    MAX_QUEUE_DEPTH_PER_KEY,
-                )
-
-            messages, thread_cursors, followed = yield from self._follow(
-                pending,
-                known_threads,
-                account_id=account_id,
-                limit=max_threads_per_step,
-            )
-            losses = (
-                (loss(account_id, orders.observed_at, lost=dropped, reason="queue_overflow"),)
-                if dropped
-                else ()
-            )
-            fresh = (*head, *dedup.filter((*losses, *messages), now))
-
-            # Смены состояния доступа идут первыми в партии. Порядок значим:
-            # получатель, узнав, что автоматика записи приостановлена, обязан
-            # увидеть это ДО событий, на которые он собрался бы отвечать.
-            batch = (*self.drain_health(account_id, orders.observed_at), *fresh)
-            greeting: Event | None = None
-            if not greeted:
-                # Холодный старт молчит о данных и говорит один раз о себе:
-                # иначе первый запуск дал бы лавину «изменений» по всему, что
-                # уже существует. Молчание при этом обеспечивают сами diff_*,
-                # возвращающие пустое при отсутствии курсора, - а приветствие
-                # только добавляется к партии, а не заменяет её.
-                #
-                # Замена стоила дорого. Курсор заказов снимается лишь с полного
-                # чтения, поэтому одна пропавшая ячейка в одной строке держала
-                # признак холодного старта поднятым вечно: события о диалогах
-                # выбрасывались, а вместо них каждый шаг уходило одно и то же
-                # приветствие. Наблюдение за перепиской замолкало целиком из-за
-                # состояния чужой страницы - молча.
-                # Признак поднимается ПОСЛЕ раздачи, а не здесь. Поднятый
-                # заранее, он терял приветствие навсегда: обработчик падал на
-                # первой партии, курсор не двигался, а приветствие второй раз не
-                # собиралось. И это не единственная потеря - несдвинутый курсор
-                # держит холодный старт, при котором diff_* молчат по правилу
-                # первого чтения. Наблюдение замолкало целиком и навсегда, при
-                # живом цикле и без единой строки в журнале.
-                greeting = primed(account_id, orders.observed_at, ("orders", "chats"))
-                batch = (greeting, *fresh)
-
-            # Номер попытки проставляется здесь, а не в строителе событий:
-            # строитель не знает, доставлялось ли это событие раньше, - знает
-            # цикл. Доставка объявлена как минимум однократной, и событие, на
-            # котором обработчик упал, приходит снова тем же отпечатком; без
-            # номера попытки обработчик не отличит повтор от нового события.
-            #
-            # Счётчик пересобирается по партии целиком, а не накапливается:
-            # событие, переставшее порождаться (список изменился, курсор ушёл
-            # вперёд), само выпадает из счётчика, и он не растёт без предела.
-            attempts = {event.id: attempts.get(event.id, 0) + 1 for event in batch}
-            batch = tuple(
-                replace(event, delivery=Delivery(attempt=attempts[event.id])) for event in batch
-            )
-
-            reply = yield Deliver(batch)
-            if not isinstance(reply, StepResult):
-                raise TypeError(f"на просьбу Deliver ожидался итог раздачи, получено {type(reply)}")
-            result = reply
-
-            dedup.commit(result.delivered, now)
-            if greeting is not None and greeting.id in {event.id for event in result.delivered}:
-                # Поздоровались только тогда, когда приветствие дошло. Иначе
-                # второго раза не будет: приветствие собирается один раз за
-                # признак, а не за партию.
-                greeted = True
-            # Доставленное выбывает: гашение повторов больше его не пропустит,
-            # и держать номер попытки не для чего.
-            for event in result.delivered:
-                attempts.pop(event.id, None)
-
-            # Курсор снимается только с полного чтения. Снятый с неполного, он
-            # потерял бы выпавшие строки, и при следующем чтении они выглядели
-            # бы новыми заказами: бот выдал бы товар по заказу, который был и
-            # раньше. Неполное чтение при этом не пропадает - события по нему
-            # порождаются, просто курсор остаётся прежним.
-            if result.advance:
-                if orders.completeness is Completeness.COMPLETE:
-                    known_orders = orders_cursor(orders)
-                if chats.completeness is Completeness.COMPLETE:
-                    known_chats = chats_cursor(chats)
-                known_threads.update(thread_cursors)
-            else:
-                # Прочитанные переписки возвращаются в очередь, и это половина
-                # правила, без которой вторая не работает. Событие об изменении
-                # диалога к этому моменту доставлено и погашено, повторно оно не
-                # придёт - значит без возврата диалог не перечитается уже
-                # никогда, сколько бы курсор ни откатывали.
-                pending[:0] = [node for node in followed if node not in pending]
-                _log.warning(
-                    "курсор не сдвинут: обработчик не принял %d событий, они придут снова",
-                    len(result.failed),
-                )
-
-            if state is not None:
-                self._state.outbound.forget_expired(
-                    now_ms=int(orders.observed_at.timestamp() * 1000), now_s=monotonic()
-                )
-                # Сохранение идёт после обработчиков, вместе с фиксацией
-                # доставленного. Сохрани мы раньше - перезапуск между записью и
-                # обработчиком потерял бы событие: файл говорил бы, что оно
-                # доставлено, а обработчик его не видел.
-                #
-                # ПРАВКА, А НЕ ЗАПИСЬ ЦЕЛИКОМ. У файла несколько владельцев:
-                # курсоры и гашение здесь, реестр отправок в send_text, реестр
-                # выдач у автовыдачи. Запись целиком стирала бы чужие ключи на
-                # каждом шаге - и стирала молча, при зелёном прогоне.
+            pending_json = prepared.encode()
+            if state is not None and prepared.events:
+                # Это журнал намерения доставить, а не подтверждение доставки.
+                # Запись обязана завершиться до первого обработчика партии.
                 state.update(
                     {
-                        "dedup": dedup.snapshot(now),
-                        "dedup_order": dedup.snapshot_order(),
-                        # Номера попыток переживают перезапуск вместе с гашением.
-                        # Иначе перезапуск обнулял бы их, и событие, падавшее
-                        # пятый раз, приходило бы с номером один - то есть
-                        # выглядело бы новым ровно тогда, когда обработчику
-                        # важнее всего знать, что оно не новое.
-                        "attempts": attempts,
-                        "cursor": {
-                            "orders": known_orders,
-                            "chats": known_chats,
-                            "threads": {node: sorted(ids) for node, ids in known_threads.items()},
-                            "pending_threads": pending,
-                        },
-                        # Реестр отправок пишется вместе с курсорами, а не
-                        # вместо них: файл один, и владельцев у него несколько.
-                        #
-                        # Прополка идёт ЗДЕСЬ, а не только при отправке. Прежде
-                        # её звала одна send_text, и бот, который наблюдает и не
-                        # пишет, не прополаывал реестр никогда: метки тепла
-                        # копились в файле и переживали своё окно.
-                        "outbound": self._state.outbound.snapshot(),
+                        "watch_owner": account_id,
+                        "watch_pending": pending_json,
+                        "cursor": base_cursor,
+                        "watch_greeted": greeted,
                     }
                 )
 
-            if result.fatal is not None:
-                # Ошибка Funora из обработчика - не его баг, а условие площадки:
-                # истёкшая сессия, исчерпанный бюджет. Партия при этом
-                # дорабатывается до конца и состояние сохраняется, иначе отказ
-                # на первом событии терял бы все остальные.
-                raise result.fatal
+            # Обработчик вправе менять payload. Он получает отдельную копию:
+            # такая правка не меняет повтор ни в памяти, ни после перезапуска.
+            reply = yield Deliver(PendingBatch.decode(pending_json, account_id=account_id).events)
+            if not isinstance(reply, StepResult):
+                raise TypeError(f"на просьбу Deliver ожидался итог раздачи, получено {type(reply)}")
+            result = reply
+            accepted = {event.id for event in result.delivered}
+            now = monotonic()
+            dedup.commit(tuple(event for event in prepared.events if event.id in accepted), now)
+            remaining = tuple(event for event in prepared.events if event.id not in accepted)
+            if not remaining:
+                target = prepared.cursor
+                known_orders = target["orders"]
+                known_chats = target["chats"]
+                known_threads = {node: frozenset(ids) for node, ids in target["threads"].items()}
+                pending = list(target["pending_threads"])
+                greeted = prepared.greeted
+                pending_json = None
+            else:
+                pending_json = replace(prepared, events=remaining).encode()
+                _log.warning("новое чтение отложено: не принято событий %d", len(remaining))
 
-            yield Pause(plan.note(fresh, now))
+            if state is not None:
+                self._state.outbound.forget_expired(
+                    now_ms=int(datetime.now(UTC).timestamp() * 1000), now_s=now
+                )
+                patch: dict[str, Any] = {
+                    "watch_owner": account_id,
+                    "dedup": dedup.snapshot(now),
+                    "dedup_order": dedup.snapshot_order(),
+                    "attempts": {event.id: event.delivery.attempt for event in remaining},
+                    "watch_pending": pending_json,
+                    "outbound": self._state.outbound.snapshot(),
+                }
+                if not remaining:
+                    # Позиция и удаление партии фиксируются одной атомарной записью.
+                    patch.update({"cursor": prepared.cursor, "watch_greeted": greeted})
+                state.update(patch)
+
+            if result.fatal is not None:
+                raise result.fatal
+            yield Pause(plan.note(prepared.events, now))
 
     def _note_success(
         self,

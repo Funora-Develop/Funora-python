@@ -61,7 +61,9 @@ __all__ = ["StateFile", "STATE_FORMAT"]
 #: семидесятый - и весь кэш гашения молча выбрасывается по сроку. Это ровно
 #: то, что спецификация запрещает прямо: молчаливое чтение с начала порождает
 #: повторную обработку всего, что уже обработано.
-STATE_FORMAT: Final[str] = "funora-state-v4"
+#: v5 хранит непринятую партию до обработчиков. v4 без незавершённых попыток
+#: читается без сброса; v4 с попытками не содержит самих событий для повтора.
+STATE_FORMAT: Final[str] = "funora-state-v5"
 
 #: Семейство адаптера, к которому относится состояние.
 #:
@@ -69,6 +71,16 @@ STATE_FORMAT: Final[str] = "funora-state-v4"
 #: идентификаторов было бы случайным, а последствия - молчаливым гашением чужих
 #: событий.
 ADAPTER_FAMILY: Final[str] = _ADAPTER_FAMILY
+
+
+def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Повтор ключа не может молча заменить журнал или его подтверждение."""
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("повтор ключа состояния")
+        result[key] = value
+    return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,8 +132,8 @@ class StateFile:
             return {}
 
         try:
-            raw = json.loads(self.path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raw = json.loads(self.path.read_text(encoding="utf-8"), object_pairs_hook=_unique_pairs)
+        except (ValueError, RecursionError) as exc:
             raise StateSchemaIncompatibleError(
                 f"файл состояния {self.path} не читается: {type(exc).__name__}. "
                 "Удалите его вручную, если готовы к повторной обработке всего, "
@@ -134,7 +146,7 @@ class StateFile:
             )
 
         stored_format = raw.get("format")
-        if stored_format != STATE_FORMAT:
+        if stored_format not in (STATE_FORMAT, "funora-state-v4"):
             raise StateSchemaIncompatibleError(
                 f"файл состояния {self.path} записан форматом {stored_format!r}, "
                 f"ожидался {STATE_FORMAT!r}"
@@ -173,6 +185,24 @@ class StateFile:
                 f"файл состояния {self.path}: payload обязан быть объектом; "
                 "начать с пустым журналом значило бы забыть уже выполненные действия"
             )
+        if stored_format == "funora-state-v4" and payload.get("attempts"):
+            raise CursorIncompatibleError(
+                "файл v4 содержит незавершённые попытки без сохранённых событий; "
+                "завершите их прежней версией SDK перед обновлением. "
+                "Восстановить исходную партию по новому снимку невозможно"
+            )
+        if (
+            "watch_owner" in payload
+            and not {
+                "watch_pending",
+                "watch_greeted",
+                "cursor",
+            }
+            <= payload.keys()
+        ):
+            raise StateSchemaIncompatibleError("в состоянии watch отсутствует журнал или курсор")
+        if payload.get("attempts") and payload.get("watch_pending") is None:
+            raise StateSchemaIncompatibleError("попытки watch сохранены без непринятой партии")
         return payload
 
     def update(self, patch: dict[str, Any]) -> None:

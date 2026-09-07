@@ -200,7 +200,8 @@ class StepResult:
 
     Attributes:
         delivered (tuple[Event, ...]): События, дошедшие до обработчиков.
-        failed (tuple[Event, ...]): События, на которых обработчик упал. Курсор
+        failed (tuple[Event, ...]): Непринятые события, включая следующие за
+            отказом того же ключа, ещё не переданные обработчикам. Курсор
             не сдвигается, пока список непуст: иначе они исчезнут навсегда.
         advance (bool): Можно ли сдвигать курсор.
         errors (tuple[HandlerError, ...]): Отказы обработчиков.
@@ -232,8 +233,8 @@ def dispatch_core(
     ключами независимы, и здесь они всё равно идут последовательно: правило про
     порядок этим не нарушается.
 
-    Отказ одного обработчика не отменяет остальные события. Он отменяет только
-    сдвиг базы, и следующий шаг принесёт непринятое снова.
+    Отказ блокирует следующие события своего ключа и сдвиг базы.
+    Независимые ключи обрабатываются, непринятое сохраняется для повтора.
 
     Args:
         router (Router): Реестр обработчиков.
@@ -250,7 +251,11 @@ def dispatch_core(
     errors: list[HandlerError] = []
     fatal: FunoraError | None = None
 
+    blocked: set[str] = set()
     for event in events:
+        if event.ordering_key in blocked:
+            failed.append(event)
+            continue
         handlers = router.handlers_for(event)
         if not handlers:
             # Событие без обработчика не считается непринятым: подписка на всё
@@ -321,6 +326,8 @@ def dispatch_core(
             )
             break
 
+        if broke:
+            blocked.add(event.ordering_key)
         (failed if broke else delivered).append(event)
 
     return StepResult(

@@ -2133,7 +2133,7 @@ def test_failure_on_the_first_batch_does_not_silence_the_watch(
         if event.type is EventType.WATCH_PRIMED and seen.count(EventType.WATCH_PRIMED) == 1:
             raise ValueError("база ещё не поднялась")
 
-    transport = _Cycle([orders, chats, orders, chats, grown, chats])
+    transport = _Cycle([orders, chats, grown, chats])
     with Client(transport=transport) as client:  # type: ignore[arg-type]
         client.watch(router, max_iterations=3, use_channel=False)
 

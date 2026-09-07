@@ -1254,11 +1254,10 @@ class Client:
                 делать с отказом обработчика. Вызывается по одному разу на
                 каждый отказ, сразу после раздачи партии.
 
-                Без него отказ виден только в журнале. Наблюдение при этом не
-                встаёт и не слепнет - новые события порождаются по-прежнему, -
-                но курсор не двигается, и непринятое событие приходит снова
-                каждый шаг. Бесконечно, пока обработчик не перестанет падать.
-                Заметить это, не читая журнал, нечем.
+                Без него отказ виден только в журнале. Непринятая партия
+                повторяется каждый шаг; новые чтения ждут её подтверждения.
+                Пока обработчик падает, промежуточные изменения на площадке
+                не наблюдаются. Обработчик обязан быть идемпотентным.
 
         Returns:
             None
@@ -1346,93 +1345,96 @@ class Client:
             raise ConfigurationError("public_only разрешает только операции публичной полосы")
         reply: Reply = None
         failure: FunoraError | None = None
-        while True:
-            try:
-                request = core.throw(failure) if failure is not None else core.send(reply)
-            except StopIteration as stop:
-                return stop.value  # type: ignore[no-any-return]
-            except FunoraError as exc:
-                active.note_operation_error(exc)
-                raise
-            if active is self._public_engine and not public_read_request(request):
-                core.close()
-                raise ConfigurationError("публичная полоса допускает только чтение")
-            failure = None
-            reply = None
+        try:
+            while True:
+                try:
+                    request = core.throw(failure) if failure is not None else core.send(reply)
+                except StopIteration as stop:
+                    return stop.value  # type: ignore[no-any-return]
+                except FunoraError as exc:
+                    active.note_operation_error(exc)
+                    raise
+                if active is self._public_engine and not public_read_request(request):
+                    core.close()
+                    raise ConfigurationError("публичная полоса допускает только чтение")
+                failure = None
+                reply = None
 
-            if isinstance(request, Pause):
-                spent = 0.0
-                if on_idle is not None:
-                    started = monotonic()
-                    on_idle(request.ms)
-                    spent = (monotonic() - started) * 1000
-                remaining = request.ms - spent
-                if remaining > 0:
-                    sleep(remaining / 1000)
-            elif isinstance(request, Fetch):
-                try:
-                    reply = (
-                        self._fetch(request.path)
-                        if active is self.engine
-                        else fetcher.fetch(request.path)
-                    )
-                except FunoraError as exc:
-                    failure = exc
-            elif isinstance(request, Submit):
-                # Отправка идёт мимо _fetch нарочно: у записи своё правило -
-                # переход в ответ на неё не повторяется.
-                try:
-                    reply = fetcher.submit(request.path, request.fields, request.headers)
-                except FunoraError as exc:
-                    failure = exc
-            elif isinstance(request, Upload):
-                # Загрузка идёт мимо _fetch по той же причине, что и отправка
-                # формы: переход в ответ на запись не повторяется.
-                try:
-                    reply = fetcher.upload(
-                        request.path,
-                        field=request.field,
-                        filename=request.filename,
-                        content=request.content,
-                        content_type=request.content_type,
-                        headers=request.headers,
-                    )
-                except FunoraError as exc:
-                    failure = exc
-            elif isinstance(request, Query):
-                # Структурный вопрос идёт мимо _fetch: тело у него JSON, а не
-                # поля формы. Правило перехода при этом ЧТЕНИЯ, а не записи -
-                # повтор здесь безвреден.
-                try:
-                    reply = fetcher.query(request.path, request.payload, request.headers)
-                except FunoraError as exc:
-                    failure = exc
-            elif isinstance(request, Ask):
-                # Вопрос методом GET с ответом объектом. Мимо _fetch: переходы
-                # здесь не выполняются - переход отсюда означает не «страница
-                # переехала», а «нас выкинуло на страницу», и разбирать её как
-                # объект нельзя.
-                try:
-                    reply = fetcher.ask(request.path, request.headers)
-                except FunoraError as exc:
-                    failure = exc
-            elif isinstance(request, Deliver):
-                if router is None:
-                    raise ConfigurationError(
-                        "ядро просит раздать события, но реестр обработчиков не передан"
-                    )
-                reply = dispatch(router, request.events)
-                # Итог раздачи дальше уходит ядру, а ядро читает у него
-                # delivered, advance, fatal и длину failed. Причина отказа
-                # живёт только здесь, и не отдать её сейчас значит потерять
-                # насовсем.
-                if on_handler_error is not None:
-                    # Имя намеренно не failure: так зовут переменную, которой
-                    # цикл бросает ошибку ВНУТРЬ ядра. Затерев её здесь, мы
-                    # отправили бы отказ обработчика в ядро как условие
-                    # площадки и уронили бы наблюдение вместо жалобы.
-                    for handler_error in reply.errors:
-                        on_handler_error(handler_error)
+                if isinstance(request, Pause):
+                    spent = 0.0
+                    if on_idle is not None:
+                        started = monotonic()
+                        on_idle(request.ms)
+                        spent = (monotonic() - started) * 1000
+                    remaining = request.ms - spent
+                    if remaining > 0:
+                        sleep(remaining / 1000)
+                elif isinstance(request, Fetch):
+                    try:
+                        reply = (
+                            self._fetch(request.path)
+                            if active is self.engine
+                            else fetcher.fetch(request.path)
+                        )
+                    except FunoraError as exc:
+                        failure = exc
+                elif isinstance(request, Submit):
+                    # Отправка идёт мимо _fetch нарочно: у записи своё правило -
+                    # переход в ответ на неё не повторяется.
+                    try:
+                        reply = fetcher.submit(request.path, request.fields, request.headers)
+                    except FunoraError as exc:
+                        failure = exc
+                elif isinstance(request, Upload):
+                    # Загрузка идёт мимо _fetch по той же причине, что и отправка
+                    # формы: переход в ответ на запись не повторяется.
+                    try:
+                        reply = fetcher.upload(
+                            request.path,
+                            field=request.field,
+                            filename=request.filename,
+                            content=request.content,
+                            content_type=request.content_type,
+                            headers=request.headers,
+                        )
+                    except FunoraError as exc:
+                        failure = exc
+                elif isinstance(request, Query):
+                    # Структурный вопрос идёт мимо _fetch: тело у него JSON, а не
+                    # поля формы. Правило перехода при этом ЧТЕНИЯ, а не записи -
+                    # повтор здесь безвреден.
+                    try:
+                        reply = fetcher.query(request.path, request.payload, request.headers)
+                    except FunoraError as exc:
+                        failure = exc
+                elif isinstance(request, Ask):
+                    # Вопрос методом GET с ответом объектом. Мимо _fetch: переходы
+                    # здесь не выполняются - переход отсюда означает не «страница
+                    # переехала», а «нас выкинуло на страницу», и разбирать её как
+                    # объект нельзя.
+                    try:
+                        reply = fetcher.ask(request.path, request.headers)
+                    except FunoraError as exc:
+                        failure = exc
+                elif isinstance(request, Deliver):
+                    if router is None:
+                        raise ConfigurationError(
+                            "ядро просит раздать события, но реестр обработчиков не передан"
+                        )
+                    reply = dispatch(router, request.events)
+                    # Итог раздачи дальше уходит ядру, а ядро читает у него
+                    # delivered, advance, fatal и длину failed. Причина отказа
+                    # живёт только здесь, и не отдать её сейчас значит потерять
+                    # насовсем.
+                    if on_handler_error is not None:
+                        # Имя намеренно не failure: так зовут переменную, которой
+                        # цикл бросает ошибку ВНУТРЬ ядра. Затерев её здесь, мы
+                        # отправили бы отказ обработчика в ядро как условие
+                        # площадки и уронили бы наблюдение вместо жалобы.
+                        for handler_error in reply.errors:
+                            on_handler_error(handler_error)
+        finally:
+            core.close()
 
     def _fetch(self, path: str) -> Observation:
         """Выполняет одно обращение к площадке.
