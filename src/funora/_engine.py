@@ -43,7 +43,7 @@ from urllib.parse import urlparse
 from selectolax.parser import HTMLParser
 
 from ._account import BalancePage, parse_balance_page
-from ._budget import Budget
+from ._budget import Budget, wait_until_ms
 from ._calc import (
     CHIPS_CALC_PATH,
     LOTS_CALC_PATH,
@@ -157,7 +157,6 @@ from .budget import (
     MAX_QUEUE_DEPTH_PER_KEY,
     MIN_HEALTH_INTERVAL_MS,
     WAIT_ATTEMPTS,
-    WAIT_GUARD_MS,
     RequestClass,
 )
 from .capabilities import Capability, CapabilityState
@@ -3767,7 +3766,7 @@ class Engine:
         if not self._identity.is_cooling(now):
             return
 
-        wait_ms = int((self._identity.cooldown_until - now) * 1000) + WAIT_GUARD_MS
+        wait_ms = wait_until_ms(now, self._identity.cooldown_until)
         _log.info(
             "идентичность %s остывает после ограничения: пауза %d мс",
             self._identity.name,

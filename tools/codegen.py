@@ -1316,6 +1316,8 @@ def render_budget(spec: Path) -> str:
         str: Содержимое модуля.
     """
     doc = _load(spec, "spec/runtime/budget.yaml")
+    if doc.get("waiting", {}).get("arithmetic") != "exact_decimal":
+        raise SystemExit("арифметика бюджета не поддержана реализацией")
     buckets: dict[str, Any] = doc["buckets"]
     limits: dict[str, Any] = doc["limits"]
 

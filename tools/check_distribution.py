@@ -48,6 +48,10 @@ from funora.budget import BUCKETS
 from funora.errors import ConfigurationError
 assert BUCKETS['write'].unit == 'actions_per_hour'
 assert Budget().reserve(0, action=True).granted
+budget = Budget(names=("account",))
+assert all(budget.reserve(0.001).granted for _ in range(5))
+assert budget.reserve(0.001).wait_ms == 201
+assert budget.reserve(0.202).granted
 with Client(public_only=True, account_id='package-check') as client:
     try:
         client.orders.list()
