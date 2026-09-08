@@ -53,6 +53,15 @@ def _page(*, active: bool = True, price: str | None = None) -> str:
         str: разметка страницы правки.
     """
     html = (FIXTURES / f"{FIXTURE}.skeleton.txt").read_text(encoding="utf-8")
+    # Скелет скрывает значения. В сценарии HTTP идентификаторы ответа должны
+    # принадлежать запрошенной форме; это синтетические значения теста.
+    form = parse_lot_form(html, observed_at=WHEN)
+    for name, value in (("offer_id", OFFER), ("node_id", NODE)):
+        html = html.replace(
+            f'name="{name}" type="hidden" value="{form.fields[name]}"',
+            f'name="{name}" type="hidden" value="{value}"',
+            1,
+        )
     if not active:
         html = html.replace('checked name="active"', 'name="active"', 1)
         assert 'checked name="active"' not in html, "флажок не снялся"

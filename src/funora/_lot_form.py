@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from hashlib import sha256
@@ -143,7 +144,9 @@ class LotForm:
         return out
 
 
-def _revision_of(fields: dict[str, str], checked: frozenset[str]) -> str:
+def _revision_of(
+    fields: dict[str, str], checked: frozenset[str], checkbox_values: dict[str, str]
+) -> str:
     """Считает отпечаток состояния лота.
 
     ОТПЕЧАТОК НАШ, а не площадкин, и это надо сказать вслух. Контракт требует
@@ -158,13 +161,22 @@ def _revision_of(fields: dict[str, str], checked: frozenset[str]) -> str:
     Аргументы:
         fields (dict[str, str]): Поля формы.
         checked (frozenset[str]): Отмеченные флажки.
+        checkbox_values (dict[str, str]): Значения флажков, включая снятые.
 
     Возвращает:
         str: Шестнадцать шестнадцатеричных знаков.
     """
-    parts = [f"{name}={value}" for name, value in sorted(fields.items()) if name not in _VOLATILE]
-    parts.extend(f"{name}:checked" for name in sorted(checked))
-    return sha256("\n".join(parts).encode("utf-8")).hexdigest()[:16]
+    # Границы значений нельзя обозначать переводом строки или '=': оба знака
+    # встречаются в полях. Скрытое значение и флажок одного имени раздельны:
+    # при снятом флажке в запрос уходит именно скрытое значение.
+    parts = [
+        "lot-form-v2",
+        [[name, value] for name, value in sorted(fields.items()) if name not in _VOLATILE],
+        [[name, value] for name, value in sorted(checkbox_values.items())],
+        sorted(checked),
+    ]
+    material = json.dumps(parts, ensure_ascii=True, separators=(",", ":"), allow_nan=False)
+    return sha256(material.encode("ascii")).hexdigest()[:16]
 
 
 def _text(node: Node | None) -> str:
@@ -288,7 +300,7 @@ def parse_lot_form(html: str, *, observed_at: datetime) -> LotForm:
         # Единственный носитель признака во всём проекте, и читается он
         # НАЛИЧИЕМ пометки, а не значением.
         is_active=ACTIVE_FIELD in checked,
-        revision=_revision_of({**fields, **checkbox_values}, frozenset(checked)),
+        revision=_revision_of(fields, frozenset(checked), checkbox_values),
         fields=fields,
         checked=frozenset(checked),
         observed_at=observed_at,

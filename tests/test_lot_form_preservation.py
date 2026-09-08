@@ -8,7 +8,9 @@ import pytest
 from funora._lot_form import parse_lot_form
 from funora.errors import ProtocolChangedError
 
-HTML = (Path(__file__).parent / "fixtures/pages/lot-edit.logged.ru.skeleton.txt").read_text()
+HTML = (Path(__file__).parent / "fixtures/pages/lot-edit.logged.ru.skeleton.txt").read_text(
+    encoding="utf-8"
+)
 NOW = datetime(2026, 9, 6, tzinfo=UTC)
 
 

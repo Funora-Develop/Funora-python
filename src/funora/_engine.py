@@ -1626,6 +1626,11 @@ class Engine:
             LOT_EDIT_PATH.format(node_id=node, offer_id=offer),
         )
         form = parse_lot_form(observation.html, observed_at=datetime.now(UTC))
+        if form.node_id != node or form.offer_id != offer:
+            raise ProtocolChangedError(
+                "форма правки принадлежит другому разделу или предложению; "
+                "использовать её для сохранения нельзя"
+            )
         # Страница НЕ передаётся: у формы нет счётчиков строк по устройству -
         # это одна сущность, а не перечень. Ветка с None для того и заведена.
         self._note_success(Capability.LOTS_FORM, form.completeness, None)
