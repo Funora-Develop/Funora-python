@@ -14,7 +14,7 @@ from pathlib import Path
 
 def _parts(name: str) -> list[str]:
     parts = name.rstrip("/").split("/")
-    if any(part in ("", ".", "..") or "\\" in part or ":" in part for part in parts):
+    if any(part in ("", ".", "..") or any(c in part for c in "\\:\x00") for part in parts):
         raise ValueError(f"недопустимый путь в архиве: {name!r}")
     if any("golden_key" in part or part == ".notes" for part in parts):
         raise ValueError(f"служебный файл в архиве: {name!r}")
@@ -31,7 +31,9 @@ def check_archives(directory: Path) -> tuple[Path, Path]:
     with zipfile.ZipFile(wheel) as archive:
         names: set[str] = set()
         for member in archive.infolist():
-            parts = _parts(member.filename)
+            # filename уже нормализован zipfile на Windows и обрезан по NUL.
+            # Проверяется исходное имя, до этих преобразований.
+            parts = _parts(member.orig_filename)
             name = "/".join(parts)
             if name in names:
                 raise ValueError(f"повтор пути в wheel: {name}")

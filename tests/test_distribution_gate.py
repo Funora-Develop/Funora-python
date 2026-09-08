@@ -53,8 +53,10 @@ def build(project: Path, output: Path) -> dict[str, dict[str, bytes]]:
 
 
 def test_build_without_git_excludes_local_files(tmp_path: Path) -> None:
-    project = tmp_path / "project"
-    project.mkdir()
+    # Имя tmp входит в .gitignore. Hatchling в таком корне отключает правила
+    # VCS: регрессия воспроизводится и на macOS с pytest в /var/folders.
+    project = tmp_path / "tmp" / "project"
+    project.mkdir(parents=True)
     for name in ("pyproject.toml", "README.md", "README.en.md", "LICENSE", "DISCLAIMER.md"):
         (project / name).write_bytes((ROOT / name).read_bytes())
     files = {
@@ -120,7 +122,11 @@ def archives(
     source = directory / "funora-0.1.0.tar.gz"
     with zipfile.ZipFile(wheel, "w") as archive:
         for name, data in (package if wheel_files is None else wheel_files).items():
-            archive.writestr(name, data)
+            # Конструктор ZipInfo нормализует разделители на Windows.
+            # Негодный вход нужно сохранить в архиве буквально.
+            member = zipfile.ZipInfo()
+            member.filename = name
+            archive.writestr(member, data)
     if source_files is None:
         source_files = {f"funora-0.1.0/src/{name}": data for name, data in package.items()}
     with tarfile.open(source, "w:gz") as archive:
@@ -180,6 +186,15 @@ def test_incomplete_wheel_is_rejected(tmp_path: Path, missing: str) -> None:
 @pytest.mark.parametrize("name", ["/absolute", "../escape", "a/../b", "a\\b", "C:/file", "a//b"])
 def test_unsafe_archive_paths_are_rejected(tmp_path: Path, kind: str, name: str) -> None:
     archives(tmp_path, **{f"{kind if kind == 'wheel' else 'source'}_files": {name: b"bad"}})
+    with pytest.raises(ValueError, match="недопустимый путь"):
+        MODULE.check_archives(tmp_path)
+
+
+@pytest.mark.parametrize("name", ["a\\b", "a\x00b"])
+def test_wheel_checks_original_path_on_windows(tmp_path: Path, monkeypatch, name: str) -> None:
+    archives(tmp_path, wheel_files={name: b"bad"})
+    # Воспроизводит нормализацию ZipInfo и при прогоне на POSIX.
+    monkeypatch.setattr(zipfile.os, "sep", "\\")
     with pytest.raises(ValueError, match="недопустимый путь"):
         MODULE.check_archives(tmp_path)
 

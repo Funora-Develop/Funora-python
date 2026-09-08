@@ -39,11 +39,14 @@ dev = ["pytest>=8", "pytest-asyncio>=0.24", "mypy>=1.11", "ruff>=0.6", "PyYAML>=
 # окружением: документация в отдельном репозитории расходится с кодом молча.
 docs = ["mkdocs>=1.6", "mkdocs-material>=9.5"]
 
+[tool.hatch.build]
+exclude = ["**/__pycache__", "/src/**/.*", "/tests/**/.*", "/tools/**/.*", "/docs/**/.*"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/funora"]
 
 # Архив собирается и вне Git, в том числе после pytest и mkdocs. В этом
-# случае исключения VCS недоступны: состав задаётся явно, а не содержимым cwd.
+# случае правила VCS могут быть отключены: состав задаётся явно.
 [tool.hatch.build.targets.sdist]
 include = [
   "/src/funora/**/*.py",
@@ -65,7 +68,6 @@ include = [
   "/mkdocs.yml",
   "/pyproject.toml",
 ]
-exclude = ["**/__pycache__", "/src/**/.*", "/tests/**/.*", "/tools/**/.*", "/docs/**/.*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
