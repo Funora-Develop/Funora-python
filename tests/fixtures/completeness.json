@@ -290,7 +290,8 @@
       "method": "list",
       "engine": "read_orders",
       "tests": [
-        "tests/test_orders.py::test_intact_page_is_complete"
+        "tests/test_orders.py::test_intact_page_is_complete",
+        "tests/test_order_filters.py::test_filters_use_encoded_get_and_general_read_keeps_original_path"
       ],
       "limits": [
         "dyn_table_continue_request"

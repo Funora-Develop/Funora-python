@@ -37,6 +37,10 @@ _SPEC_DIR = os.environ.get("FUNORA_SPEC_DIR")
 
 #: Ожидаемый вердикт для каждой фикстуры.
 EXPECTED = {
+    "orders-filtered.logged.ru": ResponseClass.OK,
+    "orders-filtered-empty.logged.ru": ResponseClass.OK,
+    "account-balance-first.logged.ru": ResponseClass.OK,
+    "account-balance-end.logged.ru": ResponseClass.OK,
     "catalog-search.guest.ru": ResponseClass.UNKNOWN,
     "order.logged.ru": ResponseClass.OK,
     "orders-trade.logged.ru": ResponseClass.OK,

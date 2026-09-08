@@ -565,6 +565,7 @@ OPERATIONS: Final[dict[str, Operation]] = {
         request_class="interactive",
         returns="OrdersPage",
         errors=(
+            "funora.validation",
             "funora.auth.session_expired",
             "funora.protocol.changed",
             "funora.protocol.unexpected_response",

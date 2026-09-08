@@ -75,6 +75,7 @@ from ._whoami import Account, CapabilityProfile, SessionHealth
 from .budget import MARKET_HISTORY_LIMIT
 from .capabilities import Capability, CapabilityState
 from .errors import ConfigurationError, FunoraError, HandlerError, NotImplementedOperationError
+from .extraction import OrderStatus
 from .operations import OPERATIONS
 
 if TYPE_CHECKING:
@@ -115,17 +116,40 @@ class AsyncOrdersService:
         """
         return await self._client.run(self._client.engine.read_order(order_id))
 
-    async def list(self) -> OrdersPage:
-        """Читает список заказов.
+    async def list(
+        self,
+        *,
+        order_id: str | None = None,
+        buyer: str | None = None,
+        status: OrderStatus | str | None = None,
+        game_id: str | None = None,
+        section: str | None = None,
+    ) -> OrdersPage:
+        """Читает продажи с необязательными серверными фильтрами.
+
+        Args:
+            order_id: Номер заказа без символа #.
+            buyer: Поиск по имени покупателя средствами FunPay.
+            status: paid, closed или refunded, в том числе OrderStatus.
+            game_id: Номер игры из формы фильтра.
+            section: Значение категории из формы, например lot-1908.
+                Требует game_id: категории принадлежат выбранной игре.
 
         Returns:
             OrdersPage: Разобранная страница. Записи выдаются через `rows()`:
             без accept_incomplete он требует полноты, с ним отдаёт что есть.
+            Полнота относится к выбранным фильтрам. Вызов без аргументов
+            читает общий список, как и цикл наблюдения за заказами.
 
         Raises:
+            ValidationError: Если фильтры непригодны. Запрос не выполняется.
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
-        return await self._client.run(self._client.engine.read_orders())
+        return await self._client.run(
+            self._client.engine.read_orders(
+                order_id=order_id, buyer=buyer, status=status, game_id=game_id, section=section
+            )
+        )
 
     async def details(
         self, *order_ids: str, include: tuple[str, ...] = ("details", "users")

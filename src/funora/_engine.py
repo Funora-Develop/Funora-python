@@ -39,7 +39,7 @@ from pathlib import Path
 from threading import Lock
 from time import monotonic
 from typing import Any, Final, TypeVar
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 from selectolax.parser import HTMLParser
 
@@ -116,7 +116,7 @@ from ._order_details import (
     check_batch,
     parse_order_details,
 )
-from ._orders import Completeness, OrdersPage, parse_orders_page
+from ._orders import Completeness, OrdersPage, normalize_order_filters, parse_orders_page
 from ._outbound import UNSAFE_SENDS_WITHOUT_LEDGER, OutboundGovernor, OutboundRefusal
 from ._own_lots import OwnLotsPage, parse_own_lots
 from ._poll import Deduplicator, Schedule
@@ -190,7 +190,7 @@ from .errors import (
     UsageError,
     ValidationError,
 )
-from .extraction import SELECTORS
+from .extraction import SELECTORS, OrderStatus
 from .operations import OPERATIONS, Safety
 from .reconciliation import RECONCILE_DELAYS_MS, ReconcileVerdict
 from .response_classes import (
@@ -967,7 +967,15 @@ class Engine:
             )
         return self._state.capabilities[capability]
 
-    def read_orders(self) -> Generator[Request, Reply, OrdersPage]:
+    def read_orders(
+        self,
+        *,
+        order_id: str | None = None,
+        buyer: str | None = None,
+        status: OrderStatus | str | None = None,
+        game_id: str | None = None,
+        section: str | None = None,
+    ) -> Generator[Request, Reply, OrdersPage]:
         """Читает список заказов по нормативному порядку шагов.
 
         Yields:
@@ -979,8 +987,14 @@ class Engine:
         Raises:
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
-        observation = yield from self.fetch_ok(Capability.ORDERS_LIST, ORDERS_PATH)
+        fields = normalize_order_filters(
+            order_id=order_id, buyer=buyer, status=status, game_id=game_id, section=section
+        )
+        path = ORDERS_PATH + ("?" + urlencode(fields) if fields else "")
+        observation = yield from self.fetch_ok(Capability.ORDERS_LIST, path)
         page = parse_orders_page(observation.html, observed_at=datetime.now(UTC))
+        if fields and not page.filters_available:
+            raise ProtocolChangedError("ответ на фильтр заказов не содержит формы фильтров")
         if not integrity_verified(observation):
             page = unverified(page)
         self._note_success(Capability.ORDERS_LIST, page.completeness, page)

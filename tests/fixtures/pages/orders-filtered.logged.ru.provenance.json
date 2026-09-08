@@ -1,0 +1,14 @@
+{
+  "captured_at": "2026-09-09",
+  "captured_by": "Codex browser DOM; funora._skeleton.skeletonize",
+  "evidence_kind": "dom",
+  "format": "structural-skeleton-v9",
+  "captured_format": "structural-skeleton-v9",
+  "converted": false,
+  "authentication": "logged",
+  "locale": "ru",
+  "path": "/orders/trade",
+  "rows_observed": 12,
+  "note": "DOM после GET /orders/trade?id=&buyer=&state=paid&game=333&section=lot-1908. Все 12 строк paid. Отдельно проверены общий список (43), state=paid (18) и поиск по номеру и покупателю (1); персональные значения не сохранялись. Полный DOM считан частями с проверкой длины и завершающего тега. Сырой HTML не сохранялся.",
+  "http_status": null
+}

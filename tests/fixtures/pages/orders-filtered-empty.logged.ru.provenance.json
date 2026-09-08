@@ -1,0 +1,14 @@
+{
+  "captured_at": "2026-09-09",
+  "captured_by": "Codex browser DOM; funora._skeleton.skeletonize",
+  "evidence_kind": "dom",
+  "format": "structural-skeleton-v9",
+  "captured_format": "structural-skeleton-v9",
+  "converted": false,
+  "authentication": "logged",
+  "locale": "ru",
+  "path": "/orders/trade",
+  "rows_observed": 0,
+  "note": "DOM после добавления несуществующего номера заказа к фильтрам paid, game=333, section=lot-1908. Таблицы нет, форма и p.lead на месте. Полный DOM считан частями с проверкой длины и завершающего тега. Сырой HTML не сохранялся.",
+  "http_status": null
+}
