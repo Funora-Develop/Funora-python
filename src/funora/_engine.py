@@ -133,7 +133,7 @@ from ._review_write import (
     ReviewResult,
     parse_review_response,
 )
-from ._reviews import ReviewsCursor, ReviewsPage, parse_reviews_page
+from ._reviews import ReviewsCursor, ReviewsPage, normalize_review_rating, parse_reviews_page
 from ._runner import (
     Anchor,
     RunnerContext,
@@ -2839,12 +2839,16 @@ class Engine:
         return page
 
     def read_reviews(
-        self, user_id: str, *, cursor: ReviewsCursor | str | None = None
+        self,
+        user_id: str,
+        *,
+        rating: int | None = None,
+        cursor: ReviewsCursor | str | None = None,
     ) -> Generator[Request, Reply, ReviewsPage]:
         """Читает отзывы с профиля продавца.
 
-        Отдельной страницы у отзывов нет: они лежат на профиле, и запрос идёт
-        туда же, куда пошёл бы за именем и оценкой.
+        Начало без фильтра читается с профиля. Фильтр и продолжение используют
+        форму чтения; курсор сохраняет продавца и выбранную оценку.
 
         Args:
             user_id (str): Идентификатор продавца. Тот самый, что стоит в адресе
@@ -2860,6 +2864,9 @@ class Engine:
             ValidationError: Если идентификатор непригоден для подстановки.
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
+        rating_filter = normalize_review_rating(rating)
+        if not isinstance(user_id, str):
+            raise ValidationError("идентификатор продавца должен быть строкой")
         cleaned = user_id.strip()
         if not cleaned or not cleaned.isalnum():
             raise ValidationError(
@@ -2871,30 +2878,41 @@ class Engine:
         capability = Capability.REVIEWS_GET
         if isinstance(cursor, str):
             cursor = ReviewsCursor.from_token(cursor)
-            if cursor.user_id != cleaned:
-                raise CursorIncompatibleError("курсор принадлежит другому продавцу")
+            if cursor.user_id != cleaned or cursor.rating != rating:
+                raise CursorIncompatibleError("курсор принадлежит другому продавцу или оценке")
         if cursor is not None and (
             not isinstance(cursor, ReviewsCursor)
             or cursor.user_id != cleaned
             or not isinstance(cursor.value, str)
             or not cursor.value.strip()
+            or cursor.rating != rating
+            or type(cursor.rating) is not type(rating)
         ):
             raise ValidationError(
-                "курсор должен принадлежать выбранному продавцу и содержать значение"
+                "курсор должен принадлежать выбранному продавцу и оценке и содержать значение"
             )
+        if cursor is not None:
+            try:
+                cursor.value.encode("utf-8")
+            except UnicodeError:
+                raise ValidationError("значение курсора должно быть строкой UTF-8") from None
         observation = yield from self.fetch_ok(
             capability,
-            PROFILE_PATH.format(user_id=cleaned) if cursor is None else "/users/reviews",
+            PROFILE_PATH.format(user_id=cleaned)
+            if cursor is None and rating is None
+            else "/users/reviews",
             session_required=False,
             fields=None
-            if cursor is None
+            if cursor is None and rating is None
             else {
                 "user_id": cleaned,
-                "continue": cursor.value,
-                "filter": "",
+                "continue": cursor.value if cursor is not None else "",
+                "filter": rating_filter,
             },
         )
-        page = parse_reviews_page(observation.html, observed_at=datetime.now(UTC), user_id=cleaned)
+        page = parse_reviews_page(
+            observation.html, observed_at=datetime.now(UTC), user_id=cleaned, rating=rating
+        )
         if cursor is not None and page.next_cursor == cursor:
             raise ProtocolChangedError("сервер повторил курсор отзывов")
         if not integrity_verified(observation):
@@ -3128,8 +3146,8 @@ class Engine:
         if (before_message_id is None) == (cursor is None):
             raise ValidationError("передайте ровно один из before_message_id и cursor")
         if cursor is not None:
-            owner, position = decode_cursor(cursor, kind="chats.history_before")
-            if owner != node:
+            owner, position, scope = decode_cursor(cursor, kind="chats.history_before")
+            if owner != node or scope is not None:
                 raise CursorIncompatibleError("курсор принадлежит другой переписке")
         else:
             if not isinstance(before_message_id, str):

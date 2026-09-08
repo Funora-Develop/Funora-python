@@ -84,7 +84,10 @@ with Client(EnvSecretProvider()) as client:
 
 ## Отзывы
 
-`reviews.get(user_id, cursor=None)` читает одну страницу. Пример ограничивает
+`reviews.get(user_id, rating=None, cursor=None)` читает одну страницу. Оценка
+`rating=1..5` выбирает отзывы с указанным числом звёзд, `None` - все оценки.
+Оценка должна быть целым числом: строки, `bool` и `float` отклоняются до сети.
+Пример ограничивает
 число запросов; замените идентификатор на нужного продавца.
 
 ```python
@@ -93,7 +96,7 @@ from funora import Completeness
 with Client(EnvSecretProvider()) as client:
     cursor = None
     for _ in range(10):
-        page = client.reviews.get("987654", cursor=cursor)
+        page = client.reviews.get("987654", rating=5, cursor=cursor)
         for review in page.rows(accept_incomplete=True):
             print(review.rating, review.author_name.or_none(), review.text.or_none())
         if page.defects:
@@ -107,22 +110,33 @@ with Client(EnvSecretProvider()) as client:
         print("Достигнут предел страниц; продолжение:", cursor)
 ```
 
-Курсор берётся из формы ответа и привязан к продавцу. Повторённый сервером
+Курсор берётся из формы ответа и привязан к продавцу и выбранной оценке.
+При продолжении передавайте тот же `rating`; для другой оценки начните с
+`cursor=None`. Повторённый сервером
 курсор вызывает `ProtocolChangedError`. `next_cursor=None` при неполном
 результате не доказывает конец выдачи. Страницы не объединяются автоматически;
-фильтр по оценке пока не поддерживается. У `AsyncClient` тот же вызов с `await`.
+у `AsyncClient` тот же вызов с `await`.
 
 Курсор отзывов также можно сохранить строкой:
 
 ```python
 saved = page.next_cursor.to_token() if page.next_cursor is not None else None
-# После перезапуска передайте saved в client.reviews.get(user_id, cursor=saved).
+# После перезапуска:
+# page = client.reviews.get(user_id, rating=5, cursor=saved)
 ```
 
 `ReviewsCursor.from_token(saved)` восстанавливает объект. Сырой указатель
 сервера сохраняется без изменения Unicode; несовместимая версия, другая
-операция или продавец дают `CursorIncompatibleError`. Сохраняйте позицию после
+операция, продавец или оценка дают `CursorIncompatibleError`. Сохраняйте позицию после
 обработки страницы; сам токен не подтверждает, что данные обработаны.
+
+Новые токены используют формат v2 с областью выборки. Сохранённые токены v1
+по-прежнему читаются как позиции без фильтра; передать их вместе с `rating=5`
+нельзя. Старые версии SDK не читают v2. Формат состояния приложения не менялся.
+
+Пустая выборка с фильтром распознаётся по наблюдённому сообщению сервера.
+Отсутствие таблицы само по себе не считается пустым успехом. Противоречие
+между оценкой запроса и строками даёт неполный результат без курсора.
 
 ## Разделы площадки
 

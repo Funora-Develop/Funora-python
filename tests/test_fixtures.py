@@ -61,6 +61,10 @@ EXPECTED = {
     "reviews-first.guest.ru": ResponseClass.LOGIN_REQUIRED,
     # Продолжение - фрагмент без панели аккаунта, общий классификатор требует её.
     "reviews-next.guest.ru": ResponseClass.UNKNOWN,
+    "reviews-rating-first.guest.ru": ResponseClass.UNKNOWN,
+    "reviews-rating-next.guest.ru": ResponseClass.UNKNOWN,
+    "reviews-rating-end.guest.ru": ResponseClass.UNKNOWN,
+    "reviews-rating-empty.guest.ru": ResponseClass.UNKNOWN,
     "reviews-last.guest.ru": ResponseClass.UNKNOWN,
     "account-balance.logged.ru": ResponseClass.OK,
     "root.logged.ru": ResponseClass.OK,
@@ -188,7 +192,12 @@ def test_fixture_parses(name: str) -> None:
     """
     tree = HTMLParser(_read(name))
     assert tree.body is not None, "тело документа не разобралось"
-    minimum = 90 if name in {"reviews-last.guest.ru", "catalog-search.guest.ru"} else 100
+    # Пустой ответ отзывов содержит только фильтр и сообщение: 66 узлов.
+    minimum = {
+        "reviews-last.guest.ru": 90,
+        "catalog-search.guest.ru": 90,
+        "reviews-rating-empty.guest.ru": 60,
+    }.get(name, 100)
     assert len(tree.css("*")) > minimum, "дерево подозрительно мелкое"
 
 

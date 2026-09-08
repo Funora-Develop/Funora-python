@@ -213,6 +213,7 @@ SELECTORS: Final[dict[str, str]] = {
     "orders.filters.form": "form.orders-filter",
     "orders.row": "a.tc-item",
     "orders.rows_container": ".dyn-table-body",
+    "reviews.empty_filtered": "div.param-item + p.pb20",
     "reviews.fields.author_href": ".media-user-name a",
     "reviews.fields.author_name": ".media-user-name a",
     "reviews.fields.author_photo_href": ".review-item-photo a",

@@ -311,7 +311,8 @@
       "method": "get",
       "engine": "read_reviews",
       "tests": [
-        "tests/test_reviews_pagination.py::test_sync_continuation_posts_the_exact_form_and_does_not_authenticate_guest"
+        "tests/test_reviews_pagination.py::test_sync_continuation_posts_the_exact_form_and_does_not_authenticate_guest",
+        "tests/test_review_filters.py::test_filtered_cursor_resumes_in_a_new_client_without_losing_rating"
       ],
       "limits": []
     },

@@ -2,7 +2,7 @@
 
 <!-- Порождено tools/completeness.py; рукописные связи: tests/fixtures/completeness.json. -->
 
-Контракт 0.61.0: 35 операций доступны через Client и AsyncClient; 12 частично опираются на сторонний протокол. Порождаются 12 из 16 видов событий. Открытых пунктов реестра: 22, включая один пункт вне Python.
+Контракт 0.62.0: 35 операций доступны через Client и AsyncClient; 12 частично опираются на сторонний протокол. Порождаются 12 из 16 видов событий. Открытых пунктов реестра: 22, включая один пункт вне Python.
 
 Это карта реализации и проверок, а не сертификат готовности площадки. Тесты на записанных и синтетических ответах не заменяют собственные наблюдения. 100% строк SDK не означает проверку всех ветвей или реализацию всего целевого API.
 
@@ -43,7 +43,7 @@
 | `orders.get` | `orders.get` | `read_order` | `OrderView` | `tests/test_order.py::test_every_anchored_field_is_read` |
 | `orders.list` | `orders.list` | `read_orders` | `OrdersPage` | `tests/test_orders.py::test_intact_page_is_complete`<br>`tests/test_order_filters.py::test_filters_use_encoded_get_and_general_read_keeps_original_path` |
 | `orders.refund` | `orders.refund` | `refund_order` | `RefundResult` | `tests/test_refund.py::test_only_one_request_ever_leaves` |
-| `reviews.get` | `reviews.get` | `read_reviews` | `ReviewsPage` | `tests/test_reviews_pagination.py::test_sync_continuation_posts_the_exact_form_and_does_not_authenticate_guest` |
+| `reviews.get` | `reviews.get` | `read_reviews` | `ReviewsPage` | `tests/test_reviews_pagination.py::test_sync_continuation_posts_the_exact_form_and_does_not_authenticate_guest`<br>`tests/test_review_filters.py::test_filtered_cursor_resumes_in_a_new_client_without_losing_rating` |
 | `reviews.leave` | `reviews.leave` | `leave_review` | `ReviewResult` | `tests/test_reviews_write.py::test_a_matching_rating_confirms_the_outcome` |
 | `reviews.remove` | `reviews.remove` | `remove_review` | `ReviewResult` | `tests/test_reviews_write.py::test_a_removal_that_left_the_rating_is_not_confirmed` |
 | `session.health` | `account.health` | `read_health` | `SessionHealth` | `tests/test_whoami.py::test_a_stale_verdict_is_never_reported_as_a_fresh_check` |

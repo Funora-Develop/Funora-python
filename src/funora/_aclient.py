@@ -223,10 +223,18 @@ class AsyncReviewsService:
     def __init__(self, client: AsyncClient) -> None:
         self._client = client
 
-    async def get(self, user_id: str, *, cursor: ReviewsCursor | str | None = None) -> ReviewsPage:
+    async def get(
+        self,
+        user_id: str,
+        *,
+        rating: int | None = None,
+        cursor: ReviewsCursor | str | None = None,
+    ) -> ReviewsPage:
         """Читает отзывы с профиля продавца.
 
         Следующую страницу запрашивают с next_cursor предыдущего результата.
+        rating выбирает оценку 1..5; None читает все оценки. При продолжении
+        передавайте ту же оценку, с которой получен курсор.
         Отсутствие курсора само по себе не означает полноту: проверяйте completeness.
 
         Args:
@@ -240,7 +248,9 @@ class AsyncReviewsService:
             ValidationError: Если идентификатор непригоден для подстановки.
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
-        return await self._client.run(self._client.engine.read_reviews(user_id, cursor=cursor))
+        return await self._client.run(
+            self._client.engine.read_reviews(user_id, rating=rating, cursor=cursor)
+        )
 
     async def leave(self, order_id: str, *, rating: int, text: str = "") -> ReviewResult:
         """Пишет отзыв к заказу либо правит уже написанный.

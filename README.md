@@ -90,7 +90,7 @@ async with AsyncClient(EnvSecretProvider()) as client:
 | `client.market.offers(node_id)` | публичные предложения раздела: чужие цены и продавцы |
 | `client.market.snapshot(node_id)` | снимок выдачи для сравнения во времени |
 | `client.market.chips(node_id)` | второй рынок: предложения по количеству |
-| `client.reviews.get(user_id, cursor=None)` | страница отзывов и курсор продолжения |
+| `client.reviews.get(user_id, rating=None, cursor=None)` | страница отзывов, отбор по оценке 1..5 и курсор продолжения |
 | `client.reviews.leave(order_id, rating=..., text=...)` | отзыв к заказу |
 | `client.reviews.remove(order_id)` | отзыв снят |
 | `client.account.get()` | личность аккаунта |

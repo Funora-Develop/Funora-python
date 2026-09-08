@@ -60,10 +60,52 @@ def observation(*entries):
 def test_cursor_has_a_stable_canonical_wire_format():
     raw = (
         b'{"adapter_family":"funpay-web","canonical_form_version":3,'
-        b'"kind":"chats.history_before","owner":"NDI","position":"OTk","version":1}'
+        b'"kind":"chats.history_before","owner":"NDI","position":"OTk","scope":null,"version":2}'
     )
     assert unpack(encode_cursor("chats.history_before", "42", "99")) == raw
-    assert decode_cursor(pack(raw), kind="chats.history_before") == ("42", "99")
+    assert decode_cursor(pack(raw), kind="chats.history_before") == ("42", "99", None)
+
+
+def test_legacy_v1_history_cursor_is_read_before_io_and_rewritten_as_v2():
+    raw = (
+        b'{"adapter_family":"funpay-web","canonical_form_version":3,'
+        b'"kind":"chats.history_before","owner":"NDI","position":"OTk","version":1}'
+    )
+    transport = HistoryTransport([observation(_entry(98))])
+    with Client(transport=transport, budget=Budget(names=())) as client:
+        result = client.chats.history_before("42", cursor=pack(raw))
+    assert transport.paths == ["/chat/history?node=42&last_message=99"]
+    assert json.loads(unpack(result.next_cursor))["version"] == 2
+
+
+def test_legacy_v1_reviews_cursor_has_no_rating_scope():
+    raw = (
+        b'{"adapter_family":"funpay-web","canonical_form_version":3,'
+        b'"kind":"reviews.get","owner":"MTIz","position":"b3BhcXVl","version":1}'
+    )
+    token = pack(raw)
+    assert ReviewsCursor.from_token(token) == ReviewsCursor("123", "opaque")
+    transport = Transport([_observation(page("last"))])
+    with Client(transport=transport, budget=Budget(names=())) as client:
+        result = client.reviews.get("123", cursor=token)
+    assert result.next_cursor is None
+    assert transport.forms[0][1]["filter"] == ""
+    with Client(transport=Transport([])) as client, pytest.raises(CursorIncompatibleError):
+        client.reviews.get("123", rating=5, cursor=token)
+
+
+@pytest.mark.parametrize("scope", ["", [], "\ud800", "x" * MAX_CURSOR_BYTES])
+def test_invalid_scope_cannot_be_serialized(scope):
+    with pytest.raises(CursorIncompatibleError):
+        encode_cursor("reviews.get", "123", "position", scope=scope)
+
+
+def test_history_cursor_cannot_carry_a_review_filter():
+    token = encode_cursor("chats.history_before", NODE, "99", scope="5")
+    transport = HistoryTransport([])
+    with Client(transport=transport) as client, pytest.raises(CursorIncompatibleError):
+        client.chats.history_before(NODE, cursor=token)
+    assert transport.calls == 0
 
 
 @pytest.mark.parametrize("position", ["e\u0301", "\u00e9", " a=b/+? ", "ключ 🔑", "\0opaque"])
@@ -83,7 +125,7 @@ def test_cursors_are_bound_to_the_kind_and_owner():
 @pytest.mark.parametrize(
     "changes",
     [
-        {"version": 2},
+        {"version": 3},
         {"version": True},
         {"version": 1.0},
         {"canonical_form_version": 2},
@@ -96,6 +138,9 @@ def test_cursors_are_bound_to_the_kind_and_owner():
         {"position": []},
         {"owner": "_w"},
         {"position": "_w"},
+        {"scope": ""},
+        {"scope": []},
+        {"scope": "_w"},
         {"extra": 1},
     ],
 )
@@ -117,7 +162,7 @@ def test_noncanonical_json_and_nested_json_are_rejected():
     raw = unpack(token)
     for malformed in [
         b"\n" + raw,
-        raw.replace(b'"version":1', b'"version":1,"version":1'),
+        raw.replace(b'"version":2', b'"version":2,"version":2'),
         b"[" * 1200 + b"0" + b"]" * 1200,
         b"[]",
         b"null",
@@ -147,7 +192,7 @@ def test_history_uses_the_oldest_id_and_resumes_in_a_new_client():
         first = client.chats.history_before(NODE, before_message_id="100")
         token = first.next_cursor
     assert token is not None
-    assert decode_cursor(token, kind="chats.history_before") == (NODE, "97")
+    assert decode_cursor(token, kind="chats.history_before") == (NODE, "97", None)
     second_transport = HistoryTransport([observation(_entry(96)), observation()])
     with Client(transport=second_transport, budget=Budget(names=())) as client:
         second = client.chats.history_before(NODE, cursor=token)
@@ -164,7 +209,7 @@ async def test_async_history_accepts_the_same_saved_cursor():
     transport = AsyncHistoryTransport([observation(_entry(98)), observation()])
     async with AsyncClient(transport=transport, budget=Budget(names=())) as client:
         current = await client.chats.history_before(NODE, cursor=token)
-        assert decode_cursor(current.next_cursor, kind="chats.history_before") == (NODE, "98")
+        assert decode_cursor(current.next_cursor, kind="chats.history_before") == (NODE, "98", None)
         assert (await client.chats.history_before(NODE, cursor=current.next_cursor)).exhausted
 
 
@@ -240,14 +285,22 @@ async def test_async_reviews_use_the_saved_cursor():
         (key, "unsupported")
         for key in [
             "format_version",
+            "accepted_format_versions",
             "max_token_bytes",
             "alphabet",
             "envelope",
             "owner_and_position",
+            "scope",
             "kinds",
         ]
     ]
-    + [("format_version", True), ("format_version", 1.0), ("max_token_bytes", 16384.0)],
+    + [
+        ("format_version", True),
+        ("format_version", 2.0),
+        ("accepted_format_versions", [True, 2]),
+        ("accepted_format_versions", [1, 2.0]),
+        ("max_token_bytes", 16384.0),
+    ],
 )
 def test_codegen_rejects_an_unsupported_cursor_format(tmp_path, key, value):
     import os

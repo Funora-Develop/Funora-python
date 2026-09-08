@@ -2109,16 +2109,19 @@ def render_contract(spec: Path) -> str:
     doc = _load(spec, "spec/version.yaml")
     cursor = _load(spec, "spec/types.yaml")["types"]["cursor"]["encoding"]
     expected_cursor = {
-        "format_version": 1,
+        "format_version": 2,
+        "accepted_format_versions": [1, 2],
         "max_token_bytes": 16384,
         "alphabet": "base64url_unpadded",
         "envelope": "canonical_json",
         "owner_and_position": "base64url_utf8",
+        "scope": "base64url_utf8_or_null",
         "kinds": ["chats.history_before", "reviews.get"],
     }
     if (
         cursor != expected_cursor
         or type(cursor["format_version"]) is not int
+        or any(type(version) is not int for version in cursor["accepted_format_versions"])
         or type(cursor["max_token_bytes"]) is not int
     ):
         raise SystemExit("формат курсора не поддержан реализацией")
@@ -2174,6 +2177,7 @@ def render_contract(spec: Path) -> str:
         '    "SPEC_VERSION",\n'
         '    "SPEC_STATUS",\n'
         '    "CURSOR_FORMAT_VERSION",\n'
+        '    "ACCEPTED_CURSOR_FORMAT_VERSIONS",\n'
         '    "MAX_CURSOR_BYTES",\n'
         '    "CANONICAL_FORM_VERSION",\n'
         '    "RUNNER_PROTOCOL",\n'
@@ -2201,6 +2205,10 @@ def render_contract(spec: Path) -> str:
 
     out.append("\n#: Формат и предельный размер переносимого курсора пагинации.\n")
     out.append(f"CURSOR_FORMAT_VERSION: Final[int] = {cursor['format_version']}\n")
+    out.append(
+        "ACCEPTED_CURSOR_FORMAT_VERSIONS: Final[frozenset[int]] = "
+        f"frozenset({cursor['accepted_format_versions']!r})\n"
+    )
     out.append(f"MAX_CURSOR_BYTES: Final[int] = {cursor['max_token_bytes']}\n")
 
     out.append("\n#: Версия протокола запуска набора соответствия.\n")

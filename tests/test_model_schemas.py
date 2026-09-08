@@ -125,7 +125,7 @@ def _as_json(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.isoformat()
     if isinstance(value, bool | int | str) or value is None:
-        return str(value) if not isinstance(value, bool | int | str) else value
+        return value
     return str(value)
 
 
@@ -417,12 +417,17 @@ def test_unbuildable_models_say_so() -> None:
         )
 
 
-def test_reviews_continuation_matches_both_models():
+@pytest.mark.parametrize("rating", [None, 1, 2, 3, 4, 5])
+def test_reviews_continuation_matches_both_models(rating):
     from test_reviews_pagination import page
 
     from funora._reviews import parse_reviews_page
 
-    result = parse_reviews_page(page("next"), WHEN, user_id="123")
+    html = page("next")
+    if rating is not None:
+        # Пять наблюдённых оценок используют один класс разметки.
+        html = html.replace("rating5", f"rating{rating}")
+    result = parse_reviews_page(html, WHEN, user_id="123", rating=rating)
     check(_as_json(result.next_cursor), _schema("reviews-cursor"))
     check(
         _page_as_json(result, "entries", result.rows(accept_incomplete=True)),
