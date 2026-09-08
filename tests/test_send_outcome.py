@@ -244,6 +244,7 @@ def test_every_step_of_the_normative_order_has_its_own_case() -> None:
         "body_not_json",
         "body_not_an_object",
         "response_not_an_object",
+        "response_error_missing",
         "channel_reported_error",
         "no_chat_node_in_answer",
         "node_mismatch",

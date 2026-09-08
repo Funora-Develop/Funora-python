@@ -117,7 +117,10 @@ async def test_http_timeouts_are_translated_without_repeating_requests(
 
 
 @pytest.mark.parametrize("asynchronous", [False, True])
-async def test_image_from_public_client_to_http_and_back(asynchronous: bool, tmp_path) -> None:
+@pytest.mark.parametrize("receipt", ["complete", "missing", "duplicate"])
+async def test_image_from_public_client_to_http_and_back(
+    asynchronous: bool, receipt: str, tmp_path
+) -> None:
     requests = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -130,20 +133,22 @@ async def test_image_from_public_client_to_http_and_back(asynchronous: bool, tmp
         data = json.loads(fields["request"][0])["data"]
         assert data["image_id"] == 41
         assert data["content"] == ""
-        return streamed_response(
-            200,
-            json.dumps(
-                {
-                    "response": {},
-                    "objects": [
-                        {
-                            "type": "chat_node",
-                            "data": {"node": {"name": data["node"]}, "messages": [{"id": 42}]},
-                        }
-                    ],
-                }
-            ),
+        body = json.dumps(
+            {
+                "response": {"error": None},
+                "objects": [
+                    {
+                        "type": "chat_node",
+                        "data": {"node": {"name": data["node"]}, "messages": [{"id": 42}]},
+                    }
+                ],
+            }
         )
+        if receipt == "missing":
+            body = body.replace('"error": null', '"another": null')
+        elif receipt == "duplicate":
+            body = body.replace('"error": null', '"error": "refused", "error": null')
+        return streamed_response(200, body)
 
     fetcher = (
         AsyncFetcher(Secret("synthetic-test-key"))
@@ -165,8 +170,15 @@ async def test_image_from_public_client_to_http_and_back(asynchronous: bool, tmp
                 NODE_ID, b"image-bytes", filename="image.png", declared_cold=True
             )
         )
-        assert result.outcome is SendOutcome.CONFIRMED
-        assert result.channel_message_id.value == 42
+        if receipt == "complete":
+            assert result.outcome is SendOutcome.CONFIRMED
+            assert result.channel_message_id.value == 42
+        else:
+            assert result.outcome is SendOutcome.UNCONFIRMED
+            assert result.reason == (
+                "response_error_missing" if receipt == "missing" else "body_not_json"
+            )
+            assert not result.channel_message_id.is_observed
         assert len(requests) == 3
         assert [one.method for one in requests] == ["GET", "POST", "POST"]
     finally:

@@ -45,6 +45,11 @@ except ValidationError:
 else:
     raise AssertionError("Money accepted int64 overflow")
 assert all(hasattr(funora, name) for name in funora.__all__)
+from funora._runner import classify_send_response
+from funora.send_outcome import SEND_REASONS, SendOutcome
+receipt = classify_send_response('{"response": {}, "objects": []}', sent_to="test")
+assert receipt.outcome is SendOutcome.UNCONFIRMED
+assert receipt.reason == "response_error_missing" and receipt.reason in SEND_REASONS
 position = funora.ReviewsCursor("123", "opaque")
 assert funora.ReviewsCursor.from_token(position.to_token()) == position
 from funora._client import CatalogService

@@ -76,6 +76,12 @@ def _schema(name: str) -> dict[str, Any]:
     )
 
 
+def test_send_result_reasons_match_the_generated_pipeline() -> None:
+    from funora.send_outcome import SEND_REASONS
+
+    assert set(_schema("send-result")["properties"]["reason"]["enum"]) == set(SEND_REASONS)
+
+
 def _page(name: str) -> str:
     """Читает снимок страницы.
 
