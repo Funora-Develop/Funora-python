@@ -862,7 +862,7 @@ class Engine:
         #: обнуляется, и тридцать сообщений в час превращаются в тридцать на
         #: запуск. Бот под супервизором обходил бы ограничитель полностью.
         self._ledger: StateFile | None = (
-            StateFile(Path(state_path).resolve()) if state_path else None
+            StateFile(Path(state_path)) if state_path is not None else None
         )
 
         #: Что прочитано с шапки последнего списка диалогов.
@@ -915,7 +915,7 @@ class Engine:
             stored = self._ledger.load()
             self._state.outbound.restore(stored.get("outbound", {}))
             self._delivered.restore(stored.get("delivery", {}))
-            self._price_audit.restore(stored.get("price_audit") or {})
+            self._price_audit.restore(stored.get("price_audit", {}))
             self._stored_account = str(stored.get("account") or "")
         #: Смены состояния доступа, ждущие выдачи партией.
         self._health_changes: list[tuple[Health, Health, str]] = []
@@ -4111,7 +4111,7 @@ class Engine:
         if not isinstance(account_id, str) or not account_id.strip():
             raise ConfigurationError("watch требует непустой account_id")
         # Файл и lease используют один путь даже при переданной символической ссылке.
-        state = StateFile(Path(state_path).resolve()) if state_path is not None else self._ledger
+        state = StateFile(Path(state_path)) if state_path is not None else self._ledger
         if (
             state is not None
             and self._ledger is not None
@@ -4161,10 +4161,17 @@ class Engine:
             # менять ни живую квоту, ни признак долговечности.
             adopted_outbound = replace(self._state.outbound)
             adopted_outbound.restore(stored.get("outbound", {}), merge=True)
-            self._delivered.restore(stored.get("delivery", {}))
+            adopted_delivery = DeliveryLedger()
+            adopted_delivery.restore(stored.get("delivery", {}))
+            # Цена проверяется до замены реестра выдач. После её восстановления
+            # остаётся подключить уже проверенные данные; публичные ссылки на
+            # price_audit и delivered продолжают указывать на живые журналы.
+            self._price_audit.restore(stored.get("price_audit", {}), merge=True)
+            self._delivered.restore(adopted_delivery.snapshot())
             adopted_outbound.durable = True
             self._state.outbound = adopted_outbound
             self._ledger = state
+            self._price_audit.durable = True
 
             # ОТМЕТКА НЕ СНИМАЕТСЯ. Прежде усыновление файла её стирало, и
             # состояние здоровья переставало помнить, что часть отправок уже
@@ -4506,7 +4513,7 @@ class Engine:
             raise ConfigurationError("watch_id рынка должен отличаться от account_id личного watch")
         if max_iterations is not None and (type(max_iterations) is not int or max_iterations < 0):
             raise ConfigurationError("max_iterations должен быть неотрицательным целым")
-        state = StateFile(Path(state_path).resolve()) if state_path is not None else None
+        state = StateFile(Path(state_path)) if state_path is not None else None
         with watch_lease(self._watch_lock, state.path if state else None):
             cursor = initial_cursor(watches)
             dedup = Deduplicator()

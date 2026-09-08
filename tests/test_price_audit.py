@@ -27,7 +27,7 @@ from funora._price_audit import (
 )
 from funora._state import StateFile
 from funora._transport import TransportSettings
-from funora.errors import ConfigurationError
+from funora.errors import ConfigurationError, StateSchemaIncompatibleError
 
 
 def _change(offer_id: str, *, price_after: str = "100", at_ms: int = 1) -> PriceChange:
@@ -320,30 +320,14 @@ def test_original_is_the_first_and_stays_the_first() -> None:
         "не словарь",
     ],
 )
-def test_a_bad_record_is_skipped_and_the_rest_survives(record: Any) -> None:
-    """Требует, чтобы битая запись не рушила остальные.
-
-    Разбор по месту обнулял бы журнал и падал на середине: восстановленным
-    остаётся начало, а всё, что дальше, пропадает насовсем. Пропадает вместе с
-    прежними ценами.
-
-    Аргументы:
-        record (Any): непригодная запись.
-
-    Возвращает:
-        None
-    """
+def test_a_bad_record_preserves_the_previous_journal(record: Any) -> None:
+    """Повреждение любой записи не стирает известные исходные цены."""
     audit = PriceAudit()
-    audit.restore(
-        {
-            "journal": [
-                {**_flat("good-1"), **{}},
-                record,
-                {**_flat("good-2"), **{}},
-            ]
-        }
-    )
-    assert [one.offer_id for one in audit.history()] == ["good-1", "good-2"]
+    audit.record(_change(OFFER))
+    before = audit.snapshot()
+    with pytest.raises(StateSchemaIncompatibleError):
+        audit.restore({"journal": [_flat("good-1"), record, _flat("good-2")]})
+    assert audit.snapshot() == before
 
 
 def _flat(offer_id: str) -> dict[str, Any]:
@@ -366,39 +350,30 @@ def _flat(offer_id: str) -> dict[str, Any]:
 
 
 @pytest.mark.parametrize("value", [None, "нет", 12, [], {"journal": 1}])
-def test_a_broken_payload_leaves_an_empty_journal(value: Any) -> None:
-    """Требует пустого журнала, а не исключения, на непригодном разделе.
-
-    Файл мог быть записан прежней редакцией, у которой раздела не было вовсе.
-
-    Аргументы:
-        value (Any): непригодное значение раздела journal.
-
-    Возвращает:
-        None
-    """
+def test_a_broken_section_is_distinct_from_an_empty_list(value: Any) -> None:
+    """Пустой список допустим, неверный тип не означает отсутствие записей."""
     audit = PriceAudit()
     audit.record(_change(OFFER))
-    audit.restore({"journal": value})
-    assert len(audit) == 0
+    before = audit.snapshot()
+    if value == []:
+        audit.restore({"journal": value})
+        assert len(audit) == 0
+    else:
+        with pytest.raises(StateSchemaIncompatibleError):
+            audit.restore({"journal": value})
+        assert audit.snapshot() == before
 
 
 @pytest.mark.parametrize("value", [True, -1, "5", 1.5, None])
-def test_a_bad_dropped_counter_reads_as_zero(value: Any) -> None:
-    """Требует, чтобы непригодный счётчик читался нулём, а не чем попало.
-
-    Истина в Python - это единица, и счётчик True прочитался бы как одна
-    вытесненная запись.
-
-    Аргументы:
-        value (Any): непригодное значение счётчика.
-
-    Возвращает:
-        None
-    """
-    audit = PriceAudit()
-    audit.restore({"journal": [_flat("a")], "dropped": value})
-    assert audit.dropped == 0
+def test_a_bad_dropped_counter_preserves_the_previous_journal(value: Any) -> None:
+    """Повреждённый счётчик не скрывает вытеснение."""
+    audit = PriceAudit(limit=1)
+    audit.record(_change(OFFER))
+    audit.record(_change(OFFER, at_ms=2))
+    before = audit.snapshot()
+    with pytest.raises(StateSchemaIncompatibleError):
+        audit.restore({"journal": [_flat("a")], "dropped": value})
+    assert audit.snapshot() == before
 
 
 def test_a_good_dropped_counter_is_kept() -> None:
@@ -490,20 +465,14 @@ def _flat_of(change: PriceChange) -> tuple[str, ...]:
     )
 
 
-def test_a_field_of_the_wrong_type_reads_as_empty_not_as_text() -> None:
-    """Требует, чтобы число не выдавало себя за прочитанную цену.
-
-    Приведения к строке нет нарочно: 50, обращённое в «50», выглядело бы
-    прочитанной ценой, а прочитано оно не было.
-
-    Возвращает:
-        None
-    """
+def test_a_field_of_the_wrong_type_does_not_erase_the_original_price() -> None:
+    """Неверный тип цены или раздела не подменяется пустой строкой."""
     audit = PriceAudit()
-    audit.restore({"journal": [{**_flat("a"), "price_before": 50, "node_id": None}]})
-    one = audit.history()[0]
-    assert one.price_before == ""
-    assert one.node_id == ""
+    audit.record(_change(OFFER))
+    before = audit.snapshot()
+    with pytest.raises(StateSchemaIncompatibleError):
+        audit.restore({"journal": [{**_flat("a"), "price_before": 50, "node_id": None}]})
+    assert audit.snapshot() == before
 
 
 def test_the_declared_audit_is_the_one_that_refuses() -> None:

@@ -173,3 +173,5 @@ jobs:
           tests/test_lot_form_preservation.py
           tests/test_outbound_restore.py
           tests/test_durable_recovery.py
+          tests/test_price_audit_restore.py
+          tests/test_state_paths.py

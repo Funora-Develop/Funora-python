@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from stat import S_ISREG
 from typing import Any, Final
 
 from ._canonical import canonical_dumps
@@ -86,23 +87,42 @@ class StateFile:
     path: Path
 
     def __post_init__(self) -> None:
-        """Приводит путь к Path, если передали строку.
+        """Закрепляет общий путь файла и блокировок, сохраняя рабочие ссылки."""
+        path = Path(self.path)
+        try:
+            try:
+                resolved = path.resolve(strict=True)
+            except FileNotFoundError:
+                # Новый файл допустим, но битая ссылка в любом компоненте
+                # пути не должна создавать пустой журнал в другом месте.
+                for component in (path, *path.parents):
+                    if component.is_symlink():
+                        component.resolve(strict=True)
+                resolved = path.resolve()
+            object.__setattr__(self, "path", resolved)
+            self._exists()
+        except (OSError, RuntimeError) as exc:
+            raise StateSchemaIncompatibleError(
+                f"путь файла состояния {path} недоступен: {type(exc).__name__}"
+            ) from exc
 
-        ПРИНИМАТЬ СТРОКУ ОБЯЗАТЕЛЬНО, и вот почему. Прежде поле объявлялось
-        Path и строкой не приводилось, а первое же обращение звало
-        ``self.path.is_file()`` - то есть падало встроенным AttributeError, а
-        не отказом Funora. Строку сюда передаёт каждый: путь к файлу пишут
-        строкой, и пять примеров руководства писали её же.
-
-        Отказ при этом выглядел поломкой библиотеки, а не ошибкой вызова:
-        трассировка обрывалась внутри чужого модуля на атрибуте, которого у
-        строки нет.
-
-        Returns:
-            None
-        """
-        if not isinstance(self.path, Path):
-            object.__setattr__(self, "path", Path(self.path))
+    def _exists(self) -> bool:
+        """Отличает первый запуск от недоступного или специального файла."""
+        try:
+            mode = self.path.stat().st_mode
+        except OSError as exc:
+            if isinstance(exc, FileNotFoundError) and not any(
+                one.is_symlink() for one in (self.path, *self.path.parents)
+            ):
+                return False
+            raise StateSchemaIncompatibleError(
+                f"путь состояния {self.path} недоступен: {type(exc).__name__}"
+            ) from exc
+        if not S_ISREG(mode):
+            raise StateSchemaIncompatibleError(
+                f"путь состояния {self.path} не является обычным файлом"
+            )
+        return True
 
     def load(self) -> dict[str, Any]:
         """Читает состояние.
@@ -119,12 +139,11 @@ class StateFile:
                 Молчаливый старт с нуля здесь неотличим от штатной работы и
                 приводит к повторной обработке всего, что уже обработано.
         """
-        if not self.path.is_file():
-            return {}
-
         try:
+            if not self._exists():
+                return {}
             raw = load_json(self.path.read_text(encoding="utf-8"))
-        except (ValueError, RecursionError) as exc:
+        except (OSError, ValueError, RecursionError) as exc:
             raise StateSchemaIncompatibleError(
                 f"файл состояния {self.path} не читается: {type(exc).__name__}. "
                 "Удалите его вручную, если готовы к повторной обработке всего, "
@@ -244,6 +263,7 @@ class StateFile:
             self._save(payload)
 
     def _save(self, payload: dict[str, Any]) -> None:
+        self._exists()
         body = canonical_dumps(
             {
                 "format": STATE_FORMAT,
