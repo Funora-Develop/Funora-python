@@ -17,7 +17,9 @@ from funora._snapshot import compare, snapshot_of
 from funora.errors import ValidationError
 
 PROBE = json.loads(
-    (Path(__file__).parent / "fixtures/probes/market-price-display.guest.json").read_text()
+    (Path(__file__).parent / "fixtures/probes/market-price-display.guest.json").read_text(
+        encoding="utf-8"
+    )
 )
 CASES = [example for page in PROBE["pages"] for example in page["examples"]]
 
