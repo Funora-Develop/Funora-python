@@ -111,6 +111,7 @@ nav:
       - guide/budget.md
       - guide/async.md
   - Внутреннее устройство:
+      - completeness.md
       - validation.md
       - architecture.md
       - observations.md

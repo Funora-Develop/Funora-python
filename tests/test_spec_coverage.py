@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from pathlib import Path
@@ -303,42 +304,13 @@ def test_domain_types_come_from_the_spec() -> None:
 #: разные. Поэтому таблица рукописная - а рукописная таблица устаревает молча,
 #: и её стережёт проверка ниже: множество ключей обязано совпадать с множеством
 #: выполняемых операций.
+# Общая матрица используется также проверками sync/async и руководством.
+
 OPERATION_METHOD: dict[str, tuple[str, str]] = {
-    "chats.list": ("ChatsService", "list"),
-    "chats.history": ("ChatsService", "thread"),
-    "chats.history_before": ("ChatsService", "history_before"),
-    "chats.send_text": ("ChatsService", "send_text"),
-    "lots.list_own": ("LotsService", "list_own"),
-    "lots.form": ("LotsService", "form"),
-    "market.offers": ("MarketService", "offers"),
-    "market.snapshot": ("MarketService", "snapshot"),
-    "chips.offers": ("MarketService", "chips"),
-    "chips.calculate_prices": ("MarketService", "calculate_chip_prices"),
-    "lots.calculate_prices": ("LotsService", "calculate_prices"),
-    "account.switch_currency": ("AccountService", "switch_currency"),
-    "orders.details": ("OrdersService", "details"),
-    "orders.refund": ("OrdersService", "refund"),
-    "lots.promote": ("LotsService", "promote"),
-    "chats.buyer_viewing": ("ChatsService", "buyer_viewing"),
-    "chats.mark_read": ("ChatsService", "mark_read"),
-    "chats.send_image": ("ChatsService", "send_image"),
-    "reviews.leave": ("ReviewsService", "leave"),
-    "reviews.remove": ("ReviewsService", "remove"),
-    "lots.activate": ("LotsService", "activate"),
-    "lots.deactivate": ("LotsService", "deactivate"),
-    "lots.update_price": ("LotsService", "update_price"),
-    "account.balance": ("AccountService", "balance"),
-    "account.get": ("AccountService", "get"),
-    "account.refresh": ("AccountService", "refresh"),
-    "capabilities": ("AccountService", "capabilities"),
-    "session.health": ("AccountService", "health"),
-    "catalog.categories": ("CatalogService", "categories"),
-    "catalog.search": ("CatalogService", "search"),
-    "catalog.field_schema": ("CatalogService", "field_schema"),
-    "lots.showcase": ("LotsService", "showcase"),
-    "orders.get": ("OrdersService", "get"),
-    "orders.list": ("OrdersService", "list"),
-    "reviews.get": ("ReviewsService", "get"),
+    name: (row["service"], row["method"])
+    for name, row in json.loads(
+        (ROOT / "tests/fixtures/completeness.json").read_text(encoding="utf-8")
+    )["operations"].items()
 }
 
 

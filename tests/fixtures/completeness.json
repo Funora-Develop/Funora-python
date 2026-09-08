@@ -1,0 +1,377 @@
+{
+  "operations": {
+    "account.balance": {
+      "service": "AccountService",
+      "method": "balance",
+      "engine": "read_balance",
+      "tests": [
+        "tests/test_account.py::test_every_field_of_every_transaction_is_read"
+      ],
+      "limits": [
+        "dyn_table_continue_request"
+      ]
+    },
+    "account.get": {
+      "service": "AccountService",
+      "method": "get",
+      "engine": "read_account",
+      "tests": [
+        "tests/test_service_reads.py::test_account_reads_bind_identity_and_refresh_from_the_page"
+      ],
+      "limits": []
+    },
+    "account.refresh": {
+      "service": "AccountService",
+      "method": "refresh",
+      "engine": "read_account",
+      "tests": [
+        "tests/test_service_reads.py::test_account_reads_bind_identity_and_refresh_from_the_page"
+      ],
+      "limits": []
+    },
+    "account.switch_currency": {
+      "service": "AccountService",
+      "method": "switch_currency",
+      "engine": "switch_currency",
+      "tests": [
+        "tests/test_currency_switch.py::test_confirmation_is_never_given_on_the_users_behalf"
+      ],
+      "limits": []
+    },
+    "capabilities": {
+      "service": "AccountService",
+      "method": "capabilities",
+      "engine": "capability_profile",
+      "tests": [
+        "tests/test_capability_profile.py::test_profiles_do_not_probe_or_refresh_evidence"
+      ],
+      "limits": []
+    },
+    "catalog.categories": {
+      "service": "CatalogService",
+      "method": "categories",
+      "engine": "read_catalog",
+      "tests": [
+        "tests/test_catalog_cache.py::test_cache_preserves_observation_and_refresh_bypasses_it"
+      ],
+      "limits": []
+    },
+    "catalog.field_schema": {
+      "service": "CatalogService",
+      "method": "field_schema",
+      "engine": "read_field_schema",
+      "tests": [
+        "tests/test_field_schema.py::test_observed_schema_keeps_choices_ranges_and_empty_option"
+      ],
+      "limits": []
+    },
+    "catalog.search": {
+      "service": "CatalogService",
+      "method": "search",
+      "engine": "read_catalog_search",
+      "tests": [
+        "tests/test_catalog_search.py::test_both_clients_use_real_public_post_without_account_cookie"
+      ],
+      "limits": []
+    },
+    "chats.buyer_viewing": {
+      "service": "ChatsService",
+      "method": "buyer_viewing",
+      "engine": "read_buyer_viewing",
+      "tests": [
+        "tests/test_buyer_viewing.py::test_markup_that_does_not_parse_keeps_the_markup"
+      ],
+      "limits": []
+    },
+    "chats.history": {
+      "service": "ChatsService",
+      "method": "thread",
+      "engine": "read_thread",
+      "tests": [
+        "tests/test_client.py::test_thread_reads_messages"
+      ],
+      "limits": []
+    },
+    "chats.history_before": {
+      "service": "ChatsService",
+      "method": "history_before",
+      "engine": "read_history_before",
+      "tests": [
+        "tests/test_chat_history.py::test_one_wrong_message_condemns_the_whole_reply"
+      ],
+      "limits": []
+    },
+    "chats.list": {
+      "service": "ChatsService",
+      "method": "list",
+      "engine": "read_chats",
+      "tests": [
+        "tests/test_client.py::test_chats_list_reads_the_dialog_list"
+      ],
+      "limits": []
+    },
+    "chats.mark_read": {
+      "service": "ChatsService",
+      "method": "mark_read",
+      "engine": "mark_chat_read",
+      "tests": [
+        "tests/test_mark_read.py::test_the_request_carries_no_action_at_all"
+      ],
+      "limits": [
+        "runner_error_shape"
+      ]
+    },
+    "chats.send_image": {
+      "service": "ChatsService",
+      "method": "send_image",
+      "engine": "send_image",
+      "tests": [
+        "tests/test_send_image.py::test_without_a_file_number_the_second_request_never_leaves"
+      ],
+      "limits": [
+        "runner_error_shape"
+      ]
+    },
+    "chats.send_text": {
+      "service": "ChatsService",
+      "method": "send_text",
+      "engine": "send_text",
+      "tests": [
+        "tests/test_send_text_operation.py::test_a_confirmed_send_reads_the_page_then_submits_once"
+      ],
+      "limits": [
+        "runner_error_shape",
+        "chats_sending_form"
+      ]
+    },
+    "chips.calculate_prices": {
+      "service": "MarketService",
+      "method": "calculate_chip_prices",
+      "engine": "calculate_prices",
+      "tests": [
+        "tests/test_calc.py::test_the_two_addresses_take_two_different_arguments"
+      ],
+      "limits": []
+    },
+    "chips.offers": {
+      "service": "MarketService",
+      "method": "chips",
+      "engine": "read_chips",
+      "tests": [
+        "tests/test_chips.py::test_the_operation_reads_the_chips_address"
+      ],
+      "limits": []
+    },
+    "lots.activate": {
+      "service": "LotsService",
+      "method": "activate",
+      "engine": "set_lot_visible",
+      "tests": [
+        "tests/test_lot_visibility.py::test_turning_on_sends_the_flag_as_on"
+      ],
+      "limits": [
+        "lot_visibility_request_unobserved"
+      ]
+    },
+    "lots.calculate_prices": {
+      "service": "LotsService",
+      "method": "calculate_prices",
+      "engine": "calculate_prices",
+      "tests": [
+        "tests/test_calc.py::test_the_two_addresses_take_two_different_arguments"
+      ],
+      "limits": []
+    },
+    "lots.deactivate": {
+      "service": "LotsService",
+      "method": "deactivate",
+      "engine": "set_lot_visible",
+      "tests": [
+        "tests/test_lot_visibility.py::test_a_cleared_flag_leaves_as_an_empty_string"
+      ],
+      "limits": [
+        "lot_visibility_request_unobserved",
+        "lots_deactivate_guards"
+      ]
+    },
+    "lots.form": {
+      "service": "LotsService",
+      "method": "form",
+      "engine": "read_lot_form",
+      "tests": [
+        "tests/test_lot_revision.py::test_revision_matches_declared_json_frame"
+      ],
+      "limits": []
+    },
+    "lots.list_own": {
+      "service": "LotsService",
+      "method": "list_own",
+      "engine": "read_own_lots",
+      "tests": [
+        "tests/test_service_reads.py::test_order_and_lots_services_return_readable_identifiers"
+      ],
+      "limits": []
+    },
+    "lots.promote": {
+      "service": "LotsService",
+      "method": "promote",
+      "engine": "promote_lots",
+      "tests": [
+        "tests/test_promote.py::test_a_choice_url_cancels_the_success"
+      ],
+      "limits": [
+        "promote_success_shape_unobserved"
+      ]
+    },
+    "lots.showcase": {
+      "service": "LotsService",
+      "method": "showcase",
+      "engine": "read_showcase",
+      "tests": [
+        "tests/test_showcase.py::test_the_read_is_never_declared_complete"
+      ],
+      "limits": [
+        "showcase_truncation"
+      ]
+    },
+    "lots.update_price": {
+      "service": "LotsService",
+      "method": "update_price",
+      "engine": "update_price",
+      "tests": [
+        "tests/test_update_price.py::test_everything_read_is_sent_back_and_only_the_price_changes"
+      ],
+      "limits": [
+        "domain_conflict_error"
+      ]
+    },
+    "market.offers": {
+      "service": "MarketService",
+      "method": "offers",
+      "engine": "read_market",
+      "tests": [
+        "tests/test_market.py::test_lazy_rows_are_read_like_the_others"
+      ],
+      "limits": []
+    },
+    "market.snapshot": {
+      "service": "MarketService",
+      "method": "snapshot",
+      "engine": "read_market_snapshot",
+      "tests": [
+        "tests/test_market_snapshot.py::test_an_incomplete_snapshot_never_reports_absences"
+      ],
+      "limits": []
+    },
+    "orders.details": {
+      "service": "OrdersService",
+      "method": "details",
+      "engine": "read_order_details",
+      "tests": [
+        "tests/test_order_details.py::test_the_two_sides_are_separated"
+      ],
+      "limits": []
+    },
+    "orders.get": {
+      "service": "OrdersService",
+      "method": "get",
+      "engine": "read_order",
+      "tests": [
+        "tests/test_order.py::test_every_anchored_field_is_read"
+      ],
+      "limits": [
+        "order_chat_truncation",
+        "order_params_unnamed",
+        "domain_not_found"
+      ]
+    },
+    "orders.list": {
+      "service": "OrdersService",
+      "method": "list",
+      "engine": "read_orders",
+      "tests": [
+        "tests/test_orders.py::test_intact_page_is_complete"
+      ],
+      "limits": [
+        "dyn_table_continue_request"
+      ]
+    },
+    "orders.refund": {
+      "service": "OrdersService",
+      "method": "refund",
+      "engine": "refund_order",
+      "tests": [
+        "tests/test_refund.py::test_only_one_request_ever_leaves"
+      ],
+      "limits": []
+    },
+    "reviews.get": {
+      "service": "ReviewsService",
+      "method": "get",
+      "engine": "read_reviews",
+      "tests": [
+        "tests/test_reviews_pagination.py::test_sync_continuation_posts_the_exact_form_and_does_not_authenticate_guest"
+      ],
+      "limits": []
+    },
+    "reviews.leave": {
+      "service": "ReviewsService",
+      "method": "leave",
+      "engine": "leave_review",
+      "tests": [
+        "tests/test_reviews_write.py::test_a_matching_rating_confirms_the_outcome"
+      ],
+      "limits": []
+    },
+    "reviews.remove": {
+      "service": "ReviewsService",
+      "method": "remove",
+      "engine": "remove_review",
+      "tests": [
+        "tests/test_reviews_write.py::test_a_removal_that_left_the_rating_is_not_confirmed"
+      ],
+      "limits": []
+    },
+    "session.health": {
+      "service": "AccountService",
+      "method": "health",
+      "engine": "read_health",
+      "tests": [
+        "tests/test_whoami.py::test_a_stale_verdict_is_never_reported_as_a_fresh_check"
+      ],
+      "limits": [
+        "single_flight_reauth"
+      ]
+    }
+  },
+  "missing_events": {
+    "review.changed": "E: источник изменений отзывов и восстановление доставки",
+    "lot.price_changed": "E: изменения собственных лотов отдельно от рынка",
+    "lot.stock_changed": "C, E: типизированный остаток и неизвестное значение",
+    "seller.online_changed": "B, E: наблюдённый статус и смена присутствия"
+  },
+  "backlog": {
+    "budget_request_preemption": "G",
+    "lane_dropping": "G",
+    "handler_timeout_for_plain_calls": "G",
+    "dyn_table_continue_request": "B, C",
+    "showcase_truncation": "B, C",
+    "runner_error_shape": "B, F",
+    "withdraw_stays_unwritten": "I",
+    "promote_success_shape_unobserved": "B, D",
+    "lot_visibility_request_unobserved": "B, D",
+    "order_params_unnamed": "C, H",
+    "order_chat_truncation": "B, C",
+    "money_mapping_for_absent_languages": "Вне Python",
+    "domain_not_found": "B, H",
+    "domain_conflict_error": "B, H",
+    "parse_error_class": "H",
+    "channel_replay_by_position": "B, F",
+    "single_flight_reauth": "F",
+    "event_identity_source": "F",
+    "ordering_causality": "E, F",
+    "lots_deactivate_guards": "E",
+    "instant_attributes": "C, H",
+    "chats_sending_form": "A, H"
+  }
+}
