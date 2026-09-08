@@ -48,6 +48,7 @@ from ._host import host_of
 from ._identity import REGISTRY
 from ._lot_form import LotForm
 from ._market import MarketPage
+from ._monitoring import MarketWatch, MonitoringPlan
 from ._observed import Observed
 from ._order import OrderView
 from ._order_details import OrderDetailsBatch
@@ -96,7 +97,6 @@ T = TypeVar("T")
 #: перечень с ними, обращение к новой службе давало бы голый отказ языка.
 _SERVICES_IN_CONTRACT: Final[dict[str, str]] = {
     "account": "account_service_operations",
-    "market": "market_service_operations",
 }
 
 
@@ -790,6 +790,46 @@ class LotsService:
         return self._client.run(self._client.engine.calculate_prices(node_id=node_id, price=price))
 
 
+class Monitoring:
+    """Планирование и наблюдение публичных выдач без авторизации."""
+
+    __slots__ = ("_client",)
+
+    def __init__(self, client: Client) -> None:
+        self._client = client
+
+    def plan(self, *watches: MarketWatch) -> MonitoringPlan:
+        """Проверяет прогноз набора вместе с действующими наблюдениями, без HTTP."""
+        return self._client._public_engine._budget.monitoring_plan(watches, monotonic())
+
+    def watch(
+        self,
+        router: Router,
+        *watches: MarketWatch,
+        state_path: str | Path | None = None,
+        max_iterations: int | None = None,
+        on_handler_error: Callable[[HandlerError], None] | None = None,
+    ) -> None:
+        """Регистрирует набор до выхода из цикла; повторяет сохранённые события.
+
+        Файл состояния отдельный от личного watch. Без файла история живёт
+        только в текущем вызове. Набор и интервалы в файле неизменны.
+        max_iterations ограничивает число шагов, включая повтор без HTTP.
+        """
+        engine = self._client._public_engine
+        self._client.run(
+            engine.monitor_market(
+                watches,
+                account_id=self._client._account_id,
+                state_path=state_path,
+                max_iterations=max_iterations,
+            ),
+            engine=engine,
+            router=router,
+            on_handler_error=on_handler_error,
+        )
+
+
 class MarketService:
     """Публичные предложения раздела.
 
@@ -830,7 +870,7 @@ class MarketService:
 
         Returns:
             MarketSnapshot: Снимок. Сравнивать его можно только с другим
-            снимком того же запроса - это делает `funora.market.compare`.
+            снимком того же запроса - это делает `funora.compare`.
 
         Raises:
             ValidationError: Если номер непригоден для подстановки.
@@ -975,6 +1015,8 @@ class Client:
         "engine",
         "lots",
         "market",
+        "monitoring",
+        "_account_id",
         "orders",
         "pool",
         "reviews",
@@ -1053,6 +1095,8 @@ class Client:
         self.account = AccountService(self)
         self.lots = LotsService(self)
         self.catalog = CatalogService(self)
+        self._account_id = account_id
+        self.monitoring = Monitoring(self)
         self.market = MarketService(self)
 
     def __getattr__(self, name: str) -> object:

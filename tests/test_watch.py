@@ -1764,6 +1764,13 @@ def test_every_declared_kind_is_actually_produced() -> None:
         ).type,
     }
 
+    from test_monitoring import history, snapshot
+
+    _, events = history(
+        snapshot(), snapshot("2"), snapshot(absent=True), snapshot(absent=True), snapshot()
+    )
+    produced.update(event.type for event in events)
+
     assert produced >= PRODUCIBLE, (
         f"объявлено порождаемым, но не порождается: {PRODUCIBLE - produced} - "
         "подписка на такой вид пройдёт, а обработчик промолчит"

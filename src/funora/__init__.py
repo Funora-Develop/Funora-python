@@ -52,6 +52,7 @@ from ._host import host_of, is_safe_hop, same_host
 from ._lot_form import LotForm, parse_lot_form
 from ._market import MarketOffer, MarketPage
 from ._money import CURRENCY_BY_SYMBOL, Money, currency_of_symbol
+from ._monitoring import MarketWatch, MonitoringLimit, MonitoringPlan
 from ._observed import Confidence, Observed, Presence
 from ._order import OrderParam, OrderView
 from ._order_details import OrderDetails, OrderDetailsBatch
@@ -110,6 +111,9 @@ from .extraction import (
 __version__ = "0.0.1.dev0"
 
 __all__ = [
+    "MarketWatch",
+    "MonitoringPlan",
+    "MonitoringLimit",
     "FieldDefinition",
     "FieldOption",
     "FieldSchema",

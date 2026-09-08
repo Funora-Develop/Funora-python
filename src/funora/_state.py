@@ -63,7 +63,8 @@ __all__ = ["StateFile", "STATE_FORMAT"]
 #: повторную обработку всего, что уже обработано.
 #: v5 хранит непринятую партию до обработчиков. v4 без незавершённых попыток
 #: читается без сброса; v4 с попытками не содержит самих событий для повтора.
-STATE_FORMAT: Final[str] = "funora-state-v5"
+#: v6 различает личный курсор и набор снимков рынка. v5 читается без сброса.
+STATE_FORMAT: Final[str] = "funora-state-v6"
 
 #: Семейство адаптера, к которому относится состояние.
 #:
@@ -146,7 +147,7 @@ class StateFile:
             )
 
         stored_format = raw.get("format")
-        if stored_format not in (STATE_FORMAT, "funora-state-v4"):
+        if stored_format not in (STATE_FORMAT, "funora-state-v5", "funora-state-v4"):
             raise StateSchemaIncompatibleError(
                 f"файл состояния {self.path} записан форматом {stored_format!r}, "
                 f"ожидался {STATE_FORMAT!r}"

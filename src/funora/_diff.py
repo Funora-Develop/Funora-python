@@ -223,6 +223,7 @@ def make_event(
     observed_at: datetime,
     key_field: str,
     payload: dict[str, Any],
+    key_value: str | None = None,
 ) -> Event:
     """Собирает событие с отпечатком и ключом упорядочивания из спецификации.
 
@@ -259,7 +260,9 @@ def make_event(
             revision=revision,
         ),
         type=event_type,
-        ordering_key=ORDERING_KEY[event_type].format(**{key_field: entity_id}),
+        ordering_key=ORDERING_KEY[event_type].format(
+            **{key_field: entity_id if key_value is None else key_value}
+        ),
         entity_id=entity_id,
         observed_at=observed_at,
         origin=_STRUCTURAL,

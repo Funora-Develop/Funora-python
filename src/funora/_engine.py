@@ -98,6 +98,13 @@ from ._listen import (
 from ._lot_form import SAVE_PATH, LotForm, parse_lot_form
 from ._market import MarketPage, parse_market
 from ._money import CURRENCY_BY_SYMBOL
+from ._monitoring import (
+    MarketWatch,
+    initial_cursor,
+    observe_market,
+    validate_market_transition,
+    validate_watches,
+)
 from ._observed import Observed
 from ._order import OrderView, parse_order_page
 from ._order_details import (
@@ -443,7 +450,7 @@ CATALOG_SEARCH_PATH: Final[str] = "/games/promoFilter"
 
 def public_read_request(request: Request) -> bool:
     """Публичный POST разрешён только для наблюдённой формы поиска игр."""
-    if isinstance(request, (Fetch, Pause)):
+    if isinstance(request, (Fetch, Pause, Deliver)):
         return True
     if not (
         isinstance(request, Submit)
@@ -4187,6 +4194,8 @@ class Engine:
             cursor = stored.get("cursor", {})
             if not isinstance(cursor, dict):
                 raise CursorIncompatibleError("неверный курсор watch")
+            if "market" in cursor:
+                raise CursorIncompatibleError("файл состояния принадлежит monitoring.watch")
             saved_orders = cursor.get("orders")
             if isinstance(saved_orders, list):
                 # Старый курсор знал идентификаторы, но не состояния заказов.
@@ -4461,69 +4470,194 @@ class Engine:
                     True,
                 ).encode()
 
-            frozen = PendingBatch.decode(pending_json, account_id=account_id)
-            prepared = replace(
-                frozen,
-                events=tuple(
-                    replace(event, delivery=Delivery(attempt=event.delivery.attempt + 1))
-                    for event in frozen.events
-                ),
+            prepared, pending_json = yield from self._deliver_pending(
+                pending_json,
+                account_id=account_id,
+                state=state,
+                base_cursor=base_cursor,
+                greeted=greeted,
+                dedup=dedup,
+                persist_outbound=True,
             )
-            pending_json = prepared.encode()
-            if state is not None and prepared.events:
-                # Это журнал намерения доставить, а не подтверждение доставки.
-                # Запись обязана завершиться до первого обработчика партии.
-                state.update(
-                    {
-                        "watch_owner": account_id,
-                        "watch_pending": pending_json,
-                        "cursor": base_cursor,
-                        "watch_greeted": greeted,
-                    }
-                )
-
-            # Обработчик вправе менять payload. Он получает отдельную копию:
-            # такая правка не меняет повтор ни в памяти, ни после перезапуска.
-            reply = yield Deliver(PendingBatch.decode(pending_json, account_id=account_id).events)
-            if not isinstance(reply, StepResult):
-                raise TypeError(f"на просьбу Deliver ожидался итог раздачи, получено {type(reply)}")
-            result = reply
-            accepted = {event.id for event in result.delivered}
-            now = monotonic()
-            dedup.commit(tuple(event for event in prepared.events if event.id in accepted), now)
-            remaining = tuple(event for event in prepared.events if event.id not in accepted)
-            if not remaining:
+            if pending_json is None:
                 target = prepared.cursor
                 known_orders = target["orders"]
                 known_chats = target["chats"]
                 known_threads = {node: frozenset(ids) for node, ids in target["threads"].items()}
                 pending = list(target["pending_threads"])
                 greeted = prepared.greeted
-                pending_json = None
-            else:
-                pending_json = replace(prepared, events=remaining).encode()
-                _log.warning("новое чтение отложено: не принято событий %d", len(remaining))
+            yield Pause(plan.note(prepared.events, monotonic()))
 
+    def monitor_market(
+        self,
+        watches: tuple[MarketWatch, ...],
+        *,
+        account_id: str,
+        state_path: str | Path | None = None,
+        max_iterations: int | None = None,
+    ) -> Generator[Request, Reply, None]:
+        """Наблюдает набор выдач на публичной полосе с общим допуском и журналом."""
+        validate_watches(watches)
+        if any(one.watch_id == account_id for one in watches):
+            raise ConfigurationError("watch_id рынка должен отличаться от account_id личного watch")
+        if max_iterations is not None and (type(max_iterations) is not int or max_iterations < 0):
+            raise ConfigurationError("max_iterations должен быть неотрицательным целым")
+        state = StateFile(Path(state_path).resolve()) if state_path is not None else None
+        with watch_lease(self._watch_lock, state.path if state else None):
+            cursor = initial_cursor(watches)
+            dedup = Deduplicator()
+            pending_json: str | None = None
+            greeted = False
             if state is not None:
+                stored = state.load()
+                if stored.get("watch_owner", account_id) != account_id:
+                    raise CursorIncompatibleError("файл наблюдений принадлежит другому account_id")
+                if "cursor" in stored:
+                    try:
+                        restored = validate_cursor(stored["cursor"])
+                        if "watch_owner" not in stored:
+                            raise ValueError("утрачен владелец истории")
+                        if "market" not in restored or {
+                            key: value["config"] for key, value in restored["market"].items()
+                        } != {key: value["config"] for key, value in cursor["market"].items()}:
+                            raise ValueError("другой набор наблюдений")
+                    except (ValueError, TypeError) as exc:
+                        raise CursorIncompatibleError(
+                            "файл содержит другую или повреждённую историю рынка"
+                        ) from exc
+                    cursor = restored
+                greeted = stored.get("watch_greeted", False)
+                if type(greeted) is not bool:
+                    raise CursorIncompatibleError("неверный признак начала наблюдений")
+                dedup.restore(
+                    stored.get("dedup", {}), monotonic(), ordering=stored.get("dedup_order")
+                )
+                pending_json = stored.get("watch_pending")
+                if pending_json is not None:
+                    frozen = PendingBatch.decode(pending_json, account_id=account_id)
+                    try:
+                        validate_market_transition(cursor, frozen.cursor, frozen.events)
+                    except ValueError as exc:
+                        raise CursorIncompatibleError("непринятая партия другого снимка") from exc
+            # Регистрация выполняется после проверки файла и до первого Fetch.
+            with self._budget.admit_monitoring(watches, monotonic()) as admission:
+                # Средний прогноз не разрешает стартовать весь набор залпом.
+                # Общий ритм чтений ограничен долей monitoring теснейшего ведра.
+                read_gap = max(
+                    (
+                        float(OPERATIONS["market.snapshot"].cost_hint / limit.available_per_second)
+                        for limit in admission.limits
+                    ),
+                    default=0.0,
+                )
+                next_read_at = 0.0
+                due = dict.fromkeys((one.watch_id for one in watches), 0.0)
+                step = 0
+                while max_iterations is None or step < max_iterations:
+                    step += 1
+                    if pending_json is None:
+                        watch = min(watches, key=lambda one: due[one.watch_id])
+                        wait = wait_until_ms(monotonic(), max(due[watch.watch_id], next_read_at))
+                        if wait:
+                            yield Pause(wait)
+                        snapshot = yield from self.read_market_snapshot(watch.node_id)
+                        target, events = observe_market(
+                            cursor, watch, snapshot, account_id=account_id
+                        )
+                        next_read_at = monotonic() + read_gap
+                        pending_json = PendingBatch(
+                            tuple(
+                                replace(event, delivery=Delivery(attempt=0))
+                                for event in dedup.filter(events, monotonic())
+                            ),
+                            target,
+                            True,
+                        ).encode()
+                    prepared, pending_json = yield from self._deliver_pending(
+                        pending_json,
+                        account_id=account_id,
+                        state=state,
+                        base_cursor=cursor,
+                        greeted=greeted,
+                        dedup=dedup,
+                        persist_outbound=False,
+                    )
+                    if pending_json is None:
+                        watch_id = validate_market_transition(
+                            cursor, prepared.cursor, prepared.events
+                        )
+                        interval = prepared.cursor["market"][watch_id]["config"]["interval_ms"]
+                        due[watch_id] = monotonic() + interval / 1000
+                        cursor, greeted = prepared.cursor, prepared.greeted
+                    elif max_iterations is None or step < max_iterations:
+                        yield Pause(min(one.interval_ms for one in watches))
+
+    def _deliver_pending(
+        self,
+        pending_json: str,
+        *,
+        account_id: str,
+        state: StateFile | None,
+        base_cursor: dict[str, Any],
+        greeted: bool,
+        dedup: Deduplicator,
+        persist_outbound: bool,
+    ) -> Generator[Request, Reply, tuple[PendingBatch, str | None]]:
+        """Общий журнал личного watch и рынка: намерение, раздача, подтверждение."""
+        frozen = PendingBatch.decode(pending_json, account_id=account_id)
+        prepared = replace(
+            frozen,
+            events=tuple(
+                replace(event, delivery=Delivery(attempt=event.delivery.attempt + 1))
+                for event in frozen.events
+            ),
+        )
+        pending_json = prepared.encode()
+        if state is not None and prepared.events:
+            # Это журнал намерения доставить, а не подтверждение доставки.
+            # Запись обязана завершиться до первого обработчика партии.
+            state.update(
+                {
+                    "watch_owner": account_id,
+                    "watch_pending": pending_json,
+                    "cursor": base_cursor,
+                    "watch_greeted": greeted,
+                }
+            )
+
+        # Обработчик вправе менять payload. Он получает отдельную копию:
+        # такая правка не меняет повтор ни в памяти, ни после перезапуска.
+        reply = yield Deliver(PendingBatch.decode(pending_json, account_id=account_id).events)
+        if not isinstance(reply, StepResult):
+            raise TypeError(f"на просьбу Deliver ожидался итог раздачи, получено {type(reply)}")
+        result = reply
+        accepted = {event.id for event in result.delivered}
+        now = monotonic()
+        dedup.commit(tuple(event for event in prepared.events if event.id in accepted), now)
+        remaining = tuple(event for event in prepared.events if event.id not in accepted)
+        remaining_json = replace(prepared, events=remaining).encode() if remaining else None
+
+        if state is not None:
+            patch: dict[str, Any] = {
+                "watch_owner": account_id,
+                "dedup": dedup.snapshot(now),
+                "dedup_order": dedup.snapshot_order(),
+                "attempts": {event.id: event.delivery.attempt for event in remaining},
+                "watch_pending": remaining_json,
+            }
+            if persist_outbound:
                 self._state.outbound.forget_expired(
                     now_ms=int(datetime.now(UTC).timestamp() * 1000), now_s=now
                 )
-                patch: dict[str, Any] = {
-                    "watch_owner": account_id,
-                    "dedup": dedup.snapshot(now),
-                    "dedup_order": dedup.snapshot_order(),
-                    "attempts": {event.id: event.delivery.attempt for event in remaining},
-                    "watch_pending": pending_json,
-                    "outbound": self._state.outbound.snapshot(),
-                }
-                if not remaining:
-                    # Позиция и удаление партии фиксируются одной атомарной записью.
-                    patch.update({"cursor": prepared.cursor, "watch_greeted": greeted})
-                state.update(patch)
+                patch["outbound"] = self._state.outbound.snapshot()
+            if not remaining:
+                # Позиция и удаление партии фиксируются одной атомарной записью.
+                patch.update({"cursor": prepared.cursor, "watch_greeted": prepared.greeted})
+            state.update(patch)
 
-            if result.fatal is not None:
-                raise result.fatal
-            yield Pause(plan.note(prepared.events, now))
+        if result.fatal is not None:
+            raise result.fatal
+        return prepared, remaining_json
 
     def _note_success(
         self,

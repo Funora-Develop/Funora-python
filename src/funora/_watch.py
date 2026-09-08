@@ -112,6 +112,9 @@ PRODUCIBLE: Final[frozenset[EventType]] = frozenset(
         EventType.SNAPSHOT_INCOMPLETE,
         EventType.EVENT_LOSS,
         EventType.PROTOCOL_HEALTH_CHANGED,
+        EventType.MARKET_OFFER_APPEARED,
+        EventType.MARKET_OFFER_DISAPPEARED,
+        EventType.MARKET_PRICE_CHANGED,
     }
 )
 
@@ -606,7 +609,13 @@ async def adispatch(
     return _merge(events, tuple(results))
 
 
-def primed(account_id: str, observed_at: datetime, entities: tuple[str, ...]) -> Event:
+def primed(
+    account_id: str,
+    observed_at: datetime,
+    entities: tuple[str, ...],
+    *,
+    watch_id: str | None = None,
+) -> Event:
     """Собирает событие о сохранении первого снимка.
 
     Холодный старт молчит намеренно: события на каждую существующую сущность
@@ -631,14 +640,14 @@ def primed(account_id: str, observed_at: datetime, entities: tuple[str, ...]) ->
     return make_event(
         account_id=account_id,
         event_type=_PRIMED,
-        entity_id=account_id,
+        entity_id=account_id if watch_id is None else watch_id,
         # Версия - причина. Приветствие приходит один раз за срок гашения, и
         # второе приветствие того же наблюдения было бы повтором.
         revision=_COLD_START,
         observed_at=observed_at,
         key_field="watch_id",
         payload={
-            "watch_id": account_id,
+            "watch_id": account_id if watch_id is None else watch_id,
             # Перечень, а не число. Прежняя редакция схемы объявляла здесь
             # количество - оно отвечает на «сколько», тогда как получателю нужен
             # ответ на «за чем».
@@ -703,6 +712,7 @@ def incomplete(
     rows_total: int,
     rows_accepted: int,
     entity_ref: str | None = None,
+    watch_id: str | None = None,
 ) -> Event:
     """Собирает событие о неполно собранном снимке.
 
@@ -739,7 +749,7 @@ def incomplete(
     return make_event(
         account_id=account_id,
         event_type=_INCOMPLETE,
-        entity_id=account_id,
+        entity_id=account_id if watch_id is None else watch_id,
         revision=_PART_SEP.join(
             (entity, entity_ref or "", reason, f"{rows_accepted}/{rows_total}")
         ),
@@ -750,7 +760,7 @@ def incomplete(
             # события, и это не дубль конверта без причины. Нагрузку принято
             # передавать дальше отдельно от конверта - в очередь, в журнал, - и
             # там она обязана оставаться самодостаточной.
-            "watch_id": account_id,
+            "watch_id": account_id if watch_id is None else watch_id,
             "entity": entity,
             # Ключ на месте всегда, а None означает «неполон список целиком»:
             # у списка нет отдельной сущности, к которой неполноту можно

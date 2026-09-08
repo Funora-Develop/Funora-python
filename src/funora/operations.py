@@ -98,6 +98,7 @@ class Operation:
     provenance_rests_on: str = ""
     cache_ttl_ms: int = 0
     transport_lane: str = "authenticated"
+    cost_hint: int = 0
     cache_invalidate_on: tuple[str, ...] = ()
 
 
@@ -359,6 +360,7 @@ OPERATIONS: Final[dict[str, Operation]] = {
         request_class="monitoring",
         returns="ChipsPage",
         transport_lane="public_read",
+        cost_hint=1,
         errors=(
             "funora.capability.unsupported",
             "funora.protocol.changed",
@@ -432,6 +434,7 @@ OPERATIONS: Final[dict[str, Operation]] = {
         safety=Safety.SAFE,
         request_class="automation",
         returns="LotForm",
+        cost_hint=1,
         errors=(
             "funora.capability.unsupported",
             "funora.domain.not_found",
@@ -500,6 +503,7 @@ OPERATIONS: Final[dict[str, Operation]] = {
         request_class="monitoring",
         returns="MarketPage",
         transport_lane="public_read",
+        cost_hint=1,
         errors=(
             "funora.protocol.changed",
             "funora.transport.rate_limited",
@@ -513,6 +517,7 @@ OPERATIONS: Final[dict[str, Operation]] = {
         request_class="monitoring",
         returns="MarketSnapshot",
         transport_lane="public_read",
+        cost_hint=1,
         errors=(
             "funora.protocol.changed",
             "funora.transport.rate_limited",
@@ -654,6 +659,7 @@ OPERATIONS: Final[dict[str, Operation]] = {
         safety=Safety.SAFE,
         request_class="poll",
         returns="SessionHealth",
+        cost_hint=1,
         errors=(
             "funora.auth.session_expired",
             "funora.auth.access_blocked",

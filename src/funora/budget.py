@@ -53,6 +53,8 @@ __all__ = [
     "Scheduling",
     "SCHEDULING",
     "PROVISIONAL",
+    "MARKET_INTERVAL_MS",
+    "MARKET_ABSENCES",
 ]
 
 
@@ -302,3 +304,6 @@ SCHEDULING: Final[Scheduling] = Scheduling(
 #: Снимается только тогда, когда пороги станут известны из наблюдений.
 #: Измерять их намеренным превышением нельзя.
 PROVISIONAL: Final[bool] = True
+
+MARKET_INTERVAL_MS: Final[int] = 120000
+MARKET_ABSENCES: Final[int] = 2

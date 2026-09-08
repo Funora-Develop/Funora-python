@@ -1318,6 +1318,49 @@ def render_budget(spec: Path) -> str:
     doc = _load(spec, "spec/runtime/budget.yaml")
     if doc.get("waiting", {}).get("arithmetic") != "exact_decimal":
         raise SystemExit("арифметика бюджета не поддержана реализацией")
+    admission = doc.get("admission_control", {})
+    if not isinstance(admission, dict) or set(admission) - {
+        "enabled",
+        "cost_source",
+        "dry_run",
+        "run",
+        "forecast_share",
+        "lifetime",
+        "rule",
+        "forecast",
+        "cost_note",
+    }:
+        raise SystemExit("неизвестные правила допуска наблюдений")
+    for key, expected in {
+        "enabled": True,
+        "cost_source": "adapter_capability_profile",
+        "dry_run": "monitoring.plan",
+        "run": "monitoring.watch",
+        "forecast_share": "monitoring_floor",
+        "lifetime": "watch_call",
+    }.items():
+        if admission.get(key) != expected or type(admission.get(key)) is not type(expected):
+            raise SystemExit(f"неподдерживаемое правило допуска наблюдений: {key}")
+    market = doc.get("market_watch", {})
+    if not isinstance(market, dict) or set(market) != {
+        "default_interval_ms",
+        "consecutive_absences",
+        "revision",
+        "incomplete",
+        "cold_start",
+        "rule",
+    }:
+        raise SystemExit("неизвестный состав market_watch")
+    for key, expected in {
+        "revision": "watch_id_and_snapshot_sequence",
+        "incomplete": "keep_known_reset_absences",
+        "cold_start": "silence_until_complete_baseline",
+    }.items():
+        if market.get(key) != expected:
+            raise SystemExit(f"неподдерживаемое правило market_watch: {key}")
+    for key in ("default_interval_ms", "consecutive_absences"):
+        if type(market.get(key)) is not int or market[key] < 1:
+            raise SystemExit(f"неверное число market_watch: {key}")
     buckets: dict[str, Any] = doc["buckets"]
     limits: dict[str, Any] = doc["limits"]
 
@@ -1377,6 +1420,8 @@ def render_budget(spec: Path) -> str:
         "Scheduling",
         "SCHEDULING",
         "PROVISIONAL",
+        "MARKET_INTERVAL_MS",
+        "MARKET_ABSENCES",
     ):
         out.append(f'    "{name}",\n')
     out.append("]\n")
@@ -1782,6 +1827,8 @@ def render_budget(spec: Path) -> str:
     out.append("#: Снимается только тогда, когда пороги станут известны из наблюдений.\n")
     out.append("#: Измерять их намеренным превышением нельзя.\n")
     out.append(f"PROVISIONAL: Final[bool] = {bool(doc.get('provisional', True))}\n")
+    out.append(f"\nMARKET_INTERVAL_MS: Final[int] = {market['default_interval_ms']}\n")
+    out.append(f"MARKET_ABSENCES: Final[int] = {market['consecutive_absences']}\n")
 
     return "".join(out)
 
@@ -2356,6 +2403,7 @@ def render_operations(spec: Path) -> str:
     out.append('    provenance_rests_on: str = ""\n')
     out.append("    cache_ttl_ms: int = 0\n")
     out.append('    transport_lane: str = "authenticated"\n')
+    out.append("    cost_hint: int = 0\n")
     out.append("    cache_invalidate_on: tuple[str, ...] = ()\n")
 
     out.append("\n\n#: Операции служб по идентификатору.\n")
@@ -2363,6 +2411,9 @@ def render_operations(spec: Path) -> str:
     for name in sorted(operations):
         body = operations[name]
         lane = body.get("transport_lane", "authenticated")
+        cost = body.get("cost_hint", 0)
+        if type(cost) is not int or cost < 0 or (name == "market.snapshot" and cost != 1):
+            raise SystemExit(f"{name}: неподдерживаемый cost_hint")
         expected_lane = (
             "public_read"
             if name in {"market.offers", "market.snapshot", "chips.offers", "catalog.search"}
@@ -2397,6 +2448,8 @@ def render_operations(spec: Path) -> str:
         out.append(f'        returns="{body["returns"]}",\n')
         if lane != "authenticated":
             out.append(f'        transport_lane="{lane}",\n')
+        if cost:
+            out.append(f"        cost_hint={cost},\n")
         if cache is not None:
             out.append(f"        cache_ttl_ms={cache['ttl_ms']},\n")
             out.append(

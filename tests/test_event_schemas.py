@@ -169,6 +169,17 @@ def _every_produced_event() -> list[Event]:
         ),
     ]
 
+    from test_monitoring import history, snapshot
+
+    _, market_events = history(
+        snapshot(),
+        snapshot("2"),
+        snapshot(absent=True),
+        snapshot(absent=True),
+        snapshot(),
+        account_id=ACCOUNT,
+    )
+    events.extend(market_events)
     kinds = {event.type for event in events}
     assert kinds == PRODUCIBLE, (
         f"собрались не все порождаемые виды: не хватает {PRODUCIBLE - kinds} - "

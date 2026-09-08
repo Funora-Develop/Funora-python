@@ -64,6 +64,9 @@ assert all(budget.reserve(0.001).granted for _ in range(5))
 assert budget.reserve(0.001).wait_ms == 201
 assert budget.reserve(0.202).granted
 with Client(public_only=True, account_id='package-check') as client:
+    watch = funora.MarketWatch('package-market', '922')
+    assert client.monitoring.plan(watch).admitted
+    client.monitoring.watch(funora.Router(), watch, max_iterations=0)
     try:
         client.orders.list()
     except ConfigurationError:
@@ -72,8 +75,10 @@ with Client(public_only=True, account_id='package-check') as client:
         raise AssertionError('anonymous client accepted a private operation')
 import asyncio
 async def check_async():
-    async with AsyncClient(public_only=True):
-        pass
+    async with AsyncClient(public_only=True) as client:
+        watch = funora.MarketWatch("package-market-async", "922")
+        assert client.monitoring.plan(watch).admitted
+        await client.monitoring.watch(funora.Router(), watch, max_iterations=0)
 asyncio.run(check_async())
 print('wheel imports and public API: OK')
 """,

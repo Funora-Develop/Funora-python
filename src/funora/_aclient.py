@@ -51,6 +51,7 @@ from ._host import host_of
 from ._identity import REGISTRY
 from ._lot_form import LotForm
 from ._market import MarketPage
+from ._monitoring import MarketWatch, MonitoringPlan
 from ._observed import Observed
 from ._order import OrderView
 from ._order_details import OrderDetailsBatch
@@ -764,6 +765,46 @@ class AsyncLotsService:
         )
 
 
+class AsyncMonitoring:
+    """Планирование и наблюдение публичных выдач без авторизации."""
+
+    __slots__ = ("_client",)
+
+    def __init__(self, client: AsyncClient) -> None:
+        self._client = client
+
+    def plan(self, *watches: MarketWatch) -> MonitoringPlan:
+        """Проверяет прогноз набора вместе с действующими наблюдениями, без HTTP."""
+        return self._client._public_engine._budget.monitoring_plan(watches, monotonic())
+
+    async def watch(
+        self,
+        router: Router,
+        *watches: MarketWatch,
+        state_path: str | Path | None = None,
+        max_iterations: int | None = None,
+        on_handler_error: Callable[[HandlerError], None] | None = None,
+    ) -> None:
+        """Регистрирует набор до выхода из цикла; повторяет сохранённые события.
+
+        Файл состояния отдельный от личного watch. Без файла история живёт
+        только в текущем вызове. Набор и интервалы в файле неизменны.
+        max_iterations ограничивает число шагов, включая повтор без HTTP.
+        """
+        engine = self._client._public_engine
+        await self._client.run(
+            engine.monitor_market(
+                watches,
+                account_id=self._client._account_id,
+                state_path=state_path,
+                max_iterations=max_iterations,
+            ),
+            engine=engine,
+            router=router,
+            on_handler_error=on_handler_error,
+        )
+
+
 class AsyncMarketService:
     """Публичные предложения раздела.
 
@@ -804,7 +845,7 @@ class AsyncMarketService:
 
         Returns:
             MarketSnapshot: Снимок. Сравнивать его можно только с другим
-            снимком того же запроса - это делает `funora.market.compare`.
+            снимком того же запроса - это делает `funora.compare`.
 
         Raises:
             ValidationError: Если номер непригоден для подстановки.
@@ -946,6 +987,8 @@ class AsyncClient:
         "engine",
         "lots",
         "market",
+        "monitoring",
+        "_account_id",
         "orders",
         "pool",
         "reviews",
@@ -1023,6 +1066,8 @@ class AsyncClient:
         self.account = AsyncAccountService(self)
         self.lots = AsyncLotsService(self)
         self.catalog = AsyncCatalogService(self)
+        self._account_id = account_id
+        self.monitoring = AsyncMonitoring(self)
         self.market = AsyncMarketService(self)
 
     async def _read(

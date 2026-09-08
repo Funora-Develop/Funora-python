@@ -20,11 +20,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from fractions import Fraction
 from threading import RLock
 from typing import Final
 
+from ._monitoring import MarketWatch, MonitoringLimit, MonitoringPlan, validate_watches
 from .budget import (
     BUCKETS,
     BURST_WINDOW_MS,
@@ -234,10 +237,18 @@ class Budget:
             нормативен: сначала общее, потом ведро аккаунта.
     """
 
-    __slots__ = ("_buckets", "_demanded_at", "_suspended_until", "_lock", "_accounts")
+    __slots__ = (
+        "_buckets",
+        "_demanded_at",
+        "_suspended_until",
+        "_lock",
+        "_accounts",
+        "_monitoring",
+    )
 
     def __init__(self, names: tuple[str, ...] = ("host", "account", "write")) -> None:
         self._accounts: dict[str, Budget] = {}
+        self._monitoring: dict[object, tuple[tuple[TokenBucket, ...], tuple[MarketWatch, ...]]] = {}
         self._lock = RLock()
         self._buckets = tuple(TokenBucket(BUCKETS[name]) for name in names)
         #: Когда каждый класс последний раз просил бюджет.
@@ -263,6 +274,7 @@ class Budget:
                 child._lock = self._lock
                 child._demanded_at = self._demanded_at
                 child._suspended_until = self._suspended_until
+                child._monitoring = self._monitoring
                 buckets = []
                 for bucket in self._buckets:
                     if bucket.limits.name == "account":
@@ -274,6 +286,70 @@ class Budget:
                 child._buckets = tuple(buckets)
                 self._accounts[account] = child
             return self._accounts[account]
+
+    def monitoring_plan(self, watches: tuple[MarketWatch, ...], now: float) -> MonitoringPlan:
+        """Проверяет суммарный прогноз под общей блокировкой, не расходуя токены."""
+        validate_watches(watches)
+        with self._lock:
+            rate = sum((one.requests_per_second for one in watches), Fraction())
+            limits = []
+            for bucket in self._buckets:
+                if bucket.limits.unit != "requests":
+                    continue
+                used = sum(
+                    (
+                        one.requests_per_second
+                        for buckets, existing in self._monitoring.values()
+                        if any(bucket is other for other in buckets)
+                        for one in existing
+                    ),
+                    Fraction(),
+                )
+                capacity = (
+                    _exact(bucket.limits.refill_per_second)
+                    * _exact(bucket.factor)
+                    * _exact(FLOOR_SHARE[RequestClass.MONITORING])
+                )
+                limits.append(MonitoringLimit(bucket.limits.name, used + rate, capacity))
+            occupied = {
+                one.watch_id for _, existing in self._monitoring.values() for one in existing
+            }
+            reason = (
+                "watch_id_in_use"
+                if any(one.watch_id in occupied for one in watches)
+                else "monitoring_suspended"
+                if self.is_suspended(RequestClass.MONITORING, now)
+                else "forecast_exceeds_budget"
+                if any(one.requests_per_second > one.available_per_second for one in limits)
+                else None
+            )
+            return MonitoringPlan(
+                reason is None,
+                rate,
+                tuple(limits),
+                tuple(one.watch_id for one in watches) if reason else (),
+                reason,
+            )
+
+    @contextmanager
+    def admit_monitoring(
+        self, watches: tuple[MarketWatch, ...], now: float
+    ) -> Iterator[MonitoringPlan]:
+        """Регистрирует весь набор атомарно и освобождает его при любом выходе."""
+        token = object()
+        with self._lock:
+            plan = self.monitoring_plan(watches, now)
+            if not plan.admitted:
+                raise BudgetExhaustedError(
+                    f"наблюдения не допущены ({plan.reason}); снимите или измените: "
+                    + ", ".join(plan.rejected_watch_ids)
+                )
+            self._monitoring[token] = (self._buckets, watches)
+        try:
+            yield plan
+        finally:
+            with self._lock:
+                del self._monitoring[token]
 
     def suspend(self, classes: tuple[RequestClass, ...], *, until: float | Fraction) -> None:
         """Снимает классы запросов с очереди до названного момента.
