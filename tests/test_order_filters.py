@@ -86,7 +86,7 @@ async def test_async_filtered_empty_read():
 
 
 @pytest.mark.parametrize("name", ["order_id", "buyer", "status", "game_id", "section"])
-@pytest.mark.parametrize("value", ["", " \t", False, 42, [], {}])
+@pytest.mark.parametrize("value", ["", " \t", False, 42, [], {}, "\ud800"])
 async def test_invalid_types_and_blank_filters_fail_before_io(name, value):
     sync = Transport([])
     with Client(transport=sync) as client, pytest.raises(ValidationError):

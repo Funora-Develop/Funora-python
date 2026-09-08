@@ -101,6 +101,10 @@ def normalize_order_filters(
         if not isinstance(value, str) or not value.strip():
             raise ValidationError(f"фильтр {name} должен быть непустой строкой")
         fields[name] = value.strip()
+        try:
+            fields[name].encode("utf-8")
+        except UnicodeEncodeError:
+            raise ValidationError(f"фильтр {name} содержит некорректный Unicode") from None
     if "state" in fields and fields["state"] not in {one.value for one in OrderStatus}:
         raise ValidationError("статус должен быть paid, closed или refunded")
     if "id" in fields and not (fields["id"].isascii() and fields["id"].isalnum()):
