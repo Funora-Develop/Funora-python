@@ -45,6 +45,7 @@ except ValidationError:
 else:
     raise AssertionError("Money accepted int64 overflow")
 assert all(hasattr(funora, name) for name in funora.__all__)
+funora.Router().on(funora.EventType.WATCH_DEGRADED)(lambda event: None)
 from funora._runner import classify_send_response
 from funora.send_outcome import SEND_REASONS, SendOutcome
 receipt = classify_send_response('{"response": {}, "objects": []}', sent_to="test")

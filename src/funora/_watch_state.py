@@ -19,7 +19,7 @@ from typing import Any
 
 from ._diff import Delivery, Event
 from ._fileio import file_lock
-from ._monitoring import validate_market_cursor, validate_market_payload
+from ._monitoring import MarketWatch, validate_market_cursor, validate_market_payload
 from ._state import _unique_pairs
 from ._watch import PRODUCIBLE
 from .errors import ConfigurationError, CursorIncompatibleError, StateSchemaIncompatibleError
@@ -176,18 +176,25 @@ class PendingBatch:
                     if kind in market_kinds:
                         if payload.get("offer_id") != record["entity_id"]:
                             raise ValueError("событие другого предложения")
-                        validate_market_payload(
-                            kind, payload, cursor["market"][key_value]["config"]["node_id"]
-                        )
                     elif (
-                        kind not in {EventType.WATCH_PRIMED, EventType.SNAPSHOT_INCOMPLETE}
+                        kind
+                        not in {
+                            EventType.WATCH_PRIMED,
+                            EventType.SNAPSHOT_INCOMPLETE,
+                            EventType.WATCH_DEGRADED,
+                        }
                         or record["entity_id"] != key_value
                     ):
                         raise ValueError("чужой вид события в партии рынка")
+                    if kind in market_kinds or kind is EventType.WATCH_DEGRADED:
+                        validate_market_payload(
+                            kind, payload, MarketWatch(**cursor["market"][key_value]["config"])
+                        )
                 elif kind in {
                     EventType.MARKET_OFFER_APPEARED,
                     EventType.MARKET_OFFER_DISAPPEARED,
                     EventType.MARKET_PRICE_CHANGED,
+                    EventType.WATCH_DEGRADED,
                 }:
                     raise ValueError("рыночное событие в личной партии")
                 if record["ordering_key"] != ORDERING_KEY[kind].format(

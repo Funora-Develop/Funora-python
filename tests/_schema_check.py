@@ -91,20 +91,20 @@ _JSON_TYPES: dict[str, tuple[type, ...]] = {
 #:
 #: По умолчанию пусто: сверка, не получившая словаря, отказывается работать со
 #: всяким доменным типом. Отказ громкий - см. UnsupportedKeyword.
-KNOWN_TYPES: set[str] = set()
+KNOWN_TYPES: dict[str, str] = {}
 
 
-def use_types(names: object) -> None:
+def use_types(definitions: dict[str, Any]) -> None:
     """Задаёт словарь доменных типов, известных проверке.
 
     Args:
-        names (object): Имена типов из spec/types.yaml.
+        definitions (dict[str, Any]): Объявления типов из spec/types.yaml.
 
     Returns:
         None
     """
     KNOWN_TYPES.clear()
-    KNOWN_TYPES.update(str(name) for name in names)  # type: ignore[union-attr]
+    KNOWN_TYPES.update({name: definition["json"] for name, definition in definitions.items()})
 
 
 class SchemaError(AssertionError):
@@ -209,7 +209,11 @@ def _check_value(value: Any, schema: dict[str, Any], where: str) -> None:
     if domain is not None:
         if domain not in KNOWN_TYPES:
             raise UnsupportedKeyword(f"{where}: проверка не знает x-funora-type «{domain}»")
-        if not isinstance(value, str) or not value:
+        json_type = KNOWN_TYPES[domain]
+        if json_type not in _JSON_TYPES:
+            raise UnsupportedKeyword(f"{where}: неизвестное JSON-представление {json_type}")
+        _check_value(value, {"type": json_type}, where)
+        if json_type == "string" and not value:
             _fail(where, f"доменный тип {domain} требует непустую строку, получено {value!r}")
         return
 

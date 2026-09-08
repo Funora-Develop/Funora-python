@@ -292,7 +292,7 @@ def test_domain_types_come_from_the_spec() -> None:
     assert root is not None
     doc = yaml.safe_load((root / "spec" / "types.yaml").read_text(encoding="utf-8"))
 
-    assert set(doc["types"]) == KNOWN_TYPES, (
+    assert {name: value["json"] for name, value in doc["types"].items()} == KNOWN_TYPES, (
         f"сверка знает {sorted(KNOWN_TYPES)}, спецификация объявляет {sorted(doc['types'])}"
     )
 

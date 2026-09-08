@@ -174,19 +174,41 @@ def observe_market(
     snapshot: MarketSnapshot,
     *,
     account_id: str,
+    read_interval_ms: int | None = None,
 ) -> tuple[dict[str, Any], tuple[Event, ...]]:
     """Положительные наблюдения дополняют историю; отсутствие требует полноты."""
     if snapshot.node_id != watch.node_id or snapshot.query_fingerprint != fingerprint_of(
         watch.node_id
     ):
         raise ValidationError("снимок принадлежит другой выдаче")
+    if read_interval_ms is not None and (type(read_interval_ms) is not int or read_interval_ms < 0):
+        raise ValidationError("интервал чтения должен быть неотрицательным целым")
     # Новая независимая позиция; прежняя остаётся до подтверждения доставки.
     target = json.loads(json.dumps(cursor, ensure_ascii=True, allow_nan=False))
     record = target["market"][watch.watch_id]
     sequence = record["sequence"] + 1
+    revision = json.dumps([watch.watch_id, sequence], ensure_ascii=True, separators=(",", ":"))
     events: list[Event] = []
     if sequence == 1:
         events.append(primed(account_id, snapshot.taken_at, ("market",), watch_id=watch.watch_id))
+    elif read_interval_ms is not None and read_interval_ms >= 2 * watch.interval_ms:
+        events.append(
+            make_event(
+                account_id=account_id,
+                event_type=EventType.WATCH_DEGRADED,
+                entity_id=watch.watch_id,
+                revision=revision,
+                observed_at=snapshot.taken_at,
+                key_field="watch_id",
+                key_value=watch.watch_id,
+                payload={
+                    "watch_id": watch.watch_id,
+                    "requested_interval_ms": watch.interval_ms,
+                    "effective_interval_ms": read_interval_ms,
+                    "reason_code": "schedule_overrun",
+                },
+            )
+        )
     if not snapshot.is_complete:
         events.append(
             incomplete(
@@ -208,9 +230,7 @@ def observe_market(
                 account_id=account_id,
                 event_type=kind,
                 entity_id=offer_id,
-                revision=json.dumps(
-                    [watch.watch_id, sequence], ensure_ascii=True, separators=(",", ":")
-                ),
+                revision=revision,
                 observed_at=snapshot.taken_at,
                 key_field="watch_id",
                 key_value=watch.watch_id,
@@ -296,8 +316,21 @@ def validate_market_transition(
     return watch_id
 
 
-def validate_market_payload(kind: EventType, payload: dict[str, Any], node_id: str) -> None:
+def validate_market_payload(kind: EventType, payload: dict[str, Any], watch: MarketWatch) -> None:
     """Восстановленная цена и ссылка должны соблюдать тот же контракт, что новые."""
+    if kind is EventType.WATCH_DEGRADED:
+        if (
+            set(payload)
+            != {"watch_id", "requested_interval_ms", "effective_interval_ms", "reason_code"}
+            or payload["watch_id"] != watch.watch_id
+            or type(payload["requested_interval_ms"]) is not int
+            or payload["requested_interval_ms"] != watch.interval_ms
+            or type(payload["effective_interval_ms"]) is not int
+            or payload["effective_interval_ms"] < 2 * watch.interval_ms
+            or payload["reason_code"] != "schedule_overrun"
+        ):
+            raise ValueError("неверное ухудшение интервала наблюдения")
+        return
     fields = {
         EventType.MARKET_OFFER_APPEARED: {"seller_id", "price", "query_fingerprint"},
         EventType.MARKET_OFFER_DISAPPEARED: {
@@ -309,7 +342,9 @@ def validate_market_payload(kind: EventType, payload: dict[str, Any], node_id: s
     }[kind]
     if set(payload) != fields | {"watch_id", "offer_id"}:
         raise ValueError("неверный состав рыночного события")
-    if "query_fingerprint" in fields and payload["query_fingerprint"] != fingerprint_of(node_id):
+    if "query_fingerprint" in fields and payload["query_fingerprint"] != fingerprint_of(
+        watch.node_id
+    ):
         raise ValueError("событие другой выдачи")
     if kind is EventType.MARKET_OFFER_APPEARED and (
         not isinstance(payload["seller_id"], str)

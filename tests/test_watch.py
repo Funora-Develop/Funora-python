@@ -1764,10 +1764,16 @@ def test_every_declared_kind_is_actually_produced() -> None:
         ).type,
     }
 
-    from test_monitoring import history, snapshot
+    from test_monitoring import WATCH, history, snapshot
 
-    _, events = history(
+    from funora._monitoring import observe_market
+
+    cursor, events = history(
         snapshot(), snapshot("2"), snapshot(absent=True), snapshot(absent=True), snapshot()
+    )
+    produced.update(event.type for event in events)
+    _, events = observe_market(
+        cursor, WATCH, snapshot(), account_id=account, read_interval_ms=300000
     )
     produced.update(event.type for event in events)
 

@@ -90,8 +90,8 @@ _PART_SEP: Final[str] = REVISION_SEPARATOR
 
 #: Виды событий, которые эта реализация вправду порождает.
 #:
-#: Перечисление объявляет шестнадцать видов, реализация порождает пять. Прочие
-#: одиннадцать - не задел на будущее, а ловушка: обработчик на них принимался
+#: Первоначально из шестнадцати видов порождались пять. Прочие
+#: одиннадцать оказались ловушкой: обработчик на них принимался
 #: без возражений и не срабатывал ни разу, а молчание неотличимо от «ничего не
 #: произошло».
 #:
@@ -109,6 +109,7 @@ PRODUCIBLE: Final[frozenset[EventType]] = frozenset(
         EventType.ORDER_CREATED,
         EventType.ORDER_STATUS_CHANGED,
         EventType.WATCH_PRIMED,
+        EventType.WATCH_DEGRADED,
         EventType.SNAPSHOT_INCOMPLETE,
         EventType.EVENT_LOSS,
         EventType.PROTOCOL_HEALTH_CHANGED,

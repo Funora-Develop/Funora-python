@@ -169,9 +169,11 @@ def _every_produced_event() -> list[Event]:
         ),
     ]
 
-    from test_monitoring import history, snapshot
+    from test_monitoring import WATCH, history, snapshot
 
-    _, market_events = history(
+    from funora._monitoring import observe_market
+
+    cursor, market_events = history(
         snapshot(),
         snapshot("2"),
         snapshot(absent=True),
@@ -180,6 +182,10 @@ def _every_produced_event() -> list[Event]:
         account_id=ACCOUNT,
     )
     events.extend(market_events)
+    _, delayed = observe_market(
+        cursor, WATCH, snapshot(), account_id=ACCOUNT, read_interval_ms=300000
+    )
+    events.extend(delayed)
     kinds = {event.type for event in events}
     assert kinds == PRODUCIBLE, (
         f"собрались не все порождаемые виды: не хватает {PRODUCIBLE - kinds} - "
@@ -224,6 +230,16 @@ def test_every_produced_payload_matches_its_schema() -> None:
         schema = schemas.get(str(event.type))
         assert schema is not None, f"для вида {event.type} нет схемы в спецификации"
         check(event.payload, schema, where=f"нагрузка {event.type}")
+
+
+@pytest.mark.parametrize("value", ["120000", True, 120000.0, None, [], {}])
+def test_duration_requires_json_integer(value) -> None:
+    from _schema_check import SchemaError
+
+    schema = {"type": "object", "properties": {"delay": {"x-funora-type": "duration"}}}
+    check({"delay": 120000}, schema)
+    with pytest.raises(SchemaError):
+        check({"delay": value}, schema)
 
 
 def test_every_produced_event_matches_the_envelope() -> None:

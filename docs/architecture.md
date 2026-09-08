@@ -302,7 +302,7 @@
 
 Что порождается сегодня: `order.created`, `order.status_changed`,
 `chat.unread_changed`, `message.created`, `watch.primed`, `snapshot.incomplete`,
-`event.loss`, `protocol.health_changed`, `market.offer_appeared`,
+`event.loss`, `protocol.health_changed`, `watch.degraded`, `market.offer_appeared`,
 `market.offer_disappeared`, `market.price_changed`. Первые четыре выведены структурно;
 последние три сравнивают наблюдения выдачи. Остальные описывают само наблюдение
 и отношение площадки к аккаунту.
@@ -405,7 +405,7 @@
 ## Подписка на то, чего не бывает
 
 `Router.on(EventType.REVIEW_CHANGED)` принимался без возражений и не срабатывал
-ни разу: перечисление объявляет шестнадцать видов, реализация порождает одиннадцать.
+ни разу: перечисление объявляет шестнадцать видов, реализация порождает двенадцать.
 
 Отказ происходит при регистрации, то есть при запуске. Строка в журнале была бы
 тем же молчанием с отсрочкой - журнал читают после происшествия, а не до. Тот же

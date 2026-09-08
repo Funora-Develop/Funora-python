@@ -34,6 +34,8 @@ def spec(tmp_path):
         ("market_watch.revision", "time"),
         ("market_watch.incomplete", "forget"),
         ("market_watch.cold_start", "emit_all"),
+        ("market_watch.schedule", "after_ack"),
+        ("market_watch.degradation", "any_delay"),
         ("market_watch.default_interval_ms", 0),
         ("market_watch.consecutive_absences", True),
     ],

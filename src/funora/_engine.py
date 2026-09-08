@@ -4552,6 +4552,7 @@ class Engine:
                 )
                 next_read_at = 0.0
                 due = dict.fromkeys((one.watch_id for one in watches), 0.0)
+                started: dict[str, float] = {}
                 step = 0
                 while max_iterations is None or step < max_iterations:
                     step += 1
@@ -4560,11 +4561,21 @@ class Engine:
                         wait = wait_until_ms(monotonic(), max(due[watch.watch_id], next_read_at))
                         if wait:
                             yield Pause(wait)
+                        read_started = monotonic()
+                        previous_start = started.get(watch.watch_id)
                         snapshot = yield from self.read_market_snapshot(watch.node_id)
                         target, events = observe_market(
-                            cursor, watch, snapshot, account_id=account_id
+                            cursor,
+                            watch,
+                            snapshot,
+                            account_id=account_id,
+                            read_interval_ms=int((read_started - previous_start) * 1000)
+                            if previous_start is not None
+                            else None,
                         )
-                        next_read_at = monotonic() + read_gap
+                        started[watch.watch_id] = read_started
+                        due[watch.watch_id] = read_started + watch.interval_ms / 1000
+                        next_read_at = read_started + read_gap
                         pending_json = PendingBatch(
                             tuple(
                                 replace(event, delivery=Delivery(attempt=0))
@@ -4586,8 +4597,10 @@ class Engine:
                         watch_id = validate_market_transition(
                             cursor, prepared.cursor, prepared.events
                         )
-                        interval = prepared.cursor["market"][watch_id]["config"]["interval_ms"]
-                        due[watch_id] = monotonic() + interval / 1000
+                        if watch_id not in started:
+                            # После восстановления начало прежнего чтения неизвестно.
+                            interval = prepared.cursor["market"][watch_id]["config"]["interval_ms"]
+                            due[watch_id] = monotonic() + interval / 1000
                         cursor, greeted = prepared.cursor, prepared.greeted
                     elif max_iterations is None or step < max_iterations:
                         yield Pause(min(one.interval_ms for one in watches))

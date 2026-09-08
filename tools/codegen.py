@@ -1348,6 +1348,8 @@ def render_budget(spec: Path) -> str:
         "revision",
         "incomplete",
         "cold_start",
+        "schedule",
+        "degradation",
         "rule",
     }:
         raise SystemExit("неизвестный состав market_watch")
@@ -1355,6 +1357,8 @@ def render_budget(spec: Path) -> str:
         "revision": "watch_id_and_snapshot_sequence",
         "incomplete": "keep_known_reset_absences",
         "cold_start": "silence_until_complete_baseline",
+        "schedule": "read_start_no_catch_up",
+        "degradation": "whole_interval_missed",
     }.items():
         if market.get(key) != expected:
             raise SystemExit(f"неподдерживаемое правило market_watch: {key}")
