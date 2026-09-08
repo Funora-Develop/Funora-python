@@ -72,6 +72,7 @@ from ._transport import AsyncFetcher, TransportSettings
 from ._viewing import BuyerViewing
 from ._watch import Router, adispatch
 from ._whoami import Account, CapabilityProfile, SessionHealth
+from .budget import MARKET_HISTORY_LIMIT
 from .capabilities import Capability, CapabilityState
 from .errors import ConfigurationError, FunoraError, HandlerError, NotImplementedOperationError
 from .operations import OPERATIONS
@@ -791,6 +792,7 @@ class AsyncMonitoring:
         *watches: MarketWatch,
         state_path: str | Path | None = None,
         max_iterations: int | None = None,
+        history_limit: int = MARKET_HISTORY_LIMIT,
         on_handler_error: Callable[[HandlerError], None] | None = None,
     ) -> None:
         """Регистрирует набор до выхода из цикла; повторяет сохранённые события.
@@ -798,6 +800,9 @@ class AsyncMonitoring:
         Файл состояния отдельный от личного watch. Без файла история живёт
         только в текущем вызове. Набор и интервалы в файле неизменны.
         max_iterations ограничивает число шагов, включая повтор без HTTP.
+        history_limit ограничивает записи предложений во всём наборе (100000
+        по умолчанию). При превышении ConfigurationError сохраняет прежний
+        курсор; предел можно увеличить при продолжении с тем же файлом.
         """
         engine = self._client._public_engine
         await self._client.run(
@@ -806,6 +811,7 @@ class AsyncMonitoring:
                 account_id=self._client._account_id,
                 state_path=state_path,
                 max_iterations=max_iterations,
+                history_limit=history_limit,
             ),
             engine=engine,
             router=router,

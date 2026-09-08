@@ -55,6 +55,7 @@ __all__ = [
     "PROVISIONAL",
     "MARKET_INTERVAL_MS",
     "MARKET_ABSENCES",
+    "MARKET_HISTORY_LIMIT",
 ]
 
 
@@ -307,3 +308,4 @@ PROVISIONAL: Final[bool] = True
 
 MARKET_INTERVAL_MS: Final[int] = 120000
 MARKET_ABSENCES: Final[int] = 2
+MARKET_HISTORY_LIMIT: Final[int] = 100000

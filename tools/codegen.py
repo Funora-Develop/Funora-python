@@ -1344,6 +1344,8 @@ def render_budget(spec: Path) -> str:
     market = doc.get("market_watch", {})
     if not isinstance(market, dict) or set(market) != {
         "default_interval_ms",
+        "history_limit_default",
+        "history_overflow",
         "consecutive_absences",
         "revision",
         "incomplete",
@@ -1359,10 +1361,11 @@ def render_budget(spec: Path) -> str:
         "cold_start": "silence_until_complete_baseline",
         "schedule": "read_start_no_catch_up",
         "degradation": "whole_interval_missed",
+        "history_overflow": "refuse_without_advancing",
     }.items():
         if market.get(key) != expected:
             raise SystemExit(f"неподдерживаемое правило market_watch: {key}")
-    for key in ("default_interval_ms", "consecutive_absences"):
+    for key in ("default_interval_ms", "consecutive_absences", "history_limit_default"):
         if type(market.get(key)) is not int or market[key] < 1:
             raise SystemExit(f"неверное число market_watch: {key}")
     buckets: dict[str, Any] = doc["buckets"]
@@ -1426,6 +1429,7 @@ def render_budget(spec: Path) -> str:
         "PROVISIONAL",
         "MARKET_INTERVAL_MS",
         "MARKET_ABSENCES",
+        "MARKET_HISTORY_LIMIT",
     ):
         out.append(f'    "{name}",\n')
     out.append("]\n")
@@ -1833,6 +1837,7 @@ def render_budget(spec: Path) -> str:
     out.append(f"PROVISIONAL: Final[bool] = {bool(doc.get('provisional', True))}\n")
     out.append(f"\nMARKET_INTERVAL_MS: Final[int] = {market['default_interval_ms']}\n")
     out.append(f"MARKET_ABSENCES: Final[int] = {market['consecutive_absences']}\n")
+    out.append(f"MARKET_HISTORY_LIMIT: Final[int] = {market['history_limit_default']}\n")
 
     return "".join(out)
 

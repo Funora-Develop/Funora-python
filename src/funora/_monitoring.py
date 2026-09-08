@@ -13,8 +13,8 @@ from ._diff import Event, make_event
 from ._money import Money
 from ._snapshot import MarketSnapshot, fingerprint_of
 from ._watch import incomplete, primed
-from .budget import MARKET_ABSENCES, MARKET_INTERVAL_MS
-from .errors import ValidationError
+from .budget import MARKET_ABSENCES, MARKET_HISTORY_LIMIT, MARKET_INTERVAL_MS
+from .errors import ConfigurationError, ValidationError
 from .events import EventType
 from .operations import OPERATIONS
 
@@ -168,6 +168,22 @@ def validate_market_cursor(value: Any) -> dict[str, Any]:
     return value
 
 
+def history_size(cursor: dict[str, Any]) -> int:
+    """Считает записи всех наблюдений; один offer_id в двух выдачах - две записи."""
+    return sum(len(record["offers"]) for record in cursor["market"].values())
+
+
+def check_history_limit(size: int, limit: int) -> None:
+    """Переполнение останавливает работу; сохранённые данные не вытесняются."""
+    if type(limit) is not int or limit <= 0:
+        raise ConfigurationError("history_limit должен быть положительным целым числом")
+    if size > limit:
+        raise ConfigurationError(
+            f"история рынка: {size} записей превышают history_limit={limit}; "
+            "увеличьте предел и продолжите наблюдение с прежним файлом состояния"
+        )
+
+
 def observe_market(
     cursor: dict[str, Any],
     watch: MarketWatch,
@@ -175,6 +191,7 @@ def observe_market(
     *,
     account_id: str,
     read_interval_ms: int | None = None,
+    history_limit: int = MARKET_HISTORY_LIMIT,
 ) -> tuple[dict[str, Any], tuple[Event, ...]]:
     """Положительные наблюдения дополняют историю; отсутствие требует полноты."""
     if snapshot.node_id != watch.node_id or snapshot.query_fingerprint != fingerprint_of(
@@ -183,6 +200,16 @@ def observe_market(
         raise ValidationError("снимок принадлежит другой выдаче")
     if read_interval_ms is not None and (type(read_interval_ms) is not int or read_interval_ms < 0):
         raise ValidationError("интервал чтения должен быть неотрицательным целым")
+    previous = cursor["market"][watch.watch_id]
+    size = history_size(cursor) + sum(
+        offer_id not in previous["offers"] for offer_id in snapshot.offers
+    )
+    if snapshot.is_complete:
+        size -= sum(
+            offer_id not in snapshot.offers and count + 1 >= MARKET_ABSENCES
+            for offer_id, count in previous["absences"].items()
+        )
+    check_history_limit(size, history_limit)
     # Новая независимая позиция; прежняя остаётся до подтверждения доставки.
     target = json.loads(json.dumps(cursor, ensure_ascii=True, allow_nan=False))
     record = target["market"][watch.watch_id]

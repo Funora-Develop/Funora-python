@@ -76,7 +76,13 @@ assert budget.reserve(0.202).granted
 with Client(public_only=True, account_id='package-check') as client:
     watch = funora.MarketWatch('package-market', '922')
     assert client.monitoring.plan(watch).admitted
-    client.monitoring.watch(funora.Router(), watch, max_iterations=0)
+    client.monitoring.watch(funora.Router(), watch, max_iterations=0, history_limit=1)
+    try:
+        client.monitoring.watch(funora.Router(), watch, max_iterations=0, history_limit=0)
+    except ConfigurationError:
+        pass
+    else:
+        raise AssertionError('monitoring accepted a zero history limit')
     try:
         client.orders.list()
     except ConfigurationError:
@@ -88,7 +94,7 @@ async def check_async():
     async with AsyncClient(public_only=True) as client:
         watch = funora.MarketWatch("package-market-async", "922")
         assert client.monitoring.plan(watch).admitted
-        await client.monitoring.watch(funora.Router(), watch, max_iterations=0)
+        await client.monitoring.watch(funora.Router(), watch, max_iterations=0, history_limit=1)
 asyncio.run(check_async())
 print('wheel imports and public API: OK')
 """,

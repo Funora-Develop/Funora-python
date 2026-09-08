@@ -100,6 +100,8 @@ from ._market import MarketPage, parse_market
 from ._money import CURRENCY_BY_SYMBOL
 from ._monitoring import (
     MarketWatch,
+    check_history_limit,
+    history_size,
     initial_cursor,
     observe_market,
     validate_market_transition,
@@ -163,6 +165,7 @@ from ._whoami import (
 from .budget import (
     COUNTS_REDIRECTS,
     COUNTS_RETRIES,
+    MARKET_HISTORY_LIMIT,
     MAX_QUEUE_DEPTH_PER_KEY,
     MIN_HEALTH_INTERVAL_MS,
     WAIT_ATTEMPTS,
@@ -4506,9 +4509,11 @@ class Engine:
         account_id: str,
         state_path: str | Path | None = None,
         max_iterations: int | None = None,
+        history_limit: int = MARKET_HISTORY_LIMIT,
     ) -> Generator[Request, Reply, None]:
         """Наблюдает набор выдач на публичной полосе с общим допуском и журналом."""
         validate_watches(watches)
+        check_history_limit(0, history_limit)
         if any(one.watch_id == account_id for one in watches):
             raise ConfigurationError("watch_id рынка должен отличаться от account_id личного watch")
         if max_iterations is not None and (type(max_iterations) is not int or max_iterations < 0):
@@ -4537,6 +4542,7 @@ class Engine:
                             "файл содержит другую или повреждённую историю рынка"
                         ) from exc
                     cursor = restored
+                check_history_limit(history_size(cursor), history_limit)
                 greeted = stored.get("watch_greeted", False)
                 if type(greeted) is not bool:
                     raise CursorIncompatibleError("неверный признак начала наблюдений")
@@ -4550,6 +4556,7 @@ class Engine:
                         validate_market_transition(cursor, frozen.cursor, frozen.events)
                     except ValueError as exc:
                         raise CursorIncompatibleError("непринятая партия другого снимка") from exc
+                    check_history_limit(history_size(frozen.cursor), history_limit)
             # Регистрация выполняется после проверки файла и до первого Fetch.
             with self._budget.admit_monitoring(watches, monotonic()) as admission:
                 # Средний прогноз не разрешает стартовать весь набор залпом.
@@ -4580,6 +4587,7 @@ class Engine:
                             watch,
                             snapshot,
                             account_id=account_id,
+                            history_limit=history_limit,
                             read_interval_ms=int((read_started - previous_start) * 1000)
                             if previous_start is not None
                             else None,
