@@ -913,7 +913,7 @@ class Engine:
 
         if self._ledger is not None:
             stored = self._ledger.load()
-            self._state.outbound.restore(stored.get("outbound") or {})
+            self._state.outbound.restore(stored.get("outbound", {}))
             self._delivered.restore(stored.get("delivery") or {})
             self._price_audit.restore(stored.get("price_audit") or {})
             self._stored_account = str(stored.get("account") or "")
@@ -4153,19 +4153,18 @@ class Engine:
             # пустым реестром: защита переставала защищать ровно там, где файл
             # непригоден.
             stored = state.load()
-            self._ledger = state
-            self._state.outbound.durable = True
-
             # СЛИЯНИЕ, а не замещение. Прочитанное с диска добавляется к тому,
             # что уже накоплено в памяти, - иначе вход в цикл обнулял бы квоту
             # БЕЗ перезапуска, то есть ровно то, что реестр обязан
             # предотвращать.
-            merged = self._state.outbound.snapshot()
-            fresh = stored.get("outbound") or {}
-            merged["sent"] = [*fresh.get("sent", []), *merged.get("sent", [])]
-            merged["incoming"] = {**fresh.get("incoming", {}), **merged.get("incoming", {})}
-            self._state.outbound.restore(merged)
+            # Кандидат проверяется до подключения: ошибка журнала не должна
+            # менять ни живую квоту, ни признак долговечности.
+            adopted_outbound = replace(self._state.outbound)
+            adopted_outbound.restore(stored.get("outbound", {}), merge=True)
             self._delivered.restore(stored.get("delivery") or {})
+            adopted_outbound.durable = True
+            self._state.outbound = adopted_outbound
+            self._ledger = state
 
             # ОТМЕТКА НЕ СНИМАЕТСЯ. Прежде усыновление файла её стирало, и
             # состояние здоровья переставало помнить, что часть отправок уже

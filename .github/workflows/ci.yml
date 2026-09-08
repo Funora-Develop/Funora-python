@@ -171,3 +171,4 @@ jobs:
           tests/test_monitoring_timing.py
           tests/test_lot_revision.py
           tests/test_lot_form_preservation.py
+          tests/test_outbound_restore.py
