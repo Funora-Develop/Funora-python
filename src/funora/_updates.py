@@ -27,11 +27,10 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
-from math import isfinite
 from typing import Any, Final
 
+from ._json import load_json
 from .errors import ProtocolChangedError
 
 __all__ = [
@@ -192,34 +191,13 @@ def build_subscription(
 UNSEEN_TAG: Final[str] = "0000000000"
 
 
-def _unique_fields(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for name, value in pairs:
-        if name in result:
-            raise ValueError("повтор поля в ответе канала")
-        result[name] = value
-    return result
-
-
-def _finite_number(raw: str) -> float:
-    value = float(raw)
-    if not isfinite(value):
-        raise ValueError("неконечное число в ответе канала")
-    return value
-
-
 def load_runner_json(body: str) -> object:
     """Читает JSON канала без потери полей и неконечных чисел.
 
     Опрос и отправка делят один декодер. Ошибки ValueError/RecursionError
     вызывающий переводит в свой исход: откат к страницам либо unconfirmed.
     """
-    return json.loads(
-        body,
-        object_pairs_hook=_unique_fields,
-        parse_float=_finite_number,
-        parse_constant=_finite_number,
-    )
+    return load_json(body)
 
 
 def parse_updates_answer(body: str) -> UpdatesAnswer:

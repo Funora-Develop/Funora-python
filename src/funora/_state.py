@@ -23,13 +23,13 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
 from ._canonical import canonical_dumps
 from ._fileio import atomic_write, file_lock
+from ._json import load_json
 from .contract import ADAPTER_FAMILY as _ADAPTER_FAMILY
 from .contract import CANONICAL_FORM_VERSION
 from .errors import CursorIncompatibleError, StateSchemaIncompatibleError
@@ -72,16 +72,6 @@ STATE_FORMAT: Final[str] = "funora-state-v6"
 #: идентификаторов было бы случайным, а последствия - молчаливым гашением чужих
 #: событий.
 ADAPTER_FAMILY: Final[str] = _ADAPTER_FAMILY
-
-
-def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    """Повтор ключа не может молча заменить журнал или его подтверждение."""
-    result: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError("повтор ключа состояния")
-        result[key] = value
-    return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,7 +123,7 @@ class StateFile:
             return {}
 
         try:
-            raw = json.loads(self.path.read_text(encoding="utf-8"), object_pairs_hook=_unique_pairs)
+            raw = load_json(self.path.read_text(encoding="utf-8"))
         except (ValueError, RecursionError) as exc:
             raise StateSchemaIncompatibleError(
                 f"файл состояния {self.path} не читается: {type(exc).__name__}. "

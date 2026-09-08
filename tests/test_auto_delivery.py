@@ -24,6 +24,7 @@ from funora._own_lots import OwnLot
 from funora._result import Completeness
 from funora.bot._delivery import AutoDelivery, DeliveryDecision, DeliveryPlan
 from funora.bot._outbox import SendCommand, SendTicket
+from funora.errors import StateSchemaIncompatibleError
 from funora.extraction import OrderStatus
 
 WHEN: Final[datetime] = datetime(2026, 8, 30, tzinfo=UTC)
@@ -443,94 +444,55 @@ def test_the_ledger_survives_a_restart() -> None:
         ({}, "перечня нет вовсе"),
     ],
 )
-def test_a_record_with_an_unusable_value_is_dropped_without_an_exception(
+def test_missing_legacy_records_are_empty_but_bad_records_are_rejected(
     payload: dict[str, object], why: str
 ) -> None:
-    """ЗАКРЫВАЕТ ДЕФЕКТ, найденный перепроверкой.
-
-    Прежде проверялось НАЛИЧИЕ ключа, а не пригодность значения: заказ None
-    давал ключ «None», словарь - строку со скобками, а битая метка времени
-    бросала голое исключение прямо из середины разбора.
-
-    Голое - значит не из семейства отказов Funora: вызывающий, ловящий
-    FunoraError по документации, получал бы необработанное исключение.
-
-    Аргументы:
-        payload (dict[str, object]): Прочитанное из файла.
-        why (str): Чем запись непригодна.
-
-    Возвращает:
-        None
-    """
+    """Отсутствие старого раздела отличается от повреждения записи выдачи."""
     ledger = DeliveryLedger()
-    ledger.restore(payload)
-    assert len(ledger) == 0, f"{why}: запись принята, хотя значение непригодно"
+    if payload == {}:
+        ledger.restore(payload)
+    else:
+        with pytest.raises(StateSchemaIncompatibleError):
+            ledger.restore(payload)
+    assert len(ledger) == 0, why
 
 
-def test_one_bad_record_does_not_destroy_the_others() -> None:
-    """Требует, чтобы плохая запись не уносила с собой хорошие.
-
-    Прежде разбор шёл по месту: сперва обнулял реестр, потом добавлял по одной.
-    Первая же битая метка бросала исключение из середины, и всё, что стояло
-    ДАЛЬШЕ, пропадало насовсем - по этим заказам товар выдали бы второй раз.
-
-    Возвращает:
-        None
-    """
+def test_one_bad_record_rejects_the_whole_replacement() -> None:
+    """Пропуск битой выдачи разрешил бы выдать этот заказ повторно."""
     ledger = DeliveryLedger()
-    ledger.restore(
-        {
-            "done": [
-                {"order_id": "A1", "at_ms": 1},
-                {"order_id": "A2", "at_ms": "позавчера"},
-                {"order_id": "A3", "at_ms": 3},
-            ]
-        }
-    )
-
-    assert ledger.seen("A1") is True
-    assert ledger.seen("A3") is True, (
-        "запись после битой потеряна: по этому заказу товар уйдёт второй раз"
-    )
-    assert ledger.seen("A2") is False
+    ledger.record(Delivery("PREVIOUS", "L2", 1, "queued"))
+    before = ledger.snapshot()
+    with pytest.raises(StateSchemaIncompatibleError):
+        ledger.restore(
+            {
+                "done": [
+                    {"order_id": "A1", "at_ms": 1},
+                    {"order_id": "A2", "at_ms": "позавчера"},
+                    {"order_id": "A3", "at_ms": 3},
+                ]
+            }
+        )
+    assert ledger.snapshot() == before
 
 
 def test_a_failed_restore_leaves_the_ledger_as_it_was() -> None:
-    """Требует, чтобы неудачное восстановление не рушило прежнее.
-
-    Либо восстановилось, либо осталось как было. Наполовину восстановленный
-    реестр - это забытые выдачи, а забытая выдача необратима.
-
-    Возвращает:
-        None
-    """
+    """Только полностью пригодное состояние заменяет прежний реестр."""
     ledger = DeliveryLedger()
-    ledger.record(Delivery(order_id="СТАРАЯ", offer_id="L1", at_ms=1, outcome="ok"))
-
-    ledger.restore({"done": "вовсе не перечень"})
-    assert len(ledger) == 0, "мусорный перечень принят"
-
-    other = DeliveryLedger()
-    other.record(Delivery(order_id="СТАРАЯ", offer_id="L1", at_ms=1, outcome="ok"))
-    other.restore({"done": [{"order_id": "НОВАЯ", "at_ms": 2}]})
-    assert other.seen("НОВАЯ") and not other.seen("СТАРАЯ"), (
-        "восстановление обязано ЗАМЕЩАТЬ содержимое, а не дополнять его"
-    )
+    ledger.record(Delivery(order_id="A1", offer_id="L2", at_ms=1, outcome="ok"))
+    before = ledger.snapshot()
+    with pytest.raises(StateSchemaIncompatibleError):
+        ledger.restore({"done": "вовсе не перечень"})
+    assert ledger.snapshot() == before
+    ledger.restore({"done": [{"order_id": "НОВАЯ", "at_ms": 2}]})
+    assert ledger.seen("НОВАЯ") and not ledger.seen("A1")
 
 
-def test_a_record_without_its_key_is_dropped_not_guessed() -> None:
-    """Требует пропускать неполную запись, а не достраивать её умолчанием.
-
-    Достроенная запись сказала бы «выдавали», не зная чего: покупатель не
-    получит товар, а реестр будет уверен, что получил.
-
-    Возвращает:
-        None
-    """
+def test_a_record_without_its_key_refuses_recovery() -> None:
+    """Неизвестный заказ нельзя угадать или молча исключить из защиты."""
     ledger = DeliveryLedger()
-    ledger.restore({"done": [{"offer_id": "L2", "at_ms": 1}, {"order_id": "A2"}]})
-
-    assert len(ledger) == 0, "неполная запись достроена вместо того, чтобы выпасть"
+    with pytest.raises(StateSchemaIncompatibleError):
+        ledger.restore({"done": [{"offer_id": "L2", "at_ms": 1}, {"order_id": "A2"}]})
+    assert len(ledger) == 0
 
 
 def test_the_first_record_of_an_order_wins() -> None:

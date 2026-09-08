@@ -914,7 +914,7 @@ class Engine:
         if self._ledger is not None:
             stored = self._ledger.load()
             self._state.outbound.restore(stored.get("outbound", {}))
-            self._delivered.restore(stored.get("delivery") or {})
+            self._delivered.restore(stored.get("delivery", {}))
             self._price_audit.restore(stored.get("price_audit") or {})
             self._stored_account = str(stored.get("account") or "")
         #: Смены состояния доступа, ждущие выдачи партией.
@@ -4161,7 +4161,7 @@ class Engine:
             # менять ни живую квоту, ни признак долговечности.
             adopted_outbound = replace(self._state.outbound)
             adopted_outbound.restore(stored.get("outbound", {}), merge=True)
-            self._delivered.restore(stored.get("delivery") or {})
+            self._delivered.restore(stored.get("delivery", {}))
             adopted_outbound.durable = True
             self._state.outbound = adopted_outbound
             self._ledger = state

@@ -35,7 +35,8 @@ from pathlib import Path
 from typing import Any, Final
 
 from .._fileio import atomic_write, file_lock
-from ..errors import UsageError, ValidationError
+from .._json import load_json
+from ..errors import StateSchemaIncompatibleError, UsageError, ValidationError
 from ._outbox import SendCommand
 
 __all__ = ["Spool", "SpoolEntry", "SpoolOutcome", "MAX_SPOOLED"]
@@ -265,25 +266,35 @@ class Spool:
 
         Возвращает:
             tuple[str, ...]: Ключи заданий с неизвестной судьбой.
+
+        Raises:
+            StateSchemaIncompatibleError: Непригодная квитанция. Все квитанции
+                проверяются до переноса или удаления первого задания.
         """
         with file_lock(self._root / ".lock"):
             stranded: list[str] = []
-            for path in sorted((self._root / _TAKEN).iterdir()):
+            # До первого удаления проверяем все квитанции. Повреждение позднего
+            # результата не должно оставлять восстановление наполовину выполненным.
+            entries = [
+                (path, self.outcome(self._key_of(path)))
+                for path in sorted((self._root / _TAKEN).iterdir())
+            ]
+            for path, previous in entries:
                 key = self._key_of(path)
-                previous = self.outcome(key)
                 if previous is not None and previous.state != "stuck":
                     path.unlink()
                     continue
                 target = self._root / _STUCK / path.name
                 os.replace(path, target)
-                self._record(
-                    SpoolOutcome(
-                        idempotency_key=key,
-                        state="stuck",
-                        detail="процесс не дожил до записи исхода: сообщение могло уйти",
-                        at=datetime.now(UTC).isoformat(),
+                if previous is None:
+                    self._record(
+                        SpoolOutcome(
+                            idempotency_key=key,
+                            state="stuck",
+                            detail="процесс не дожил до записи исхода: сообщение могло уйти",
+                            at=datetime.now(UTC).isoformat(),
+                        )
                     )
-                )
                 stranded.append(key)
 
             if stranded:
@@ -351,10 +362,24 @@ class Spool:
             state (str): sent либо refused.
             detail (str): Подробность исхода.
 
+        Raises:
+            ValidationError: Чужое задание или непригодный исход. Запись
+                квитанции и удаление задания при этом не выполняются.
+
         Возвращает:
             None
         """
         with file_lock(self._root / ".lock"):
+            key = entry.command.idempotency_key
+            if (
+                state not in ("sent", "refused")
+                or not isinstance(detail, str)
+                or not isinstance(key, str)
+                or not _KEY.fullmatch(key)
+                or entry.path.resolve().parent != (self._root / _TAKEN).resolve()
+                or self._key_of(entry.path) != key
+            ):
+                raise ValidationError("непригодный исход или чужое задание очереди")
             self._record(
                 SpoolOutcome(
                     idempotency_key=entry.command.idempotency_key,
@@ -377,21 +402,41 @@ class Spool:
         Возвращает:
             SpoolOutcome | None: Исход либо None, если задание ещё не
             отработано.
+
+        Raises:
+            StateSchemaIncompatibleError: Существующий результат не читается,
+                принадлежит другому ключу или содержит непригодные поля.
         """
         if not isinstance(key, str) or not _KEY.fullmatch(key):
             raise ValidationError("непригодный ключ результата очереди")
         path = self._root / _DONE / f"{key}.json"
         try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return None
-        if not isinstance(raw, dict):
-            return None
+            raw = load_json(path.read_text(encoding="utf-8"))
+        except FileNotFoundError as exc:
+            if not path.is_symlink():
+                return None
+            raise StateSchemaIncompatibleError("ссылка результата очереди не читается") from exc
+        except (OSError, ValueError, RecursionError) as exc:
+            raise StateSchemaIncompatibleError("результат очереди не читается") from exc
+        if (
+            not isinstance(raw, dict)
+            or raw.get("idempotency_key") != key
+            or raw.get("state") not in ("sent", "refused", "stuck")
+            or not isinstance(raw.get("detail"), str)
+            or not isinstance(raw.get("at"), str)
+        ):
+            raise StateSchemaIncompatibleError("непригодные поля результата очереди")
+        try:
+            stamp = datetime.fromisoformat(raw["at"])
+        except ValueError as exc:
+            raise StateSchemaIncompatibleError("непригодная дата результата очереди") from exc
+        if stamp.utcoffset() is None:
+            raise StateSchemaIncompatibleError("дата результата очереди не содержит часовой пояс")
         return SpoolOutcome(
-            idempotency_key=str(raw.get("idempotency_key") or key),
-            state=str(raw.get("state") or ""),
-            detail=str(raw.get("detail") or ""),
-            at=str(raw.get("at") or ""),
+            idempotency_key=raw["idempotency_key"],
+            state=raw["state"],
+            detail=raw["detail"],
+            at=raw["at"],
         )
 
     @property
@@ -458,8 +503,8 @@ class Spool:
             SendCommand | None: Задание либо None, если файл непригоден.
         """
         try:
-            raw: Any = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+            raw: Any = load_json(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, RecursionError):
             return None
         if not isinstance(raw, dict):
             return None
@@ -478,10 +523,12 @@ class Spool:
 
         if key != Spool._key_of(path):
             return None
-        cold = raw.get("declared_cold")
+        cold = raw.get("declared_cold", False)
+        if not isinstance(cold, bool):
+            return None
         return SendCommand(
             chat_id=chat_id,
             text=text,
             idempotency_key=key,
-            declared_cold=cold if isinstance(cold, bool) else False,
+            declared_cold=cold,
         )

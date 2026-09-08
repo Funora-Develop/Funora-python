@@ -19,8 +19,8 @@ from typing import Any
 
 from ._diff import Delivery, Event
 from ._fileio import file_lock
+from ._json import load_json
 from ._monitoring import MarketWatch, validate_market_cursor, validate_market_payload
-from ._state import _unique_pairs
 from ._watch import PRODUCIBLE
 from .errors import ConfigurationError, CursorIncompatibleError, StateSchemaIncompatibleError
 from .events import ORDERING_KEY, EventType
@@ -110,7 +110,7 @@ class PendingBatch:
         try:
             if not isinstance(raw, str) or not raw.isascii():
                 raise ValueError("журнал должен быть ASCII JSON")
-            value = json.loads(raw, object_pairs_hook=_unique_pairs)
+            value = load_json(raw)
             if not isinstance(value, dict) or set(value) != {
                 "version",
                 "events",
