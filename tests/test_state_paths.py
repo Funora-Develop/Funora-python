@@ -124,3 +124,27 @@ def test_new_nested_path_and_valid_alias_write_the_same_file(tmp_path):
     StateFile(alias).update({"second": 2})
     assert alias.is_symlink()
     assert state.load() == {"first": 1, "second": 2}
+
+
+@pytest.mark.parametrize("contents", ["[]", "null", '"state"', "0", "false"])
+def test_nonobject_state_is_not_a_new_file(tmp_path, contents):
+    state = StateFile(tmp_path / "state.json")
+    state.path.write_text(contents, encoding="utf-8")
+    with pytest.raises(StateSchemaIncompatibleError, match="неожиданное устройство"):
+        state.load()
+    assert state.path.read_text(encoding="utf-8") == contents
+
+
+def test_missing_filesystem_root_cannot_become_empty_state(tmp_path, monkeypatch):
+    state = StateFile(tmp_path / "state.json")
+    seen = []
+
+    def unavailable(path, *args, **kwargs):
+        seen.append(path)
+        raise FileNotFoundError(errno.ENOENT, "synthetic unavailable filesystem")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "stat", unavailable)
+        with pytest.raises(StateSchemaIncompatibleError, match="недоступен"):
+            state.load()
+    assert state.path.parents[-1] in seen

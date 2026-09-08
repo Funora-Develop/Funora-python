@@ -23,7 +23,7 @@ from collections.abc import Awaitable, Callable, Generator
 from dataclasses import replace
 from pathlib import Path
 from time import monotonic
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, NoReturn, TypeVar
 
 from ._account import BalancePage
 from ._budget import Budget
@@ -73,7 +73,7 @@ from ._viewing import BuyerViewing
 from ._watch import Router, adispatch
 from ._whoami import Account, CapabilityProfile, SessionHealth
 from .capabilities import Capability, CapabilityState
-from .errors import ConfigurationError, FunoraError, HandlerError
+from .errors import ConfigurationError, FunoraError, HandlerError, NotImplementedOperationError
 from .operations import OPERATIONS
 
 if TYPE_CHECKING:
@@ -473,6 +473,14 @@ class AsyncAccountService:
 
     def __init__(self, client: AsyncClient) -> None:
         self._client = client
+
+    def __getattr__(self, name: str) -> NoReturn:
+        if name == "withdraw":
+            raise NotImplementedOperationError(
+                "вывод не реализован: "
+                "spec/conformance/not-implemented.yaml#withdraw_stays_unwritten"
+            )
+        raise AttributeError(name)
 
     async def get(self) -> Account:
         """Читает собственный аккаунт: идентификатор, имя и метку языка.

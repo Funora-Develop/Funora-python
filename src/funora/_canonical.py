@@ -24,7 +24,7 @@ import json
 import math
 import unicodedata
 from datetime import UTC, datetime
-from typing import Any, Final
+from typing import Any, Final, NoReturn
 
 from ._money import Money
 from .errors import ValidationError
@@ -100,7 +100,7 @@ def canonical_instant(value: datetime) -> str:
     return f"{stamp}.{moment.microsecond // 1000:03d}Z"
 
 
-def _reject(value: Any, where: str) -> None:
+def _reject(value: Any, where: str) -> NoReturn:
     """Отвергает значение, которое каноническая форма выразить не может.
 
     Args:
@@ -206,7 +206,6 @@ def _prepare(value: Any, where: str) -> Any:
         return [_prepare(item, f"{where}[{index}]") for index, item in enumerate(value)]
 
     _reject(value, where)
-    return None
 
 
 def canonical_dumps(value: Any) -> str:

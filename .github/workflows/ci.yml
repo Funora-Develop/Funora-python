@@ -86,7 +86,7 @@ jobs:
         run: mypy
 
       - name: Тесты
-        run: pytest -q --cov=funora --cov-report=xml --cov-fail-under=94
+        run: pytest -q --cov=funora --cov-report=xml --cov-fail-under=100
         env:
           FUNORA_SPEC_DIR: ${{ github.workspace }}/.funora-spec
 
@@ -175,3 +175,12 @@ jobs:
           tests/test_durable_recovery.py
           tests/test_price_audit_restore.py
           tests/test_state_paths.py
+          tests/test_absence_semantics.py
+          tests/test_client_boundaries.py
+          tests/test_core_boundaries.py
+          tests/test_engine_boundaries.py
+          tests/test_observe_boundaries.py
+          tests/test_parser_boundaries.py
+          tests/test_parser_failures.py
+          tests/test_recovery_boundaries.py
+          tests/test_service_reads.py

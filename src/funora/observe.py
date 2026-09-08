@@ -522,7 +522,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.relations:
         return observe_relations(
-            path=args.path,
+            path=args.path[0],
             provider=provider,
             secret_name=args.secret_name,
             identity_css=args.identity_css,
@@ -530,7 +530,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.compare:
         return observe_compare(
-            path=args.path,
+            path=args.path[0],
             provider=provider,
             secret_name=args.secret_name,
             identity_css=args.identity_css,

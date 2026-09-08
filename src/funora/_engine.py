@@ -1148,7 +1148,7 @@ class Engine:
                 f"страница диалога не годится для отправки: {[one.code for one in context.defects]}"
             )
         token = context.csrf_token
-        if token is None:  # pragma: no cover - can_send уже это проверил
+        if token is None:
             raise ProtocolChangedError("защитного токена на странице нет")
 
         # ПРЕДЕЛ РАЗМЕРА ОБЪЯВЛЯЕТ ПЛОЩАДКА, и объявляет на самой странице.
@@ -1368,7 +1368,7 @@ class Engine:
             )
 
         token = context.csrf_token
-        if token is None:  # pragma: no cover - can_send уже это проверил
+        if token is None:
             raise ProtocolChangedError("защитного токена на странице нет")
 
         # СОДЕРЖИМОЕ ПУСТОЕ, И ПОЛЯ request НЕТ ВОВСЕ. Это ровно то обращение,

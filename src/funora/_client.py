@@ -20,7 +20,7 @@ from dataclasses import replace
 from pathlib import Path
 from threading import Lock
 from time import monotonic, sleep
-from typing import TYPE_CHECKING, Final, TypeVar
+from typing import TYPE_CHECKING, NoReturn, TypeVar
 
 from ._account import BalancePage
 from ._budget import Budget
@@ -83,21 +83,6 @@ _log = logging.getLogger("funora.client")
 #: Тип, которым завершается сопрограмма ядра. Синтаксис PEP 695 не годится:
 #: пакет поддерживает Python 3.11, где его ещё нет.
 T = TypeVar("T")
-
-
-#: Службы, объявленные контрактом, и записи реестра о том, чего в них нет.
-#:
-#: Перечень здесь, а не в порождённом файле: он говорит о РЕАЛИЗАЦИИ - какие
-#: службы она не написала, - а не о контракте.
-#:
-#: Записи «lots» здесь больше нет: служба написана с 0.11.0. Написана она,
-#: правда, наполовину - витрина читается, операций записи нет, - но обращение к
-#: client.lots языковой ошибкой уже не отвечает, и место ему не тут. Сверяется он проверкой, которая
-#: читает spec/services и spec/conformance/not-implemented.yaml: разойдись
-#: перечень с ними, обращение к новой службе давало бы голый отказ языка.
-_SERVICES_IN_CONTRACT: Final[dict[str, str]] = {
-    "account": "account_service_operations",
-}
 
 
 class OrdersService:
@@ -491,6 +476,14 @@ class AccountService:
 
     def __init__(self, client: Client) -> None:
         self._client = client
+
+    def __getattr__(self, name: str) -> NoReturn:
+        if name == "withdraw":
+            raise NotImplementedOperationError(
+                "вывод не реализован: "
+                "spec/conformance/not-implemented.yaml#withdraw_stays_unwritten"
+            )
+        raise AttributeError(name)
 
     def get(self) -> Account:
         """Читает собственный аккаунт: идентификатор, имя и метку языка.
@@ -1098,44 +1091,6 @@ class Client:
         self._account_id = account_id
         self.monitoring = Monitoring(self)
         self.market = MarketService(self)
-
-    def __getattr__(self, name: str) -> object:
-        """Отвечает на обращение к службе, которой у этой реализации нет.
-
-        Служб в контракте шесть, написаны две. Прежде обращение к остальным
-        давало голый AttributeError: бот, обернувший работу в except FunoraError,
-        падал не операцией, а всем процессом, и узнавал причину из трассировки.
-
-        Заглушек не заводится нарочно. Заглушка существует как атрибут, и
-        hasattr на ней вернул бы True - проверка «умеет ли эта версия SDK
-        работать с лотами» начала бы врать. Здесь атрибута нет, hasattr
-        возвращает False, а обращение поднимает отказ, который ловится и общим
-        перехватом, и привычным except AttributeError.
-
-        Args:
-            name (str): Имя, которого у клиента нет.
-
-        Returns:
-            object: Ничего не возвращает.
-
-        Raises:
-            NotImplementedOperationError: Если имя - объявленная контрактом
-                служба. Текст называет запись реестра, где сказано, чего именно
-                не хватает.
-            AttributeError: Если имя просто опечатка. Обычный отказ языка: имя,
-                которого нет ни в контракте, ни в реализации, - не пробел
-                реализации, а ошибка вызывающего.
-        """
-        declared = _SERVICES_IN_CONTRACT.get(name)
-        if declared is None:
-            raise AttributeError(f"{type(self).__name__!r} не имеет атрибута {name!r}")
-        raise NotImplementedOperationError(
-            f"служба «{name}» объявлена контрактом и не написана этой "
-            f"реализацией. Чего именно не хватает, сказано в записи реестра "
-            f"«{declared}» - spec/conformance/not-implemented.yaml.\n\n"
-            "Проверить заранее можно через hasattr: у ненаписанной службы он "
-            "возвращает False."
-        )
 
     def _read(self, operation: str, build: Callable[[Engine], Generator[Request, Reply, T]]) -> T:
         engine = (

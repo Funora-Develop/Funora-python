@@ -314,7 +314,7 @@ def parse_catalog_search(body: str, query: str, observed_at: datetime) -> Catalo
             Completeness.COMPLETE, "search_no_matches", observed_at, 0, 0, 0, 0, query=query
         )
     try:
-        tree = HTMLParser(html)
+        tree = HTMLParser(html.encode("utf-8"))
     except UnicodeError:
         raise ProtocolChangedError("html поиска содержит некорректный Unicode") from None
     groups = tree.css(SELECTORS["catalog.search.response"])

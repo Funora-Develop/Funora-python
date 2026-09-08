@@ -59,13 +59,14 @@ print(funora.__version__)
 
 ## Проверки и сборка пакета
 
-Для полного прогона нужна соседняя рабочая копия `Funora-spec` версии `0.54.0`.
-CI закреплён на ревизии `aee8a058c00a1acb05508866d61b0f1337e5f71e`.
-Укажите корень спецификации через `FUNORA_SPEC_DIR`.
+Для полного прогона нужна соседняя рабочая копия `Funora-spec` версии `0.59.0`.
+CI закреплён на ревизии `a1c66789b42b8d44a94a7a8489059e708c1bd0d7`.
+Укажите корень спецификации через `FUNORA_SPEC_DIR`. В корне этой копии
+выполните `npm ci`: полный набор использует зависимости раннера conformance.
 
 ```bash
 python -m pip install -e ".[dev,docs]" build twine
-python -m pytest -q --cov=funora --cov-fail-under=94
+python -m pytest -q --cov=funora --cov-fail-under=100
 python tools/codegen.py --check
 python -m mkdocs build --strict
 python -m build

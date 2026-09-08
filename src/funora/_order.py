@@ -504,7 +504,8 @@ def parse_order_page(html: str, observed_at: datetime) -> OrderView:
         category = _attr(category_links[0] if category_links else None, "href", "category_href")
 
     params: list[OrderParam] = []
-    for item in tree.css(_PARAM_ITEM):
+    param_nodes = tree.css(_PARAM_ITEM)
+    for item in param_nodes:
         label = item.css_first("h5")
         if label is None:
             continue
@@ -516,14 +517,15 @@ def parse_order_page(html: str, observed_at: datetime) -> OrderView:
         value_text = whole[len(label_text) :].strip() if whole.startswith(label_text) else whole
         params.append(OrderParam(label_text=label_text, value_text=value_text))
 
-    if len(params) != len(tree.css(_PARAM_LABEL)):
+    label_count = len(tree.css(_PARAM_LABEL))
+    if len(params) != len(param_nodes) or len(params) != label_count:
         defects.append(
             Defect(
                 severity=Severity.PAGE,
                 code="param_label_missing",
                 detail=(
-                    f"параметров с меткой {len(params)}, а меток на странице "
-                    f"{len(tree.css(_PARAM_LABEL))}: часть параметров осталась без подписи"
+                    f"параметров {len(param_nodes)}, с меткой {len(params)}, "
+                    f"меток {label_count}: подписи параметров неполны или неоднозначны"
                 ),
             )
         )
