@@ -108,7 +108,7 @@ from .extraction import (
     OrderStatus,
 )
 
-__version__ = "0.0.1.dev0"
+__version__ = "0.0.1.dev1"
 
 __all__ = [
     "MarketWatch",

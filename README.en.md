@@ -22,10 +22,12 @@
 > Using it may lead to your account being suspended and your funds frozen - that risk is yours.
 > Read [DISCLAIMER.md](DISCLAIMER.md) before relying on this for anything that earns you money.
 
-## Status: `draft`
+## Test pre-alpha: `0.0.1.dev1`
 
-The working version can be installed from source or built as a wheel. The
-contract is still a draft; a successful build does not certify live account operations.
+The test version is distributed as a
+[GitHub pre-release](https://github.com/Funora-Develop/Funora-python/releases/tag/v0.0.1.dev1).
+See the [release guide](docs/pre-alpha.md) for installation and known limitations.
+The contract is still a draft; a successful build does not certify live account operations.
 
 Thirty-five operations are implemented and tested: twenty-four reads and eleven writes - sending text and images, marking a chat read, leaving and removing a review, changing a lot price, raising offers, activating or deactivating a lot, switching the display currency, and refunding an order.
 
@@ -133,12 +135,15 @@ implemented does not mean the entire cross-language contract is complete.
 
 ## Current limits
 
-- Withdrawals: the form is observed, but the response and second factor are not handled.
+- Withdrawals are not implemented.
 - Pagination of long order lists and account transactions: the meaning of
   `continue` is still unknown. Earlier chat messages have a separate operation.
 - Replay of missed channel events by position: the implementation currently
   re-reads pages and uses persisted watch cursors.
-- Separate transport isolation for public reads and preemption of in-flight requests.
+- Preemption of in-flight requests.
+
+Public market reads already use a separate transport without the account secret.
+The shared request budget and pause after HTTP 429 still apply.
 
 Order states `paid`, `closed`, and `refunded` are recognised. Other carriers
 produce an unobserved value. Delivery must require a specific state; a chat

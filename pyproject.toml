@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "funora"
-version = "0.0.1.dev0"
+version = "0.0.1.dev1"
 description = "Unofficial multi-language framework for the FunPay marketplace - Python SDK"
 readme = "README.md"
 requires-python = ">=3.11"

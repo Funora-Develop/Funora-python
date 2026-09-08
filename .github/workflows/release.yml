@@ -58,6 +58,9 @@ jobs:
   publish:
     name: Publish to PyPI
     needs: build
+    # Тестовые .dev-сборки распространяются через GitHub pre-release.
+    # Проверки и сборка выше обязательны и для них.
+    if: ${{ !contains(github.ref_name, '.dev') }}
     runs-on: ubuntu-latest
     environment:
       name: pypi

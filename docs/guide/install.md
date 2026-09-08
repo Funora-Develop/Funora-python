@@ -1,12 +1,15 @@
 # Установка
 
-## Чего ещё нет
+## Тестовая сборка
 
-Эта сборка ещё не опубликована на PyPI. Устанавливайте её из исходников или
-из собранного wheel.
+Версия `0.0.1.dev1` распространяется через GitHub pre-release.
+Скачивание, установка wheel и проверка контрольной суммы описаны в
+[заметке о выпуске](../pre-alpha.md). В PyPI эта сборка не публикуется.
+
+Для работы с исходниками используйте тот же тег:
 
 ```bash
-git clone https://github.com/Funora-Develop/Funora-python.git
+git clone --branch v0.0.1.dev1 https://github.com/Funora-Develop/Funora-python.git
 cd Funora-python
 python -m venv .venv
 .venv/Scripts/python.exe -m pip install -e ".[dev]"
@@ -77,4 +80,6 @@ python tools/check_distribution.py dist
 Последняя команда устанавливает wheel в отдельное временное окружение и
 проверяет импорт публичного API и CLI вне дерева исходников. Перед публикацией
 CI также требует совпадения тега `v<версия>` с `pyproject.toml` и
-`funora.__version__`. Публикация выполняется только после полного набора CI.
+`funora.__version__`. Сборка выпуска выполняется только после полного набора CI.
+Для тегов `.dev` шаг публикации в PyPI пропускается; проверенные wheel и sdist
+прикладываются к GitHub pre-release вместе с `SHA256SUMS`.

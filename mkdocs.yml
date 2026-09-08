@@ -88,6 +88,7 @@ markdown_extensions:
 
 nav:
   - Введение: index.md
+  - Тестовый pre-alpha: pre-alpha.md
   - Начало работы:
       - guide/install.md
       - guide/secret.md
