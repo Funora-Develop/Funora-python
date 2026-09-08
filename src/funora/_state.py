@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from stat import S_ISREG
+from stat import S_ISDIR, S_ISREG
 from typing import Any, Final
 
 from ._canonical import canonical_dumps
@@ -108,21 +108,23 @@ class StateFile:
 
     def _exists(self) -> bool:
         """Отличает первый запуск от недоступного или специального файла."""
-        try:
-            mode = self.path.stat().st_mode
-        except OSError as exc:
-            if isinstance(exc, FileNotFoundError) and not any(
-                one.is_symlink() for one in (self.path, *self.path.parents)
-            ):
+        for component in (self.path, *self.path.parents):
+            try:
+                mode = component.stat().st_mode
+            except OSError as exc:
+                if isinstance(exc, FileNotFoundError) and not component.is_symlink():
+                    continue
+                raise StateSchemaIncompatibleError(
+                    f"путь состояния {self.path} недоступен: {type(exc).__name__}"
+                ) from exc
+            if component != self.path and S_ISDIR(mode):
                 return False
+            if component == self.path and S_ISREG(mode):
+                return True
             raise StateSchemaIncompatibleError(
-                f"путь состояния {self.path} недоступен: {type(exc).__name__}"
-            ) from exc
-        if not S_ISREG(mode):
-            raise StateSchemaIncompatibleError(
-                f"путь состояния {self.path} не является обычным файлом"
+                f"неверный тип файла или родительского каталога состояния {self.path}"
             )
-        return True
+        raise StateSchemaIncompatibleError(f"путь состояния {self.path} недоступен")
 
     def load(self) -> dict[str, Any]:
         """Читает состояние.
@@ -240,6 +242,7 @@ class StateFile:
             StateSchemaIncompatibleError: Если существующий файл не читается.
             CursorIncompatibleError: Если он снят с другого семейства адаптера.
         """
+        self._exists()
         with file_lock(self.path.with_suffix(self.path.suffix + ".lock")):
             current = self.load()
             current.update(patch)
@@ -259,6 +262,7 @@ class StateFile:
         Returns:
             None
         """
+        self._exists()
         with file_lock(self.path.with_suffix(self.path.suffix + ".lock")):
             self._save(payload)
 

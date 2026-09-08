@@ -1,5 +1,6 @@
 """Только отсутствующий обычный путь означает первый запуск."""
 
+import errno
 import os
 from pathlib import Path
 
@@ -33,6 +34,27 @@ def invalid_path(root, problem):
 
 
 PROBLEMS = ["directory", "parent-file", "fifo", "dangling", "dangling-parent", "loop"]
+
+
+@pytest.mark.parametrize("operation", ["load", "save", "update"])
+def test_windows_missing_error_cannot_hide_a_parent_file(tmp_path, monkeypatch, operation):
+    state = StateFile(tmp_path / "parent" / "state.json")
+    state.path.parent.write_text("preserve")
+    original_stat = Path.stat
+
+    def windows_stat(path, *args, **kwargs):
+        try:
+            return original_stat(path, *args, **kwargs)
+        except NotADirectoryError as exc:
+            raise FileNotFoundError(errno.ENOENT, "Windows reports the child as missing") from exc
+
+    monkeypatch.setattr(Path, "stat", windows_stat)
+    with pytest.raises(StateSchemaIncompatibleError):
+        if operation == "load":
+            state.load()
+        else:
+            getattr(state, operation)({"new": 1})
+    assert state.path.parent.read_text() == "preserve"
 
 
 @pytest.mark.parametrize("problem", PROBLEMS)
