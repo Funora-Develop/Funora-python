@@ -114,6 +114,10 @@ def _as_json(value: Any) -> Any:
             "reason": value.reason,
             "value": _as_json(value.or_none()),
         }
+    if isinstance(value, dict):
+        return {key: _as_json(item) for key, item in value.items()}
+    if isinstance(value, set | frozenset):
+        return [_as_json(item) for item in sorted(value)]
     if isinstance(value, tuple | list):
         return [_as_json(item) for item in value]
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
@@ -255,6 +259,20 @@ def test_showcase_stock_matches_the_returned_model_schema(raw) -> None:
     document, index = with_stock(raw)
     result = offer_at(parse_showcase(document, WHEN), index)
     check(_as_json(result), _schema("showcase-offer"))
+
+
+@pytest.mark.parametrize("raw", ["0", "27", None, "∞"])
+@pytest.mark.parametrize("kind", ["list", "form"])
+def test_own_stock_matches_the_returned_model_schema(raw, kind) -> None:
+    from test_own_stock import WHEN, first_lot, form_page, own_page, parse_lot_form
+
+    if kind == "list":
+        result = first_lot(own_page(raw))
+        schema = "own-lot"
+    else:
+        result = parse_lot_form(form_page(raw), observed_at=WHEN)
+        schema = "lot-form"
+    check(_as_json(result), _schema(schema))
 
 
 def test_every_returned_field_is_described() -> None:

@@ -31,6 +31,7 @@ from selectolax.parser import HTMLParser, Node
 
 from ._observed import Observed
 from ._result import Completeness, Defect, Severity
+from ._stock import parse_stock_text
 from .errors import ProtocolChangedError
 from .extraction import SELECTORS
 
@@ -52,6 +53,7 @@ _FORM: Final[str] = SELECTORS["lot-edit.form"]
 
 #: Знак валюты рядом с полем цены.
 _CURRENCY: Final[str] = SELECTORS["lot-edit.fields.currency_symbol"]
+_AMOUNT: Final[str] = SELECTORS["lot-edit.fields.amount"]
 
 #: Поля, которые в отпечаток НЕ входят.
 #:
@@ -71,8 +73,7 @@ class LotForm:
         price_text (str): Цена, как она стоит в поле.
         currency_symbol (Observed[str]): Знак валюты рядом с полем цены.
         is_active (bool): Показывается ли лот в выдаче. Читается НАЛИЧИЕМ
-            пометки checked у флажка active - единственного носителя этого
-            признака во всём проекте.
+            пометки checked у флажка active.
         revision (str): Отпечаток состояния лота. Наш собственный, а не
             площадкин: площадка версии не даёт вовсе.
         fields (dict[str, str]): Все поля формы, кроме флажков, как есть.
@@ -81,6 +82,8 @@ class LotForm:
         completeness (Completeness): Полнота чтения.
         reason (str): Почему полнота такая.
         defects (tuple[Defect, ...]): Что не собралось.
+        stock (Observed[int]): Наличие из единственного текстового поля amount.
+            Без поля, при disabled или неизвестном формате значение не выводится.
     """
 
     offer_id: str
@@ -96,6 +99,7 @@ class LotForm:
     reason: str
     defects: tuple[Defect, ...] = field(default_factory=tuple)
     _checkbox_values: dict[str, str] = field(default_factory=dict, repr=False)
+    stock: Observed[int] = field(default_factory=lambda: Observed.missing("stock_not_normalized"))
 
     def to_request(self, *, price: str | None = None, active: bool | None = None) -> dict[str, str]:
         """Собирает поля запроса сохранения.
@@ -189,6 +193,21 @@ def _text(node: Node | None) -> str:
         str: Текст без краевых пробелов.
     """
     return (node.text() or "").strip() if node is not None else ""
+
+
+def _stock(form: Node) -> Observed[int]:
+    controls = form.css(_AMOUNT)
+    if not controls:
+        return parse_stock_text(None)
+    if len(controls) != 1:
+        return Observed.missing("stock_ambiguous")
+    node = controls[0]
+    attributes = node.attributes
+    if "disabled" in attributes:
+        return Observed.missing("stock_disabled")
+    if node.tag != "input" or (attributes.get("type") or "text").lower() != "text":
+        return Observed.missing("stock_control_unknown")
+    return parse_stock_text(attributes.get("value") or "")
 
 
 def parse_lot_form(html: str, *, observed_at: datetime) -> LotForm:
@@ -308,4 +327,5 @@ def parse_lot_form(html: str, *, observed_at: datetime) -> LotForm:
         reason="all_fields_parsed",
         defects=(),
         _checkbox_values=checkbox_values,
+        stock=_stock(form),
     )

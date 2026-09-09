@@ -35,6 +35,7 @@ from selectolax.parser import HTMLParser, Node
 
 from ._observed import Observed
 from ._result import Completeness, Defect, Severity
+from ._stock import parse_stock_column
 from .errors import IncompleteResultError, ProtocolChangedError
 from .extraction import SELECTORS
 
@@ -60,9 +61,6 @@ _AUTO_DELIVERY: Final[str] = SELECTORS["showcase.offers.optional_columns.auto_de
 #: одну случайность не похожи - но предел выведен из одного снимка одного
 #: продавца, и доказательством не является.
 _SUSPICIOUS_ROWS: Final[int] = 20
-
-# Ограничение разбора SDK, а не объявленный площадкой предел наличия.
-_STOCK_MAX_DIGITS: Final[int] = 18
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,23 +222,6 @@ def _attribute(node: Node | None, name: str, field_name: str) -> Observed[str]:
     return Observed.present(value) if value else Observed.empty("")
 
 
-def _stock(row: Node) -> Observed[int]:
-    """Читает показанное наличие без догадок о пустоте и бесконечности."""
-    cells = row.css(_AMOUNT)
-    if not cells:
-        return Observed.missing("stock_not_shown")
-    if len(cells) != 1:
-        return Observed.missing("stock_ambiguous")
-    raw = cells[0].text().strip()
-    if not raw:
-        return Observed.missing("stock_empty")
-    if not raw.isascii() or not raw.isdecimal():
-        return Observed.missing("stock_format_unknown")
-    if len(raw) > _STOCK_MAX_DIGITS:
-        return Observed.missing("stock_out_of_range")
-    return Observed.present(int(raw))
-
-
 def _offer(row: Node, index: int) -> ShowcaseOffer:
     """Собирает одно предложение.
 
@@ -265,7 +246,7 @@ def _offer(row: Node, index: int) -> ShowcaseOffer:
         server_text=_text(row.css_first(_SERVER), "server_text"),
         auto_delivery=Observed.present(row.css_first(_AUTO_DELIVERY) is not None),
         row_index=index,
-        stock=_stock(row),
+        stock=parse_stock_column(row, _AMOUNT),
     )
 
 

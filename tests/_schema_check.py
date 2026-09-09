@@ -52,6 +52,7 @@ _PROPERTY_KEYWORDS: frozenset[str] = frozenset(
         "minimum",
         "maximum",
         "minItems",
+        "uniqueItems",
         "items",
         "pattern",
         "properties",
@@ -260,8 +261,21 @@ def _check_value(value: Any, schema: dict[str, Any], where: str) -> None:
         if item_schema is not None:
             for index, item in enumerate(value):
                 _check_value(item, item_schema, f"{where}[{index}]")
+        unique = schema.get("uniqueItems", False)
+        if not isinstance(unique, bool):
+            raise UnsupportedKeyword(f"{where}: uniqueItems требует bool")
+        if unique:
+            # В текущем контракте уникальны только строковые имена/причины.
+            # Новая разновидность требует явной поддержки, а не Python ==,
+            # который считает True равным 1 и не совпадает с семантикой JSON.
+            if item_schema is None or item_schema.get("type") != "string":
+                raise UnsupportedKeyword(f"{where}: uniqueItems поддержан для строковых items")
+            if len(set(value)) != len(value):
+                _fail(where, "элементы массива повторяются")
 
-    if isinstance(value, dict) and "properties" in schema:
+    if isinstance(value, dict) and any(
+        key in schema for key in ("properties", "required", "additionalProperties")
+    ):
         check(value, schema, where=where, nested=True)
 
 
@@ -309,5 +323,7 @@ def check(
     for name, item in value.items():
         item_schema = properties.get(name)
         if item_schema is None:
-            continue
+            item_schema = schema.get("additionalProperties")
+            if not isinstance(item_schema, dict):
+                continue
         _check_value(item, item_schema, f"{where}.{name}")

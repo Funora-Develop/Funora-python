@@ -199,7 +199,9 @@
       "method": "form",
       "engine": "read_lot_form",
       "tests": [
-        "tests/test_lot_revision.py::test_revision_matches_declared_json_frame"
+        "tests/test_lot_revision.py::test_revision_matches_declared_json_frame",
+        "tests/test_own_stock.py::test_changed_stock_blocks_stale_mutations_before_submit",
+        "tests/test_own_stock.py::test_form_stock_normalization_preserves_request_and_revision"
       ],
       "limits": []
     },
@@ -208,7 +210,8 @@
       "method": "list_own",
       "engine": "read_own_lots",
       "tests": [
-        "tests/test_service_reads.py::test_order_and_lots_services_return_readable_identifiers"
+        "tests/test_service_reads.py::test_order_and_lots_services_return_readable_identifiers",
+        "tests/test_own_stock.py::test_both_clients_return_own_stock_in_one_read"
       ],
       "limits": []
     },
@@ -352,7 +355,7 @@
   "missing_events": {
     "review.changed": "E: источник изменений отзывов и восстановление доставки",
     "lot.price_changed": "E: изменения собственных лотов отдельно от рынка",
-    "lot.stock_changed": "C, E: остаток собственных лотов и источник изменений с устойчивой идентичностью",
+    "lot.stock_changed": "E: источник изменений остатка с устойчивой идентичностью и восстановлением",
     "seller.online_changed": "B, E: наблюдённый статус и смена присутствия"
   },
   "backlog": {

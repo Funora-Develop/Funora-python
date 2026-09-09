@@ -1,0 +1,14 @@
+{
+  "captured_at": "2026-09-09",
+  "captured_by": "Codex browser DOM; funora._skeleton.skeletonize",
+  "evidence_kind": "dom",
+  "format": "structural-skeleton-v9",
+  "captured_format": "structural-skeleton-v9",
+  "converted": false,
+  "authentication": "logged",
+  "locale": "ru",
+  "path": "/lots/offerEdit?node={id}&offer={id}",
+  "http_status": null,
+  "stock_controls_observed": 1,
+  "note": "Чтение тестового аккаунта. DOM обезличен в памяти; исходный HTML, значения полей, идентификаторы и секреты не сохранены. Количество 1 зафиксировано отдельно только как числовое наблюдение. Записи на площадке не выполнялись."
+}
