@@ -248,6 +248,15 @@ def test_observed_envelope_matches_its_schema() -> None:
         check(_as_json(sample), schema, where=f"наблюдение {sample.presence}")
 
 
+@pytest.mark.parametrize("raw", ["0", "27", None, "", "∞"])
+def test_showcase_stock_matches_the_returned_model_schema(raw) -> None:
+    from test_showcase_stock import WHEN, offer_at, parse_showcase, with_stock
+
+    document, index = with_stock(raw)
+    result = offer_at(parse_showcase(document, WHEN), index)
+    check(_as_json(result), _schema("showcase-offer"))
+
+
 def test_every_returned_field_is_described() -> None:
     """Проверяет, что схема описывает все поля записи, и наоборот.
 
@@ -270,6 +279,7 @@ def test_every_returned_field_is_described() -> None:
     from funora._refund import RefundResult
     from funora._review_write import ReviewResult
     from funora._runner import SendResult
+    from funora._showcase import ShowcaseOffer
     from funora._snapshot import SnapshotEntry
     from funora._thread import Message
     from funora._viewing import BuyerViewing
@@ -283,6 +293,7 @@ def test_every_returned_field_is_described() -> None:
         (LotForm, "lot-form"),
         (MarketOffer, "market-offer"),
         (SnapshotEntry, "market-snapshot-entry"),
+        (ShowcaseOffer, "showcase-offer"),
         (RaiseResult, "raise-result"),
         (ReviewResult, "review-result"),
         (PriceCalculation, "price-calculation"),

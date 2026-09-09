@@ -228,7 +228,10 @@
       "method": "showcase",
       "engine": "read_showcase",
       "tests": [
-        "tests/test_showcase.py::test_the_read_is_never_declared_complete"
+        "tests/test_showcase.py::test_the_read_is_never_declared_complete",
+        "tests/test_showcase_stock.py::test_unknown_stock_never_becomes_zero",
+        "tests/test_showcase_stock.py::test_sync_showcase_returns_stock_without_extra_reads_or_writes",
+        "tests/test_showcase_stock.py::test_async_showcase_uses_the_same_stock_semantics"
       ],
       "limits": [
         "showcase_truncation"
@@ -349,7 +352,7 @@
   "missing_events": {
     "review.changed": "E: источник изменений отзывов и восстановление доставки",
     "lot.price_changed": "E: изменения собственных лотов отдельно от рынка",
-    "lot.stock_changed": "C, E: типизированный остаток и неизвестное значение",
+    "lot.stock_changed": "C, E: остаток собственных лотов и источник изменений с устойчивой идентичностью",
     "seller.online_changed": "B, E: наблюдённый статус и смена присутствия"
   },
   "backlog": {

@@ -2,7 +2,7 @@
 
 <!-- Порождено tools/completeness.py; рукописные связи: tests/fixtures/completeness.json. -->
 
-Контракт 0.62.0: 35 операций доступны через Client и AsyncClient; 12 частично опираются на сторонний протокол. Порождаются 12 из 16 видов событий. Открытых пунктов реестра: 22, включая один пункт вне Python.
+Контракт 0.63.0: 35 операций доступны через Client и AsyncClient; 12 частично опираются на сторонний протокол. Порождаются 12 из 16 видов событий. Открытых пунктов реестра: 22, включая один пункт вне Python.
 
 Это карта реализации и проверок, а не сертификат готовности площадки. Тесты на записанных и синтетических ответах не заменяют собственные наблюдения. 100% строк SDK не означает проверку всех ветвей или реализацию всего целевого API.
 
@@ -35,7 +35,7 @@
 | `lots.form` | `lots.form` | `read_lot_form` | `LotForm` | `tests/test_lot_revision.py::test_revision_matches_declared_json_frame` |
 | `lots.list_own` | `lots.list_own` | `read_own_lots` | `OwnLotsPage` | `tests/test_service_reads.py::test_order_and_lots_services_return_readable_identifiers` |
 | `lots.promote` | `lots.promote` | `promote_lots` | `RaiseResult` | `tests/test_promote.py::test_a_choice_url_cancels_the_success` |
-| `lots.showcase` | `lots.showcase` | `read_showcase` | `ShowcasePage` | `tests/test_showcase.py::test_the_read_is_never_declared_complete` |
+| `lots.showcase` | `lots.showcase` | `read_showcase` | `ShowcasePage` | `tests/test_showcase.py::test_the_read_is_never_declared_complete`<br>`tests/test_showcase_stock.py::test_unknown_stock_never_becomes_zero`<br>`tests/test_showcase_stock.py::test_sync_showcase_returns_stock_without_extra_reads_or_writes`<br>`tests/test_showcase_stock.py::test_async_showcase_uses_the_same_stock_semantics` |
 | `lots.update_price` | `lots.update_price` | `update_price` | `LotForm` | `tests/test_update_price.py::test_everything_read_is_sent_back_and_only_the_price_changes` |
 | `market.offers` | `market.offers` | `read_market` | `MarketPage` | `tests/test_market.py::test_lazy_rows_are_read_like_the_others` |
 | `market.snapshot` | `market.snapshot` | `read_market_snapshot` | `MarketSnapshot` | `tests/test_market_snapshot.py::test_an_incomplete_snapshot_never_reports_absences` |
@@ -98,7 +98,7 @@
 | --- | --- |
 | `review.changed` | E: источник изменений отзывов и восстановление доставки |
 | `lot.price_changed` | E: изменения собственных лотов отдельно от рынка |
-| `lot.stock_changed` | C, E: типизированный остаток и неизвестное значение |
+| `lot.stock_changed` | C, E: остаток собственных лотов и источник изменений с устойчивой идентичностью |
 | `seller.online_changed` | B, E: наблюдённый статус и смена присутствия |
 
 ## Открытые ограничения и этапы

@@ -61,6 +61,9 @@ _AUTO_DELIVERY: Final[str] = SELECTORS["showcase.offers.optional_columns.auto_de
 #: продавца, и доказательством не является.
 _SUSPICIOUS_ROWS: Final[int] = 20
 
+# Ограничение разбора SDK, а не объявленный площадкой предел наличия.
+_STOCK_MAX_DIGITS: Final[int] = 18
+
 
 @dataclass(frozen=True, slots=True)
 class ShowcaseOffer:
@@ -79,6 +82,9 @@ class ShowcaseOffer:
         currency_symbol_text (Observed[str]): Знак валюты.
         sort_value (Observed[str]): Значение сортировки из атрибута ячейки цены.
         amount_text (Observed[str]): Остаток, если раздел его показывает.
+        stock (Observed[int]): Показанный целый остаток. Отсутствие, пустая
+            ячейка и непонятный формат остаются ненаблюдёнными с разными
+            причинами; ноль появляется только из явно показанного числа.
         server_text (Observed[str]): Сервер, если раздел его показывает.
         auto_delivery (Observed[bool]): Признак автоматической выдачи.
         row_index (int): Место строки в разделе, считая с нуля.
@@ -93,6 +99,7 @@ class ShowcaseOffer:
     server_text: Observed[str]
     auto_delivery: Observed[bool]
     row_index: int
+    stock: Observed[int] = field(default_factory=lambda: Observed.missing("stock_not_normalized"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,6 +224,23 @@ def _attribute(node: Node | None, name: str, field_name: str) -> Observed[str]:
     return Observed.present(value) if value else Observed.empty("")
 
 
+def _stock(row: Node) -> Observed[int]:
+    """Читает показанное наличие без догадок о пустоте и бесконечности."""
+    cells = row.css(_AMOUNT)
+    if not cells:
+        return Observed.missing("stock_not_shown")
+    if len(cells) != 1:
+        return Observed.missing("stock_ambiguous")
+    raw = cells[0].text().strip()
+    if not raw:
+        return Observed.missing("stock_empty")
+    if not raw.isascii() or not raw.isdecimal():
+        return Observed.missing("stock_format_unknown")
+    if len(raw) > _STOCK_MAX_DIGITS:
+        return Observed.missing("stock_out_of_range")
+    return Observed.present(int(raw))
+
+
 def _offer(row: Node, index: int) -> ShowcaseOffer:
     """Собирает одно предложение.
 
@@ -241,6 +265,7 @@ def _offer(row: Node, index: int) -> ShowcaseOffer:
         server_text=_text(row.css_first(_SERVER), "server_text"),
         auto_delivery=Observed.present(row.css_first(_AUTO_DELIVERY) is not None),
         row_index=index,
+        stock=_stock(row),
     )
 
 
