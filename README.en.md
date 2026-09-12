@@ -8,30 +8,35 @@
 
 <p align="center">
   <img alt="status" src="https://img.shields.io/badge/status-draft-6E7681?style=flat-square">
-  <img alt="pypi" src="https://img.shields.io/badge/pypi-not%20published-6E7681?style=flat-square">
+  <a href="https://pypi.org/project/funora/"><img alt="PyPI" src="https://img.shields.io/pypi/v/funora?style=flat-square"></a>
   <img alt="license" src="https://img.shields.io/badge/license-Apache--2.0-2F7D95?style=flat-square">
   <img alt="FunPay" src="https://img.shields.io/badge/FunPay-unofficial-B4501E?style=flat-square">
 </p>
 
-<p align="center"><a href="README.md">Русский</a></p>
+<p align="center"><a href="https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/README.md">Русский</a></p>
 
 ---
 
 > **Unofficial project.** Funora is not affiliated with, endorsed by, or connected to FunPay.
 > It works against a private web interface that can change at any time without notice.
 > Using it may lead to your account being suspended and your funds frozen - that risk is yours.
-> Read [DISCLAIMER.md](DISCLAIMER.md) before relying on this for anything that earns you money.
+> Read [DISCLAIMER.md](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/DISCLAIMER.md) before relying on this for anything that earns you money.
 
-## Test pre-alpha: `0.0.1.dev1`
+## Test pre-alpha: `0.0.1.dev2`
 
-The test version is distributed as a
-[GitHub pre-release](https://github.com/Funora-Develop/Funora-python/releases/tag/v0.0.1.dev1).
-See the [release guide](docs/pre-alpha.md) for installation and known limitations.
+Install from [PyPI](https://pypi.org/project/funora/0.0.1.dev2/):
+
+```bash
+python -m pip install "funora==0.0.1.dev2"
+```
+
+See the [release guide](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/pre-alpha.md) for installation and known limitations.
 The contract is still a draft; a successful build does not certify live account operations.
+PyPI versions are published at major milestones; ongoing development continues in branches and PRs.
 
 Thirty-five operations are implemented and tested: twenty-four reads and eleven writes - sending text and images, marking a chat read, leaving and removing a review, changing a lot price, raising offers, activating or deactivating a lot, switching the display currency, and refunding an order.
 
-**The guide lives in [docs/index.md](docs/index.md).** It builds into a site
+**The guide lives in [docs/index.md](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/index.md).** It builds into a site
 (`mkdocs serve`) and is checked by the same run as the code: examples are parsed
 by the interpreter, links are resolved, and every operation it mentions is looked
 up on a real client.
@@ -107,11 +112,11 @@ async with AsyncClient(EnvSecretProvider()) as client:
 
 Write operations require explicit outcomes and preservation of the previous state.
 
-**Sending text** - [its own guide chapter](docs/guide/sending.md): a send has
+**Sending text** - [its own guide chapter](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/guide/sending.md): a send has
 three outcomes rather than two, and the third one, "unknown", is what the chapter
 is about.
 
-**Changing a price** - [the lots chapter](docs/guide/lots.md): the form is sent
+**Changing a price** - [the lots chapter](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/guide/lots.md): the form is sent
 back as it was read, exactly one field changes, and the previous price is written
 to a durable journal before the request leaves. Without a state file the operation
 refuses: the marketplace keeps no price history and offers no undo, so what the
@@ -127,7 +132,7 @@ There is a second queue too - **a directory of files** - for a Telegram bot
 started as a SEPARATE command: an in-memory queue is out of its reach entirely.
 A command claimed by a process that then died is never sent again: its fate is
 unknown, and a person decides about it. The whole picture is in the [bot
-chapter](docs/guide/bot.md).
+chapter](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/guide/bot.md).
 
 The unfinished mechanisms and their reasons are tracked in
 `Funora-spec/spec/conformance/not-implemented.yaml`. Having all service methods
@@ -156,7 +161,7 @@ Order refunds are implemented: the available form is checked before submission,
 and the result is determined from the response. Tests against recorded responses
 do not replace verification on a live test account.
 
-See the [SDK limits](docs/limits.md) and [observation plan](docs/observation-plan.md).
+See the [SDK limits](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/limits.md) and [observation plan](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/observation-plan.md).
 
 ## How it works
 
@@ -176,7 +181,7 @@ raises instead of returning `None`.
 policies, the budget and the verdict-to-error table are not hand-written in any
 of the six SDKs. The build fails when generated output falls behind its source.
 
-More in [docs/architecture.md](docs/architecture.md).
+More in [docs/architecture.md](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/architecture.md).
 
 ## Protocol observations
 
@@ -184,11 +189,11 @@ The package ships `funora-observe`, the tool that produced every protocol fact
 the specification rests on. It stores a structural skeleton of a page: full
 markup, with text and attribute values replaced by signatures.
 
-- [docs/observations.md](docs/observations.md) - what is established and how to
+- [docs/observations.md](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/observations.md) - what is established and how to
   verify it.
-- [docs/limits.md](docs/limits.md) - what Funora cannot do, and why code will not fix it.
-- [docs/protocol-questions.md](docs/protocol-questions.md) - what remains open.
-- [tests/fixtures/pages/README.md](tests/fixtures/pages/README.md) - the snapshot
+- [docs/limits.md](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/limits.md) - what Funora cannot do, and why code will not fix it.
+- [docs/protocol-questions.md](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/protocol-questions.md) - what remains open.
+- [tests/fixtures/pages/README.md](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/tests/fixtures/pages/README.md) - the snapshot
   format and why publishing it is safe.
 
 ## The wider project
@@ -220,7 +225,7 @@ Three things help most right now.
 
 Snapshots of pages in states we do not have: an order in refund or dispute, an
 unread dialog, a long list with pagination. Each one closes an item in
-[docs/protocol-questions.md](docs/protocol-questions.md).
+[docs/protocol-questions.md](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/protocol-questions.md).
 
 Review of [Funora-spec](https://github.com/Funora-Develop/Funora-spec): it is
 verified by use, and the first attempt to apply it surfaced eighteen places where
@@ -237,4 +242,4 @@ A FunPay session key is your entire account. Report privately through
 
 ## License
 
-[Apache-2.0](LICENSE) © Funora Contributors
+[Apache-2.0](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/LICENSE) © Funora Contributors

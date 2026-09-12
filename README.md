@@ -8,31 +8,36 @@
 
 <p align="center">
   <img alt="status" src="https://img.shields.io/badge/status-draft-6E7681?style=flat-square">
-  <img alt="pypi" src="https://img.shields.io/badge/pypi-not%20published-6E7681?style=flat-square">
+  <a href="https://pypi.org/project/funora/"><img alt="PyPI" src="https://img.shields.io/pypi/v/funora?style=flat-square"></a>
   <img alt="license" src="https://img.shields.io/badge/license-Apache--2.0-2F7D95?style=flat-square">
   <img alt="FunPay" src="https://img.shields.io/badge/FunPay-unofficial-B4501E?style=flat-square">
 </p>
 
-<p align="center"><a href="README.en.md">English</a></p>
+<p align="center"><a href="https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/README.en.md">English</a></p>
 
 ---
 
 > **Неофициальный проект.** Funora не аффилирована с FunPay, не одобрена ею и никак с ней не связана.
 > Работает с приватным веб-интерфейсом, который может измениться в любой момент без предупреждения.
 > Использование может привести к блокировке аккаунта и заморозке средств - этот риск несёте вы.
-> Прочитайте [DISCLAIMER.md](DISCLAIMER.md) прежде, чем строить на этом то, что приносит вам деньги.
+> Прочитайте [DISCLAIMER.md](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/DISCLAIMER.md) прежде, чем строить на этом то, что приносит вам деньги.
 
-## Тестовый pre-alpha: `0.0.1.dev1`
+## Тестовый pre-alpha: `0.0.1.dev2`
 
-Тестовая версия распространяется через
-[GitHub pre-release](https://github.com/Funora-Develop/Funora-python/releases/tag/v0.0.1.dev1).
-Установка и ограничения описаны в [заметке о выпуске](docs/pre-alpha.md).
+Установка из [PyPI](https://pypi.org/project/funora/0.0.1.dev2/):
+
+```bash
+python -m pip install "funora==0.0.1.dev2"
+```
+
+Установка и ограничения описаны в [заметке о выпуске](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/pre-alpha.md).
 Контракт пока имеет статус draft; сборка пакета не означает проверку всех
 операций на действующем аккаунте.
+Новые версии на PyPI выходят на крупных этапах; текущая доработка идёт в ветках и PR.
 
 Реализованы и проверяются тестами тридцать пять операций: двадцать четыре чтения и одиннадцать записей - отправка текста и картинки, отметка прочтения, отзыв и его снятие, правка цены лота, поднятие предложений, включение и выключение лота, смена валюты интерфейса и возврат по заказу.
 
-**Руководство: [docs/index.md](docs/index.md).** Оно собирается в сайт
+**Руководство: [docs/index.md](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/index.md).** Оно собирается в сайт
 (`mkdocs serve`) и проверяется тем же прогоном, что и код: примеры разбираются
 интерпретатором, ссылки разрешаются, а каждая упомянутая операция ищется на
 настоящем клиенте.
@@ -124,10 +129,10 @@ async with AsyncClient(EnvSecretProvider()) as client:
 
 Для операций записи существенны исход запроса и сохранность прежнего состояния.
 
-**Отправка текста** - [глава в руководстве](docs/guide/sending.md): исходов у неё
+**Отправка текста** - [глава в руководстве](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/guide/sending.md): исходов у неё
 три, а не два, и третий - «неизвестно» - это то, ради чего глава написана.
 
-**Правка цены** - [глава про лоты](docs/guide/lots.md): отправляется прочитанное
+**Правка цены** - [глава про лоты](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/guide/lots.md): отправляется прочитанное
 целиком, меняется ровно одно поле, а прежняя цена ложится в долговечный журнал
 раньше, чем уходит запрос. Без файла состояния операция отказывает: у площадки
 нет ни истории цен, ни отката, и «как было» знает только наша запись.
@@ -141,7 +146,7 @@ async with AsyncClient(EnvSecretProvider()) as client:
 ОТДЕЛЬНОЙ командой: до очереди в памяти он не дотягивается ничем. Задание,
 взятое умершим процессом, повторно не отправляется никогда - его судьба
 неизвестна, и решает о нём человек. Как это выглядит целиком - в [главе про
-бота](docs/guide/bot.md).
+бота](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/guide/bot.md).
 
 Полный реестр незавершённых механизмов с причинами лежит в
 `Funora-spec/spec/conformance/not-implemented.yaml`. Он включает ограничения
@@ -171,8 +176,8 @@ async with AsyncClient(EnvSecretProvider()) as client:
 а результат определяется по ответу. Проверка этой реализации на записанных
 ответах не заменяет проверку на действующем тестовом аккаунте.
 
-Подробности: [границы SDK](docs/limits.md),
-[план наблюдений](docs/observation-plan.md).
+Подробности: [границы SDK](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/limits.md),
+[план наблюдений](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/observation-plan.md).
 
 ## Как устроено
 
@@ -192,8 +197,8 @@ async with AsyncClient(EnvSecretProvider()) as client:
 руками ни в одном из шести SDK. Сборка падает, если порождённое отстало от
 источника.
 
-Подробнее - в [docs/architecture.md](docs/architecture.md), а как этим
-пользоваться - в [руководстве](docs/index.md).
+Подробнее - в [docs/architecture.md](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/architecture.md), а как этим
+пользоваться - в [руководстве](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/index.md).
 
 ## Наблюдения за протоколом
 
@@ -201,11 +206,11 @@ async with AsyncClient(EnvSecretProvider()) as client:
 протоколе, на которых стоит спецификация. Он сохраняет структурный скелет
 страницы: разметка целиком, текст и значения атрибутов заменены подписями.
 
-- [docs/observations.md](docs/observations.md) - что установлено и как проверить.
-- [docs/protocol-questions.md](docs/protocol-questions.md) - что осталось открытым.
-- [docs/limits.md](docs/limits.md) - чего Funora не умеет и почему это не чинится кодом.
-- [docs/observing.md](docs/observing.md) - как снять наблюдение самому.
-- [tests/fixtures/pages/README.md](tests/fixtures/pages/README.md) - формат
+- [docs/observations.md](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/observations.md) - что установлено и как проверить.
+- [docs/protocol-questions.md](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/protocol-questions.md) - что осталось открытым.
+- [docs/limits.md](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/limits.md) - чего Funora не умеет и почему это не чинится кодом.
+- [docs/observing.md](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/observing.md) - как снять наблюдение самому.
+- [tests/fixtures/pages/README.md](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/tests/fixtures/pages/README.md) - формат
   снимков и почему их можно публиковать.
 
 ## Проект целиком
@@ -237,7 +242,7 @@ Funora - это один контракт, реализованный натив
 
 Снимки страниц в состояниях, которых у нас нет: заказ в возврате или споре,
 непрочитанный диалог, длинный список с постраничной навигацией. Каждый такой
-снимок закрывает пункт в [docs/protocol-questions.md](docs/protocol-questions.md).
+снимок закрывает пункт в [docs/protocol-questions.md](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/protocol-questions.md).
 
 Разбор спецификации в [Funora-spec](https://github.com/Funora-Develop/Funora-spec):
 она проверяется употреблением, и первая же попытка её применить дала восемнадцать
@@ -254,4 +259,4 @@ Funora - это один контракт, реализованный натив
 
 ## Лицензия
 
-[Apache-2.0](LICENSE) © Funora Contributors
+[Apache-2.0](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/LICENSE) © Funora Contributors

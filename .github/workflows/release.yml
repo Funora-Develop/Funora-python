@@ -58,9 +58,8 @@ jobs:
   publish:
     name: Publish to PyPI
     needs: build
-    # Тестовые .dev-сборки распространяются через GitHub pre-release.
-    # Проверки и сборка выше обязательны и для них.
-    if: ${{ !contains(github.ref_name, '.dev') }}
+    # Тег v<версия> обозначает намеренный выпуск, включая pre-alpha.
+    # Обычные коммиты и PR этот workflow не запускают.
     runs-on: ubuntu-latest
     environment:
       name: pypi
