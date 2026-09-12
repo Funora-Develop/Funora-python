@@ -8,7 +8,7 @@ r"""Числа бюджета запросов.
 площадки означало бы намеренно их превышать. Поэтому они подобраны
 консервативно и будут уточняться наблюдением, а не подбором.
 
-Расходуются отправленные запросы, включая повторы и переходы по
+Сетевые вёдра расходуют запросы, включая повторы и переходы по
 редиректам. Считать только логические операции нельзя: тогда шторм
 повторов оказывается бесплатным ровно в тот момент, когда площадке
 хуже всего.
@@ -53,6 +53,9 @@ __all__ = [
     "Scheduling",
     "SCHEDULING",
     "PROVISIONAL",
+    "MARKET_INTERVAL_MS",
+    "MARKET_ABSENCES",
+    "MARKET_HISTORY_LIMIT",
 ]
 
 
@@ -62,15 +65,17 @@ class BucketLimits:
 
     Attributes:
         name (str): Имя ведра.
-        capacity (int): Сколько запросов помещается всего.
+        capacity (int): Сколько единиц помещается всего.
         refill_per_second (float): Сколько восстанавливается за секунду.
         burst (int): Сколько можно потратить залпом.
+        unit (str): requests либо actions_per_hour для логических записей.
     """
 
     name: str
     capacity: int
     refill_per_second: float
     burst: int
+    unit: str = "requests"
 
 
 #: Вёдра бюджета. Вложены: запрос расходует сначала общее, потом ведро
@@ -94,6 +99,7 @@ BUCKETS: Final[dict[str, BucketLimits]] = {
         capacity=60,
         refill_per_second=0.0167,
         burst=5,
+        unit="actions_per_hour",
     ),
 }
 
@@ -299,3 +305,7 @@ SCHEDULING: Final[Scheduling] = Scheduling(
 #: Снимается только тогда, когда пороги станут известны из наблюдений.
 #: Измерять их намеренным превышением нельзя.
 PROVISIONAL: Final[bool] = True
+
+MARKET_INTERVAL_MS: Final[int] = 120000
+MARKET_ABSENCES: Final[int] = 2
+MARKET_HISTORY_LIMIT: Final[int] = 100000

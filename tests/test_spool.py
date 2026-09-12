@@ -390,7 +390,7 @@ def test_the_outcome_is_missing_until_the_command_is_settled(tmp_path: Path) -> 
     spool = Spool(tmp_path / "spool")
     spool.submit(_command("waiting"))
     assert spool.outcome("waiting") is None
-    assert spool.outcome("никогда не было") is None
+    assert spool.outcome("never-existed") is None
 
 
 def test_settling_removes_the_command_after_recording(tmp_path: Path) -> None:

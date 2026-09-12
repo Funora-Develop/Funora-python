@@ -239,9 +239,12 @@ def test_every_step_of_the_normative_order_has_its_own_case() -> None:
         None
     """
     covered = {
+        "transport_error",
+        "unexpected_http_status",
         "body_not_json",
         "body_not_an_object",
         "response_not_an_object",
+        "response_error_missing",
         "channel_reported_error",
         "no_chat_node_in_answer",
         "node_mismatch",
@@ -286,3 +289,17 @@ def test_the_receipt_is_never_read_as_a_plain_truth_value() -> None:
         "`if result` прочтёт неподтверждённое как успех"
     )
     assert unconfirmed.is_confirmed is False
+
+
+def test_transport_failure_cannot_confirm_even_a_success_body() -> None:
+    result = classify_send_response(
+        '{"response": {}, "objects": []}', sent_to="1", transport_failed=True
+    )
+    assert result.outcome is SendOutcome.UNCONFIRMED
+    assert result.reason == "transport_error"
+
+
+def test_http_failure_cannot_confirm_even_a_success_body() -> None:
+    result = classify_send_response('{"response": {}, "objects": []}', sent_to="1", http_status=500)
+    assert result.outcome is SendOutcome.UNCONFIRMED
+    assert result.reason == "unexpected_http_status"

@@ -14,8 +14,13 @@ permissions:
   contents: read
 
 jobs:
+  verify:
+    name: Проверки перед выпуском
+    uses: ./.github/workflows/ci.yml
+
   build:
     name: Build distributions
+    needs: verify
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -26,10 +31,18 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Тег соответствует версии пакета
+        run: python tools/check_release.py
+        env:
+          FUNORA_RELEASE_TAG: ${{ github.ref_name }}
+
       - name: Build sdist and wheel
         run: |
           python -m pip install --upgrade build
           python -m build
+
+      - name: Установка wheel и sdist в чистые окружения
+        run: python tools/check_distribution.py dist
 
       - name: Validate package metadata
         run: |
@@ -45,6 +58,8 @@ jobs:
   publish:
     name: Publish to PyPI
     needs: build
+    # Тег v<версия> обозначает намеренный выпуск, включая pre-alpha.
+    # Обычные коммиты и PR этот workflow не запускают.
     runs-on: ubuntu-latest
     environment:
       name: pypi

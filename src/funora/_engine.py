@@ -36,22 +36,29 @@ from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Lock
 from time import monotonic
 from typing import Any, Final, TypeVar
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 from selectolax.parser import HTMLParser
 
 from ._account import BalancePage, parse_balance_page
-from ._budget import Budget
+from ._budget import Budget, wait_until_ms
 from ._calc import (
     CHIPS_CALC_PATH,
     LOTS_CALC_PATH,
     PriceCalculation,
     parse_calculation,
 )
-from ._catalog import CatalogPage, parse_catalog
-from ._chat_history import CHAT_HISTORY_PATH, HISTORY_HEADERS, ChatHistory, parse_history
+from ._catalog import CatalogPage, normalize_catalog_query, parse_catalog, parse_catalog_search
+from ._chat_history import (
+    CHAT_HISTORY_PATH,
+    HISTORY_HEADERS,
+    ChatHistory,
+    parse_history,
+    valid_message_position,
+)
 from ._chats import ChatsPage, parse_chats_page
 from ._chips import ChipsPage, parse_chips
 from ._classify import DEFAULT_IDENTITY_CSS, ResponseClass, Verdict, classify
@@ -61,6 +68,7 @@ from ._currency_switch import (
     CurrencySwitch,
     parse_currency_switch,
 )
+from ._cursor import decode_cursor
 from ._delivered import DeliveryLedger
 from ._diff import (
     UNREAD_STATUS,
@@ -74,12 +82,31 @@ from ._diff import (
     thread_cursor,
 )
 from ._extract import observe_locale
+from ._field_schema import FieldSchema, parse_field_schema
 from ._gate import check_capability
 from ._host import host_of
 from ._identity import REGISTRY, Identity, identity_of
+from ._listen import (
+    CHANNEL_INTERVAL_MS,
+    ChannelSignal,
+    ChannelState,
+    classify_signal,
+    seed_tags,
+    unexpected_shape,
+    wanted_objects,
+)
 from ._lot_form import SAVE_PATH, LotForm, parse_lot_form
 from ._market import MarketPage, parse_market
 from ._money import CURRENCY_BY_SYMBOL
+from ._monitoring import (
+    MarketWatch,
+    check_history_limit,
+    history_size,
+    initial_cursor,
+    observe_market,
+    validate_market_transition,
+    validate_watches,
+)
 from ._observed import Observed
 from ._order import OrderView, parse_order_page
 from ._order_details import (
@@ -89,7 +116,7 @@ from ._order_details import (
     check_batch,
     parse_order_details,
 )
-from ._orders import Completeness, OrdersPage, parse_orders_page
+from ._orders import Completeness, OrdersPage, normalize_order_filters, parse_orders_page
 from ._outbound import UNSAFE_SENDS_WITHOUT_LEDGER, OutboundGovernor, OutboundRefusal
 from ._own_lots import OwnLotsPage, parse_own_lots
 from ._poll import Deduplicator, Schedule
@@ -106,34 +133,45 @@ from ._review_write import (
     ReviewResult,
     parse_review_response,
 )
-from ._reviews import ReviewsPage, parse_reviews_page
+from ._reviews import ReviewsCursor, ReviewsPage, normalize_review_rating, parse_reviews_page
 from ._runner import (
     Anchor,
+    RunnerContext,
     SendResult,
     classify_send_response,
     parse_runner_context,
     reconcile,
     take_anchor,
 )
+from ._secret import Secret
 from ._showcase import ShowcasePage, parse_showcase
 from ._snapshot import MarketSnapshot, snapshot_of
 from ._state import StateFile
 from ._thread import Thread, parse_thread
 from ._transport import Observation, TransportSettings
+from ._updates import build_subscription, parse_updates_answer
 from ._verdicts import error_for
 from ._viewing import VIEWING_OBJECT, BuyerViewing, parse_buyer_viewing
 from ._watch import Router, StepResult, health_changed, incomplete, loss, primed
-from ._whoami import Account, CapabilityProfile, SessionHealth, parse_account, parse_app_data
+from ._watch_state import PendingBatch, validate_cursor, watch_lease
+from ._whoami import (
+    Account,
+    CapabilityProfile,
+    SessionHealth,
+    _CapabilityStates,
+    parse_account,
+    parse_app_data,
+)
 from .budget import (
     COUNTS_REDIRECTS,
     COUNTS_RETRIES,
+    MARKET_HISTORY_LIMIT,
     MAX_QUEUE_DEPTH_PER_KEY,
     MIN_HEALTH_INTERVAL_MS,
     WAIT_ATTEMPTS,
-    WAIT_GUARD_MS,
     RequestClass,
 )
-from .capabilities import CAPABILITY_INITIAL, Capability, CapabilityState
+from .capabilities import Capability, CapabilityState
 from .contract import SUPPORTED_LOCALES
 from .errors import (
     AuthenticationError,
@@ -148,10 +186,11 @@ from .errors import (
     RateLimitedError,
     TransportError,
     UnexpectedResponseError,
+    UnsupportedCapabilityError,
     UsageError,
     ValidationError,
 )
-from .extraction import SELECTORS
+from .extraction import SELECTORS, OrderStatus
 from .operations import OPERATIONS, Safety
 from .reconciliation import RECONCILE_DELAYS_MS, ReconcileVerdict
 from .response_classes import (
@@ -220,8 +259,8 @@ OWN_LOTS_PATH: Final[str] = "/lots/{node_id}/trade"
 #: Публичный список предложений раздела - то, что видит ПОКУПАТЕЛЬ.
 #:
 #: Страница отдаётся и без сессии: наблюдено 31.08.2026 гостем, 1417 строк со
-#: всеми ценами и продавцами. Операция ходит по ней под сессией - отдельной
-#: дорожки public_read у реализации пока нет, и это записано в реестре.
+#: всеми ценами и продавцами. Client выбирает отдельные ядро и транспорт
+#: public_read: без сессионного секрета, с общим пределом сетевой идентичности.
 MARKET_PATH: Final[str] = "/lots/{node_id}/"
 
 #: Второй рынок - предложения по количеству.
@@ -409,12 +448,32 @@ Request = Fetch | Submit | Upload | Query | Ask | Pause | Deliver
 Reply = Observation | StepResult | None
 
 
+CATALOG_SEARCH_PATH: Final[str] = "/games/promoFilter"
+
+
+def public_read_request(request: Request) -> bool:
+    """Публичный POST разрешён только для наблюдённой формы поиска игр."""
+    if isinstance(request, (Fetch, Pause, Deliver)):
+        return True
+    if not (
+        isinstance(request, Submit)
+        and request.path == CATALOG_SEARCH_PATH
+        and set(request.fields) == {"query"}
+        and request.headers == RUNNER_HEADERS
+    ):
+        return False
+    try:
+        return normalize_catalog_query(request.fields["query"]) == request.fields["query"]
+    except ValidationError:
+        return False
+
+
 @dataclass
 class _State:
     """Состояние клиента, живущее между вызовами.
 
     Attributes:
-        capabilities (dict[Capability, CapabilityState]): Текущие состояния
+        capabilities (_CapabilityStates): Текущие состояния
             возможностей. Начальные берутся из спецификации.
         session_ever_valid (bool): Подтверждалась ли сессия хоть раз. Отличает
             истёкшую сессию от неверного секрета, а это разные диагнозы с разным
@@ -449,11 +508,11 @@ class _State:
     #: Без него реализация пошла бы на площадку каждый тик - ровно то, чего
     #: обещание операции запрещает.
     health_cached: SessionHealth | None = None
+    catalog_cached: CatalogPage | None = None
+    catalog_cached_at: float = 0.0
     health_checked_at: float = 0.0
 
-    capabilities: dict[Capability, CapabilityState] = field(
-        default_factory=lambda: dict(CAPABILITY_INITIAL)
-    )
+    capabilities: _CapabilityStates = field(default_factory=_CapabilityStates)
     session_ever_valid: bool = False
     opted_in: frozenset[Capability] = frozenset()
     health: Health = INITIAL_HEALTH
@@ -501,7 +560,8 @@ def integrity_verified(observation: Observation) -> bool:
 PageT = TypeVar(
     "PageT",
     bound=(
-        "OrdersPage | ChatsPage | Thread | ReviewsPage | BalancePage | ShowcasePage | CatalogPage"
+        "OrdersPage | ChatsPage | Thread | ReviewsPage | BalancePage | ShowcasePage | "
+        "CatalogPage | FieldSchema"
     ),
 )
 
@@ -570,6 +630,8 @@ IMPLEMENTED: Final[frozenset[Capability]] = frozenset(
         Capability.ACCOUNT_BALANCE,
         Capability.LOTS_SHOWCASE,
         Capability.CATALOG_CATEGORIES,
+        Capability.CATALOG_SEARCH,
+        Capability.CATALOG_FIELD_SCHEMA,
         Capability.ACCOUNT_PROFILE,
         Capability.CHATS_SEND_TEXT,
         Capability.LOTS_LIST_OWN,
@@ -767,11 +829,13 @@ class Engine:
 
     __slots__ = (
         "_budget",
+        "_watch_lock",
         "_health_changes",
         "_identity",
         "_delivered",
         "_price_audit",
         "_ledger",
+        "_runner_context",
         "_stored_account",
         "_settings",
         "_state",
@@ -785,11 +849,12 @@ class Engine:
         budget: Budget,
         experimental: frozenset[Capability] = frozenset(),
         identity: Identity | None = None,
-        state_path: Path | None = None,
+        state_path: str | Path | None = None,
         unsafe_sends_without_ledger: bool = False,
         unsafe_price_changes_without_audit: bool = False,
     ) -> None:
         self._settings = settings
+        self._watch_lock = Lock()
         self._budget = budget
         self._state = _State(opted_in=experimental)
 
@@ -799,7 +864,19 @@ class Engine:
         #: снимается перезапуском процесса. Пределы часовые, а память
         #: обнуляется, и тридцать сообщений в час превращаются в тридцать на
         #: запуск. Бот под супервизором обходил бы ограничитель полностью.
-        self._ledger: StateFile | None = StateFile(state_path) if state_path else None
+        self._ledger: StateFile | None = (
+            StateFile(Path(state_path)) if state_path is not None else None
+        )
+
+        #: Что прочитано с шапки последнего списка диалогов.
+        #:
+        #: Носитель защитного токена и собственного номера - всего, что нужно,
+        #: чтобы обратиться к каналу обновлений. Снимается попутно с чтением
+        #: страницы: отдельного запроса ради него нет.
+        #:
+        #: None означает, что списка диалогов ещё не читали либо на нём токена не
+        #: оказалось. Второе - законное состояние: под гостем его там нет.
+        self._runner_context: RunnerContext | None = None
 
         #: Снятые вызывающим защиты. Читаются состоянием здоровья.
         #:
@@ -839,9 +916,9 @@ class Engine:
 
         if self._ledger is not None:
             stored = self._ledger.load()
-            self._state.outbound.restore(stored.get("outbound") or {})
-            self._delivered.restore(stored.get("delivery") or {})
-            self._price_audit.restore(stored.get("price_audit") or {})
+            self._state.outbound.restore(stored.get("outbound", {}))
+            self._delivered.restore(stored.get("delivery", {}))
+            self._price_audit.restore(stored.get("price_audit", {}))
             self._stored_account = str(stored.get("account") or "")
         #: Смены состояния доступа, ждущие выдачи партией.
         self._health_changes: list[tuple[Health, Health, str]] = []
@@ -890,7 +967,15 @@ class Engine:
             )
         return self._state.capabilities[capability]
 
-    def read_orders(self) -> Generator[Request, Reply, OrdersPage]:
+    def read_orders(
+        self,
+        *,
+        order_id: str | None = None,
+        buyer: str | None = None,
+        status: OrderStatus | str | None = None,
+        game_id: str | None = None,
+        section: str | None = None,
+    ) -> Generator[Request, Reply, OrdersPage]:
         """Читает список заказов по нормативному порядку шагов.
 
         Yields:
@@ -902,8 +987,14 @@ class Engine:
         Raises:
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
-        observation = yield from self.fetch_ok(Capability.ORDERS_LIST, ORDERS_PATH)
+        fields = normalize_order_filters(
+            order_id=order_id, buyer=buyer, status=status, game_id=game_id, section=section
+        )
+        path = ORDERS_PATH + ("?" + urlencode(fields) if fields else "")
+        observation = yield from self.fetch_ok(Capability.ORDERS_LIST, path)
         page = parse_orders_page(observation.html, observed_at=datetime.now(UTC))
+        if fields and not page.filters_available:
+            raise ProtocolChangedError("ответ на фильтр заказов не содержит формы фильтров")
         if not integrity_verified(observation):
             page = unverified(page)
         self._note_success(Capability.ORDERS_LIST, page.completeness, page)
@@ -1003,16 +1094,16 @@ class Engine:
         Returns:
             CapabilityProfile: Состояние каждой возможности.
         """
-        return CapabilityProfile(
-            observed_at=datetime.now(UTC),
-            _states={
-                one: self._state.capabilities.get(one, CAPABILITY_INITIAL[one])
-                for one in Capability
-            },
-        )
+        return self._state.capabilities.snapshot()
 
     def send_image(
-        self, node_id: str, content: bytes, *, filename: str, content_type: str = "image/png"
+        self,
+        node_id: str,
+        content: bytes,
+        *,
+        filename: str,
+        content_type: str = "image/png",
+        declared_cold: bool = False,
     ) -> Generator[Request, Reply, SendResult]:
         """Отправляет изображение в переписку.
 
@@ -1074,7 +1165,7 @@ class Engine:
                 f"страница диалога не годится для отправки: {[one.code for one in context.defects]}"
             )
         token = context.csrf_token
-        if token is None:  # pragma: no cover - can_send уже это проверил
+        if token is None:
             raise ProtocolChangedError("защитного токена на странице нет")
 
         # ПРЕДЕЛ РАЗМЕРА ОБЪЯВЛЯЕТ ПЛОЩАДКА, и объявляет на самой странице.
@@ -1088,7 +1179,10 @@ class Engine:
                 "прочитан, а не выдуман"
             )
 
-        yield from self.spend_budget(_class_of(capability), cost=1.0)
+        anchor = take_anchor(observation.html)
+        self._reserve_outbound(cleaned, anchor, declared_cold=declared_cold)
+
+        yield from self.spend_budget(_class_of(capability), cost=1.0, action=True)
         uploaded = yield Upload(
             UPLOAD_CHAT_PATH,
             field="file",
@@ -1118,7 +1212,7 @@ class Engine:
                 "ЧУЖОЙ файл"
             )
 
-        data = {
+        data: dict[str, object] = {
             "node": context.node_name.value,
             "last_message": int(context.last_message.value),
             # Содержимое пусто НАРОЧНО: наблюдено, что при картинке текста в
@@ -1127,29 +1221,8 @@ class Engine:
             "content": "",
             "image_id": file_id,
         }
-        reply = yield Submit(
-            RUNNER_PATH,
-            {
-                "objects": json.dumps(
-                    [
-                        {
-                            "type": "chat_node",
-                            "id": context.node_name.value,
-                            "tag": context.chat_tag.value,
-                            "data": {**data, "image_id": file_id},
-                        }
-                    ],
-                    ensure_ascii=False,
-                ),
-                "request": json.dumps({"action": "chat_message", "data": data}, ensure_ascii=False),
-                "csrf_token": token.reveal(),
-            },
-            dict(RUNNER_HEADERS),
-        )
-        if not isinstance(reply, Observation):
-            raise TypeError(f"на просьбу Submit ожидалось наблюдение, получено {type(reply)}")
-
-        result = classify_send_response(reply.html, sent_to=context.node_name.value)
+        yield from self.spend_budget(_class_of(capability), cost=1.0)
+        result = yield from self._submit_message(context, data)
         if result.outcome is SendOutcome.CONFIRMED:
             self._state.capabilities[capability] = CapabilityState.SUPPORTED
         return result
@@ -1312,19 +1385,19 @@ class Engine:
             )
 
         token = context.csrf_token
-        if token is None:  # pragma: no cover - can_send уже это проверил
+        if token is None:
             raise ProtocolChangedError("защитного токена на странице нет")
 
         # СОДЕРЖИМОЕ ПУСТОЕ, И ПОЛЯ request НЕТ ВОВСЕ. Это ровно то обращение,
         # которое делает сама страница при открытой переписке: опрос без
         # действия. Положить сюда действие значило бы отправить сообщение.
-        data = {
+        data: dict[str, object] = {
             "node": context.node_name.value,
             "last_message": int(context.last_message.value),
             "content": "",
         }
 
-        yield from self.spend_budget(_class_of(capability), cost=1.0)
+        yield from self.spend_budget(_class_of(capability), cost=1.0, action=True)
         reply = yield Submit(
             RUNNER_PATH,
             {
@@ -1417,63 +1490,15 @@ class Engine:
                 "имени диалога, его метки и защитного токена, нельзя"
             )
         anchor = take_anchor(observation.html)
-        self._bind_account(anchor.own_href)
+        self._reserve_outbound(cleaned, anchor, declared_cold=declared_cold)
 
-        # Ограничитель спрашивается ПЕРВЫМ среди пределов. Ждать он не умеет и
-        # не должен: его пределы часовые.
-        now_ms = int(datetime.now(UTC).timestamp() * 1000)
-        refusal = self._state.outbound.check(
-            cleaned, now_ms=now_ms, now_s=monotonic(), declared_cold=declared_cold
-        )
-        if refusal is not None:
-            raise _outbound_error(refusal)
-
-        # Попытка записывается ВПЕРЕДИ запроса. Форма отказа канала не
-        # наблюдалась, и «не засчитаем, раз не подтвердилось» означало бы не
-        # считать ровно те отправки, которые могли уйти.
-        self._state.outbound.record(cleaned, now_ms=now_ms, now_s=monotonic())
-        # Реестр сохраняется СРАЗУ, а не в конце шага. Перезапуск между
-        # отправкой и концом шага иначе терял бы её из реестра - то есть ровно
-        # в том случае, ради которого реестр и заведён.
-        self._save_ledger(now_ms=now_ms)
-
-        node_name = context.node_name.value
-        data = {
-            "node": node_name,
+        data: dict[str, object] = {
+            "node": context.node_name.value,
             "last_message": int(context.last_message.value),
             "content": text,
         }
-        token = context.csrf_token
-        if token is None:  # pragma: no cover - can_send уже это проверил
-            raise ProtocolChangedError("защитного токена на странице нет")
-
-        yield from self.spend_budget(_class_of(capability), cost=1.0)
-        reply = yield Submit(
-            RUNNER_PATH,
-            {
-                # Подписка ровно на один узел - тот самый диалог. Канал
-                # подтверждает только подписанное, а полная подписка недостижима:
-                # метка закладок не наблюдалась.
-                "objects": json.dumps(
-                    [
-                        {
-                            "type": "chat_node",
-                            "id": node_name,
-                            "tag": context.chat_tag.value,
-                            "data": data,
-                        }
-                    ],
-                    ensure_ascii=False,
-                ),
-                "request": json.dumps({"action": "chat_message", "data": data}, ensure_ascii=False),
-                "csrf_token": token.reveal(),
-            },
-            dict(RUNNER_HEADERS),
-        )
-        if not isinstance(reply, Observation):
-            raise TypeError(f"на просьбу Submit ожидалось наблюдение, получено {type(reply)}")
-
-        result = classify_send_response(reply.html, sent_to=node_name)
+        yield from self.spend_budget(_class_of(capability), cost=1.0, action=True)
+        result = yield from self._submit_message(context, data)
 
         # СВЕРКА ДЕЛАЕТСЯ ТОЛЬКО ТАМ, ГДЕ ИСХОДА НЕ НАБЛЮДАЛИ. При подтверждённом
         # ответ канала сам несёт новое сообщение, и читать историю незачем:
@@ -1491,6 +1516,57 @@ class Engine:
             None,
         )
         return result
+
+    def _reserve_outbound(self, node_id: str, anchor: Anchor, *, declared_cold: bool) -> None:
+        self._bind_account(anchor.own_href)
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+        refusal = self._state.outbound.check(
+            node_id, now_ms=now_ms, now_s=monotonic(), declared_cold=declared_cold
+        )
+        if refusal is not None:
+            raise _outbound_error(refusal)
+        self._state.outbound.record(node_id, now_ms=now_ms, now_s=monotonic())
+        self._save_ledger(now_ms=now_ms)
+
+    def _submit_message(
+        self, context: RunnerContext, data: dict[str, object]
+    ) -> Generator[Request, Reply, SendResult]:
+        """Отправляет один раз; потерянный ответ остаётся неопределённым исходом."""
+        token = context.csrf_token
+        assert token is not None  # Оба вызывающих уже проверили can_send.
+        try:
+            reply = yield Submit(
+                RUNNER_PATH,
+                {
+                    "objects": json.dumps(
+                        [
+                            {
+                                "type": "chat_node",
+                                "id": context.node_name.value,
+                                "tag": context.chat_tag.value,
+                                "data": data,
+                            }
+                        ],
+                        ensure_ascii=False,
+                    ),
+                    "request": json.dumps(
+                        {"action": "chat_message", "data": data}, ensure_ascii=False
+                    ),
+                    "csrf_token": token.reveal(),
+                },
+                dict(RUNNER_HEADERS),
+            )
+        except TransportError:
+            return classify_send_response(
+                "", sent_to=context.node_name.value, transport_failed=True
+            )
+        if not isinstance(reply, Observation):
+            raise TypeError(f"на просьбу Submit ожидалось наблюдение, получено {type(reply)}")
+        if reply.status == 429:
+            self._identity.note_limit(monotonic(), retry_after_ms=reply.retry_after_ms)
+        return classify_send_response(
+            reply.html, sent_to=context.node_name.value, http_status=reply.status
+        )
 
     def _reconcile_send(
         self, node_id: str, anchor: Anchor
@@ -1532,13 +1608,9 @@ class Engine:
     def read_lot_form(self, node_id: str, offer_id: str) -> Generator[Request, Reply, LotForm]:
         """Читает форму правки одного предложения.
 
-        ЕДИНСТВЕННОЕ МЕСТО, где виден признак показа лота в выдаче. На странице
-        своих лотов его нет ни одного, и модель Lot из-за этого не собиралась
-        вовсе.
-
-        Цена известна и записана: одна страница на предложение. У продавца с
-        двумя сотнями лотов это две сотни запросов, и потому список своих лотов
-        признака по-прежнему не отдаёт.
+        Возвращает исходные поля, видимость, показанное наличие и отпечаток
+        состояния. Читается одна страница на предложение; идентификаторы
+        формы сверяются с запрошенными до объявления успеха.
 
         Args:
             node_id (str): Идентификатор раздела.
@@ -1567,6 +1639,11 @@ class Engine:
             LOT_EDIT_PATH.format(node_id=node, offer_id=offer),
         )
         form = parse_lot_form(observation.html, observed_at=datetime.now(UTC))
+        if form.node_id != node or form.offer_id != offer:
+            raise ProtocolChangedError(
+                "форма правки принадлежит другому разделу или предложению; "
+                "использовать её для сохранения нельзя"
+            )
         # Страница НЕ передаётся: у формы нет счётчиков строк по устройству -
         # это одна сущность, а не перечень. Ветка с None для того и заведена.
         self._note_success(Capability.LOTS_FORM, form.completeness, None)
@@ -1678,7 +1755,9 @@ class Engine:
         if before.is_active == visible:
             return before
 
-        reply = yield Submit(SAVE_PATH, before.to_request(active=visible), {})
+        fields = before.to_request(active=visible)
+        yield from self.spend_budget(_class_of(capability), action=True)
+        reply = yield Submit(SAVE_PATH, fields, {})
         if not isinstance(reply, Observation):
             raise TypeError(f"на просьбу Submit ожидалось наблюдение, получено {type(reply)}")
 
@@ -1799,6 +1878,8 @@ class Engine:
         cleaned = price.strip()
         if not cleaned:
             raise ValidationError("цена пуста: пустое поле стирает цену, а не оставляет прежнюю")
+        if cleaned == before.price_text:
+            return before
 
         # Вид аудита тоже из контракта: before_state - сохранить состояние ДО
         # правки. Появись у операции аудит другого вида, здесь станет видно,
@@ -1809,6 +1890,8 @@ class Engine:
                 "реализован before_state. Что именно сохранять - решает "
                 "спецификация, и молча исполнять не то нельзя"
             )
+
+        fields = before.to_request(price=cleaned)
 
         # ЗАПИСЬ ВПЕРЕДИ ОТПРАВКИ. «Запишем, когда подтвердится» означает не
         # записать ровно те правки, которые могли уйти: ответ теряется, процесс
@@ -1826,7 +1909,8 @@ class Engine:
         )
         self._save_price_audit()
 
-        reply = yield Submit(SAVE_PATH, before.to_request(price=cleaned), {})
+        yield from self.spend_budget(_class_of(Capability.LOTS_UPDATE_PRICE), action=True)
+        reply = yield Submit(SAVE_PATH, fields, {})
         if not isinstance(reply, Observation):
             raise TypeError(f"на просьбу Submit ожидалось наблюдение, получено {type(reply)}")
 
@@ -2002,7 +2086,7 @@ class Engine:
             opted_in=capability in self._state.opted_in,
         )
 
-        yield from self.spend_budget(_class_of(capability), cost=1.0)
+        yield from self.spend_budget(_class_of(capability), cost=1.0, action=True)
         reply = yield Submit(RAISE_PATH, {"game_id": game, "node_id": node}, {})
         if not isinstance(reply, Observation):
             raise TypeError(f"на просьбу Submit ожидалось наблюдение, получено {type(reply)}")
@@ -2060,7 +2144,26 @@ class Engine:
         self._note_success(capability, page.completeness, None)
         return page
 
-    def read_catalog(self) -> Generator[Request, Reply, CatalogPage]:
+    def read_field_schema(self, section_id: str) -> Generator[Request, Reply, FieldSchema]:
+        section_id = _digits(section_id, "раздела")
+        capability = Capability.CATALOG_FIELD_SCHEMA
+        observation = yield from self.fetch_ok(
+            capability, f"/lots/{section_id}/", session_required=False
+        )
+        try:
+            schema = parse_field_schema(
+                observation.html, section_id=section_id, observed_at=datetime.now(UTC)
+            )
+        except UnsupportedCapabilityError:
+            # Отсутствие полей одного раздела не запрещает чтение другого.
+            self._state.capabilities[capability] = CapabilityState.UNKNOWN
+            raise
+        if not integrity_verified(observation):
+            schema = unverified(schema)
+        self._note_success(capability, schema.completeness, None)
+        return schema
+
+    def read_catalog(self, *, refresh: bool = False) -> Generator[Request, Reply, CatalogPage]:
         """Читает каталог с корня площадки.
 
         Yields:
@@ -2072,12 +2175,54 @@ class Engine:
         Raises:
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
-        observation = yield from self.fetch_ok(Capability.CATALOG_CATEGORIES, CATALOG_PATH)
+        if self._stopped is not None:
+            raise self._stopped
+        cached = self._state.catalog_cached
+        ttl = OPERATIONS["catalog.categories"].cache_ttl_ms / 1000
+        if not refresh and cached is not None and monotonic() - self._state.catalog_cached_at < ttl:
+            return cached
+        self._state.catalog_cached = None
+        observation = yield from self.fetch_ok(
+            Capability.CATALOG_CATEGORIES, CATALOG_PATH, session_required=False
+        )
         page = parse_catalog(observation.html, observed_at=datetime.now(UTC))
         if not integrity_verified(observation):
             page = unverified(page)
         self._note_success(Capability.CATALOG_CATEGORIES, page.completeness, None)
+        if page.completeness is Completeness.COMPLETE:
+            self._state.catalog_cached = page
+            self._state.catalog_cached_at = monotonic()
         return page
+
+    def read_catalog_search(self, query: str) -> Generator[Request, Reply, CatalogPage]:
+        """Ищет игры публичной формой, не изменяя кэш полного каталога."""
+        query = normalize_catalog_query(query)
+        observation = yield from self.fetch_ok(
+            Capability.CATALOG_SEARCH,
+            CATALOG_SEARCH_PATH,
+            session_required=False,
+            fields={"query": query},
+        )
+        page = parse_catalog_search(observation.html, query, datetime.now(UTC))
+        if not integrity_verified(observation):
+            page = unverified(page)
+        self._note_success(Capability.CATALOG_SEARCH, page.completeness, None)
+        return page
+
+    def _invalidate_catalog(self, reason: str) -> None:
+        if reason in OPERATIONS["catalog.categories"].cache_invalidate_on:
+            self._state.catalog_cached = None
+
+    def note_operation_error(self, error: FunoraError) -> None:
+        if isinstance(error, AuthenticationError):
+            self._invalidate_catalog("session_change")
+        elif isinstance(error, ProtocolChangedError):
+            self._invalidate_catalog("protocol_changed")
+        else:
+            return
+        self._state.capabilities.invalidate()
+        self._state.health_cached = None
+        self._state.locale = Observed.missing("capability_profile_invalidated")
 
     def read_balance(self) -> Generator[Request, Reply, BalancePage]:
         """Читает страницу баланса: балансы по валютам и операции по счёту.
@@ -2184,7 +2329,7 @@ class Engine:
                 "на странице нет защитного токена, и собрать запрос смены валюты не из чего"
             )
 
-        yield from self.spend_budget(_class_of(capability), cost=1.0)
+        yield from self.spend_budget(_class_of(capability), cost=1.0, action=True)
         reply = yield Submit(
             SWITCH_CURRENCY_PATH,
             {
@@ -2207,6 +2352,7 @@ class Engine:
             ) from exc
 
         result = parse_currency_switch(payload, requested=wanted, observed_at=datetime.now(UTC))
+        self._invalidate_catalog("session_change")
         self._state.capabilities[capability] = CapabilityState.SUPPORTED
         return result
 
@@ -2368,7 +2514,7 @@ class Engine:
             fields["rating"] = str(rating)
             fields["text"] = body
 
-        yield from self.spend_budget(_class_of(capability), cost=1.0)
+        yield from self.spend_budget(_class_of(capability), cost=1.0, action=True)
         reply = yield Submit(path, fields, dict(RUNNER_HEADERS))
         if not isinstance(reply, Observation):
             raise TypeError(f"на просьбу Submit ожидалось наблюдение, получено {type(reply)}")
@@ -2523,7 +2669,7 @@ class Engine:
                 "на странице заказа нет защитного токена, и собрать запрос возврата не из чего"
             )
 
-        yield from self.spend_budget(_class_of(capability), cost=1.0)
+        yield from self.spend_budget(_class_of(capability), cost=1.0, action=True)
         reply = yield Submit(
             REFUND_PATH,
             # Оба поля наблюдены НАМИ, в форме на странице заказа. Номер берётся
@@ -2688,11 +2834,17 @@ class Engine:
         self._note_success(capability, page.completeness, None)
         return page
 
-    def read_reviews(self, user_id: str) -> Generator[Request, Reply, ReviewsPage]:
+    def read_reviews(
+        self,
+        user_id: str,
+        *,
+        rating: int | None = None,
+        cursor: ReviewsCursor | str | None = None,
+    ) -> Generator[Request, Reply, ReviewsPage]:
         """Читает отзывы с профиля продавца.
 
-        Отдельной страницы у отзывов нет: они лежат на профиле, и запрос идёт
-        туда же, куда пошёл бы за именем и оценкой.
+        Начало без фильтра читается с профиля. Фильтр и продолжение используют
+        форму чтения; курсор сохраняет продавца и выбранную оценку.
 
         Args:
             user_id (str): Идентификатор продавца. Тот самый, что стоит в адресе
@@ -2708,6 +2860,9 @@ class Engine:
             ValidationError: Если идентификатор непригоден для подстановки.
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
+        rating_filter = normalize_review_rating(rating)
+        if not isinstance(user_id, str):
+            raise ValidationError("идентификатор продавца должен быть строкой")
         cleaned = user_id.strip()
         if not cleaned or not cleaned.isalnum():
             raise ValidationError(
@@ -2717,8 +2872,45 @@ class Engine:
             )
 
         capability = Capability.REVIEWS_GET
-        observation = yield from self.fetch_ok(capability, PROFILE_PATH.format(user_id=cleaned))
-        page = parse_reviews_page(observation.html, observed_at=datetime.now(UTC))
+        if isinstance(cursor, str):
+            cursor = ReviewsCursor.from_token(cursor)
+            if cursor.user_id != cleaned or cursor.rating != rating:
+                raise CursorIncompatibleError("курсор принадлежит другому продавцу или оценке")
+        if cursor is not None and (
+            not isinstance(cursor, ReviewsCursor)
+            or cursor.user_id != cleaned
+            or not isinstance(cursor.value, str)
+            or not cursor.value.strip()
+            or cursor.rating != rating
+            or type(cursor.rating) is not type(rating)
+        ):
+            raise ValidationError(
+                "курсор должен принадлежать выбранному продавцу и оценке и содержать значение"
+            )
+        if cursor is not None:
+            try:
+                cursor.value.encode("utf-8")
+            except UnicodeError:
+                raise ValidationError("значение курсора должно быть строкой UTF-8") from None
+        observation = yield from self.fetch_ok(
+            capability,
+            PROFILE_PATH.format(user_id=cleaned)
+            if cursor is None and rating is None
+            else "/users/reviews",
+            session_required=False,
+            fields=None
+            if cursor is None and rating is None
+            else {
+                "user_id": cleaned,
+                "continue": cursor.value if cursor is not None else "",
+                "filter": rating_filter,
+            },
+        )
+        page = parse_reviews_page(
+            observation.html, observed_at=datetime.now(UTC), user_id=cleaned, rating=rating
+        )
+        if cursor is not None and page.next_cursor == cursor:
+            raise ProtocolChangedError("сервер повторил курсор отзывов")
         if not integrity_verified(observation):
             page = unverified(page)
         self._note_success(capability, page.completeness, page)
@@ -2740,6 +2932,17 @@ class Engine:
         page = parse_chats_page(observation.html, observed_at=datetime.now(UTC))
         if not integrity_verified(observation):
             page = unverified(page)
+        # Контекст канала снимается ПОПУТНО, с уже прочитанной страницы.
+        #
+        # Отдельного чтения ради токена нет нарочно: быстрый путь заводился,
+        # чтобы страниц НЕ читать, и чтение страницы ради него отменило бы всю
+        # выгоду. Здесь же страница уже в руках, и разбор её шапки стоит
+        # ничтожно мало против самого запроса.
+        #
+        # Список диалогов годится и без открытого диалога: наблюдено, что оба
+        # объекта глобальной подписки - orders_counters и chat_bookmarks - берут
+        # идентификатор из data-user, который на этой странице есть.
+        self._runner_context = parse_runner_context(observation.html)
         self._note_success(Capability.CHATS_LIST, page.completeness, page)
         return page
 
@@ -2893,7 +3096,7 @@ class Engine:
         return thread
 
     def read_history_before(
-        self, node_id: str, *, before_message_id: str
+        self, node_id: str, *, before_message_id: str | None = None, cursor: str | None = None
     ) -> Generator[Request, Reply, ChatHistory]:
         """Догружает сообщения переписки СТАРШЕ указанного.
 
@@ -2936,18 +3139,22 @@ class Engine:
                 f"{len(node)} знаков иного вида. Проверка идёт до сети: "
                 "подставленный в адрес мусор отправил бы запрос неизвестно куда"
             )
-        cursor = before_message_id.strip()
-        # Курсор строже узла: на нём стоит СВЕРКА НАПРАВЛЕНИЯ, а сверять можно
-        # только числа. Пропусти мы сюда «12a» - и единственная проверка чужого
-        # утверждения об этой точке молча перестала бы работать.
-        if not cursor.isdigit():
-            raise ValidationError(
-                f"курсор догрузки обязан быть числом, получено {cursor!r}. На нём "
-                "стоит сверка направления листания - единственное, чем мы "
-                "проверяем чужое утверждение об этой точке, - и на нечисловом "
-                "курсоре сверка молча пропустила бы всё"
+        if (before_message_id is None) == (cursor is None):
+            raise ValidationError("передайте ровно один из before_message_id и cursor")
+        if cursor is not None:
+            owner, position, scope = decode_cursor(cursor, kind="chats.history_before")
+            if owner != node or scope is not None:
+                raise CursorIncompatibleError("курсор принадлежит другой переписке")
+        else:
+            if not isinstance(before_message_id, str):
+                raise ValidationError("before_message_id должен быть строкой")
+            position = before_message_id.strip()
+        if not valid_message_position(position):
+            error_type = CursorIncompatibleError if cursor is not None else ValidationError
+            raise error_type(
+                "позиция догрузки должна состоять из 1-128 десятичных цифр ASCII: "
+                "иначе сверка направления невозможна"
             )
-
         capability = Capability.CHATS_HISTORY_PAGINATION
         check_capability(
             capability,
@@ -2957,7 +3164,7 @@ class Engine:
 
         yield from self.spend_budget(_class_of(capability), cost=1.0)
         reply = yield Ask(
-            f"{CHAT_HISTORY_PATH}?node={node}&last_message={cursor}",
+            f"{CHAT_HISTORY_PATH}?node={node}&last_message={position}",
             dict(HISTORY_HEADERS),
         )
         if not isinstance(reply, Observation):
@@ -2973,7 +3180,7 @@ class Engine:
         history = parse_history(
             payload,
             chat_id=node,
-            cursor=cursor,
+            cursor=position,
             observed_at=datetime.now(UTC),
             host=host_of(self._settings.base_url),
         )
@@ -3034,7 +3241,12 @@ class Engine:
         return thread, own_href
 
     def fetch_ok(
-        self, capability: Capability, path: str, *, session_required: bool = True
+        self,
+        capability: Capability,
+        path: str,
+        *,
+        session_required: bool = True,
+        fields: dict[str, str] | None = None,
     ) -> Generator[Request, Reply, Observation]:
         """Получает пригодный для разбора ответ по нормативному порядку шагов.
 
@@ -3058,8 +3270,8 @@ class Engine:
                 при этом честно говорит login_required - про сессию он прав, - и
                 операция рынка на нём отказывала бы на каждом чтении.
 
-                То есть объявленная дорожка public_read была непригодна не только
-                тем, что её нет: будь она заведена, чтение всё равно отказывало бы.
+                Client направляет рынок в отдельную полосу public_read; ядро
+                при этом не принимает гостевой ответ за подтверждение сессии.
 
         Yields:
             Request: Просьбы о вводе-выводе.
@@ -3095,7 +3307,9 @@ class Engine:
             cost = 1.0 if (attempt == 1 or COUNTS_RETRIES) else 0.0
             yield from self.spend_budget(_class_of(capability), cost=cost)
             try:
-                reply = yield Fetch(path)
+                reply = yield (
+                    Fetch(path) if fields is None else Submit(path, fields, RUNNER_HEADERS)
+                )
                 if not isinstance(reply, Observation):
                     # Нарушение договора между ядром и драйвером. Ошибка не из
                     # иерархии Funora намеренно: политика повторов её не увидит
@@ -3132,13 +3346,16 @@ class Engine:
                     final_url=observation.final_url,
                     html=observation.html,
                     expected_host=host,
-                    identity_css=DEFAULT_IDENTITY_CSS,
+                    identity_css=DEFAULT_IDENTITY_CSS
+                    if fields is None or session_required
+                    else None,
                     declared_length=observation.declared_length,
                     received_length=observation.content_length,
                     content_encoding=observation.content_encoding,
                 )
                 self.note_locale(observation.html)
-                self.note_health(verdict)
+                if verdict.cls is not ResponseClass.OK or verdict.reason == "identity_confirmed":
+                    self.note_health(verdict)
                 # Вердикт запоминается ДО возможного отказа: проверка сессии
                 # отчитывается о состоянии, а не падает от него.
                 self._state.last_verdict = verdict
@@ -3152,6 +3369,7 @@ class Engine:
                     and not session_required
                     and verdict.cls is ResponseClass.LOGIN_REQUIRED
                 ):
+                    self._invalidate_catalog("session_change")
                     _log.debug("чтение %s идёт без сессии: страница публичная", capability.value)
                     error = None
                 if error is not None:
@@ -3208,7 +3426,6 @@ class Engine:
                     attempt,
                 )
                 yield Pause(plan.delay_ms)
-                attempt += 1
                 continue
             except FunoraError as exc:
                 self._note_failure(capability, exc)
@@ -3236,7 +3453,8 @@ class Engine:
                 yield Pause(plan.delay_ms)
                 continue
 
-            self._state.session_ever_valid = True
+            if verdict.reason == "identity_confirmed":
+                self._state.session_ever_valid = True
             return observation
 
     def _follow(
@@ -3500,6 +3718,8 @@ class Engine:
             return
 
         known = self._state.locale.or_none()
+        if known is not None and known != observed.value:
+            self._invalidate_catalog("session_change")
         self._state.locale = observed
         if observed.value == known:
             return
@@ -3586,6 +3806,10 @@ class Engine:
         Returns:
             None
         """
+        self._invalidate_catalog("session_change")
+        self._state.capabilities.reset()
+        self._state.health_cached = None
+        self._state.locale = Observed.missing("resumed")
         if self._stopped is None:
             return
         _log.warning(
@@ -3627,7 +3851,7 @@ class Engine:
         if not self._identity.is_cooling(now):
             return
 
-        wait_ms = int((self._identity.cooldown_until - now) * 1000) + WAIT_GUARD_MS
+        wait_ms = wait_until_ms(now, self._identity.cooldown_until)
         _log.info(
             "идентичность %s остывает после ограничения: пауза %d мс",
             self._identity.name,
@@ -3640,12 +3864,17 @@ class Engine:
         request_class: RequestClass = RequestClass.INTERACTIVE,
         *,
         cost: float = 1.0,
+        action: bool = False,
     ) -> Generator[Request, Reply, None]:
         """Занимает бюджет под один отправляемый запрос.
 
         Расходуется именно отправляемый запрос, а не логическая операция:
         повтор - тоже запрос. Считать иначе означало бы сделать шторм повторов
         бесплатным ровно в тот момент, когда площадке хуже всего.
+
+        При action=True вместе с запросом резервируется одно действие записи.
+        Последующие запросы той же операции передают action=False, включая
+        отправку сообщения после загрузки изображения. Допуск атомарен.
 
         Ожидание выполняется просьбой, а не в бюджете: сам бюджет не спит, чтобы
         его можно было проверять числами вместо секунд.
@@ -3684,7 +3913,9 @@ class Engine:
         # зависшего процесса.
         waited = 0
         for attempt in range(WAIT_ATTEMPTS):
-            reservation = self._budget.require(monotonic(), cost=cost, request_class=request_class)
+            reservation = self._budget.require(
+                monotonic(), cost=cost, request_class=request_class, action=action
+            )
             if reservation.granted:
                 return
             if attempt + 1 == WAIT_ATTEMPTS:
@@ -3749,6 +3980,104 @@ class Engine:
                     reservation.bucket,
                 )
 
+    def listen_once(
+        self,
+        channel: ChannelState,
+        *,
+        own_user_id: str,
+        token: Secret,
+    ) -> Generator[Request, Reply, tuple[ChannelSignal, str]]:
+        """Спрашивает канал, изменилось ли что-нибудь, и НИЧЕГО не разбирает сверх.
+
+        Из ответа берётся ровно одно решение из трёх: изменилось, тихо,
+        непонятно. Данные ответа - счётчики числами и готовая разметка сообщений
+        - не читаются вовсе, и это не упущение. Поведения канала при истёкшей
+        сессии и при исчерпании предела не наблюдал никто; реализация, собирающая
+        события из его данных, обязана была бы верить ему и в этих двух случаях.
+        Сигналу верить не нужно: любая его ошибка стоит одного лишнего чтения
+        страниц либо ловится сторожевым сроком.
+
+        ПОДПИСКА ИДЁТ ОДНОЙ ПОРЦИЕЙ. Объектов в ней два, предел - десять, и
+        порции здесь не нужны; сборка всё равно идёт общим построителем, чтобы
+        предел считался в одном месте.
+
+        БЮДЖЕТ ТРАТИТСЯ. Опрос канала - такой же запрос к площадке, как чтение
+        страницы, и не учитывать его значило бы обойти собственный ограничитель
+        ровно тем механизмом, который заводился ради бережливости.
+
+        Args:
+            channel (ChannelState): Состояние слушателя: накопленные метки и
+                счёт неудач.
+            own_user_id (str): Собственный идентификатор - он же идентификатор
+                обоих объектов подписки.
+            token (Secret): Защитный токен со страницы.
+
+        Yields:
+            Request: Просьбы о вводе-выводе.
+
+        Returns:
+            tuple[ChannelSignal, str]: Сигнал и машиночитаемая причина.
+
+        Raises:
+            TypeError: Если на просьбу пришло не наблюдение.
+        """
+        wanted = wanted_objects(own_user_id)
+        batches = build_subscription(wanted, channel.tags)
+
+        yield from self.spend_budget(RequestClass.POLL, cost=1.0)
+        try:
+            reply = yield Submit(
+                RUNNER_PATH,
+                {
+                    "objects": json.dumps(batches[0], ensure_ascii=False),
+                    "csrf_token": token.reveal(),
+                },
+                dict(RUNNER_HEADERS),
+            )
+        except TransportError as exc:
+            return ChannelSignal.DEGRADED, type(exc).__name__
+        if not isinstance(reply, Observation):
+            raise TypeError(f"на просьбу Submit ожидалось наблюдение, получено {type(reply)}")
+
+        if reply.status == 429:
+            self._identity.note_limit(monotonic(), retry_after_ms=reply.retry_after_ms)
+            yield from self.wait_out_cooldown()
+            return ChannelSignal.DEGRADED, "http_429"
+        if reply.status != 200 or not integrity_verified(reply):
+            return ChannelSignal.DEGRADED, "channel_response_unusable"
+
+        try:
+            answer = parse_updates_answer(reply.html)
+        except FunoraError as exc:
+            # Непонятный ответ не роняет наблюдение: он переводит его на опрос
+            # страниц. Уронить здесь значило бы сделать быстрый путь опаснее
+            # медленного, а он заводился ради скорости, а не вместо надёжности.
+            return ChannelSignal.DEGRADED, type(exc).__name__
+
+        # ПОРЯДОК: объявленная ошибка раньше формы. Ответ с ошибкой площадка
+        # даёт объектом, а объект - это и есть «неожиданная форма» для опроса без
+        # действия. Проверяй мы форму первой, всякий отказ канала назывался бы
+        # неожиданной формой, и настоящая причина терялась бы.
+        signal, reason = classify_signal(answer)
+        if signal is ChannelSignal.DEGRADED:
+            return signal, reason
+
+        strange = unexpected_shape(answer)
+        if strange:
+            return ChannelSignal.DEGRADED, strange
+
+        # Метки накапливаются ТОЛЬКО с понятного ответа - сюда доходят лишь они.
+        # Взять метку с непонятного значило бы записать в память состояние,
+        # которого мы не поняли, и следующий опрос пошёл бы от него.
+        #
+        # НАКОПЛЕНИЕ, А НЕ ЗАМЕЩЕНИЕ: ответ несёт только изменившиеся объекты, и
+        # метки молчавшего в нём нет вовсе. Замести бы мы её - молчавший объект
+        # получил бы метку «я ничего не видел» и приехал целиком на следующем
+        # шаге, то есть канал перестал бы быть дешевле страниц ровно тогда,
+        # когда он нужен.
+        channel.tags = answer.tags(channel.tags)
+        return signal, reason
+
     def watch(
         self,
         router: Router,
@@ -3756,8 +4085,9 @@ class Engine:
         account_id: str = "self",
         max_iterations: int | None = None,
         schedule: Schedule | None = None,
-        state_path: Path | None = None,
+        state_path: str | Path | None = None,
         max_threads_per_step: int = 5,
+        use_channel: bool = True,
     ) -> Generator[Request, Reply, None]:
         """Ведёт наблюдение: опрашивает площадку и раздаёт события обработчикам.
 
@@ -3765,10 +4095,10 @@ class Engine:
         старт дал бы лавину «изменений» по всем существующим заказам и диалогам
         сразу.
 
-        Базовый снимок сдвигается только после того, как все обработчики
-        отработали. Упавший обработчик оставляет базу на месте, и то же событие
-        приходит снова: гарантия доставки - не менее одного раза, и обработчик
-        обязан быть идемпотентным.
+        Непринятая партия и целевой курсор сохраняются до обработчиков.
+        Повтор использует исходные события, без чтения новых страниц. База
+        сдвигается после подтверждения партии. При прерывании возможен повтор
+        выполненного обработчика: он обязан быть идемпотентным.
 
         Args:
             router (Router): Реестр обработчиков.
@@ -3777,10 +4107,24 @@ class Engine:
                 бесконечно; ограничение нужно проверкам и разовым прогонам.
             schedule (Schedule | None): Расписание опроса. По умолчанию из
                 спецификации.
-            state_path (Path | None): Файл, в котором состояние гашения повторов
+            state_path (str | Path | None): Файл, в котором состояние гашения повторов
                 переживает перезапуск. Без него кэш живёт только в памяти, и
                 после любого перезапуска повторно приходит всё, что успело
                 прийти до него.
+            use_channel (bool): Слушать ли канал обновлений площадки.
+
+                ПО УМОЛЧАНИЮ ДА, и это главное, ради чего цикл переписан.
+                Канал отвечает за секунды, тогда как опрос страниц замечал
+                изменение от трёх секунд до двух минут.
+
+                Из ответа канала берётся ОДНО решение - изменилось или нет, - а
+                события по-прежнему собираются чтением страниц. Поэтому
+                выключать его незачем ради достоверности: она не изменилась.
+                Выключать стоит ради предсказуемости числа запросов - скажем, в
+                проверках, - и тогда цикл работает ровно как прежде.
+
+                Непонятный ответ канала выключает быстрый путь сам, на минуту, и
+                говорит об этом событием protocol.health_changed.
             max_threads_per_step (int): Сколько переписок читать за один шаг.
                 Предел нужен: изменись разом полсотни диалогов, шаг превратился
                 бы в полсотни запросов. Непрочитанные не теряются - они ждут в
@@ -3795,9 +4139,41 @@ class Engine:
         Raises:
             FunoraError: Любая ошибка чтения, которую не удалось повторить.
         """
+        if not isinstance(account_id, str) or not account_id.strip():
+            raise ConfigurationError("watch требует непустой account_id")
+        # Файл и lease используют один путь даже при переданной символической ссылке.
+        state = StateFile(Path(state_path)) if state_path is not None else self._ledger
+        if (
+            state is not None
+            and self._ledger is not None
+            and state.path.resolve() != self._ledger.path.resolve()
+        ):
+            raise ConfigurationError("watch и исходящие должны использовать один файл состояния")
+        with watch_lease(self._watch_lock, state.path.resolve() if state else None):
+            yield from self._watch_loop(
+                router,
+                account_id=account_id,
+                max_iterations=max_iterations,
+                schedule=schedule,
+                state=state,
+                max_threads_per_step=max_threads_per_step,
+                use_channel=use_channel,
+            )
+
+    def _watch_loop(
+        self,
+        router: Router,
+        *,
+        account_id: str,
+        max_iterations: int | None,
+        schedule: Schedule | None,
+        state: StateFile | None,
+        max_threads_per_step: int,
+        use_channel: bool,
+    ) -> Generator[Request, Reply, None]:
+        """Собирает новую партию только после подтверждения предыдущей."""
         plan = schedule or Schedule()
         dedup = Deduplicator()
-        state = StateFile(state_path) if state_path is not None else None
         if state is not None and self._ledger is None:
             # Файл наблюдения становится и реестром отправок. Иначе бот, честно
             # передавший state_path, всё равно отправлял бы без долговечного
@@ -3808,19 +4184,25 @@ class Engine:
             # пустым реестром: защита переставала защищать ровно там, где файл
             # непригоден.
             stored = state.load()
-            self._ledger = state
-            self._state.outbound.durable = True
-
             # СЛИЯНИЕ, а не замещение. Прочитанное с диска добавляется к тому,
             # что уже накоплено в памяти, - иначе вход в цикл обнулял бы квоту
             # БЕЗ перезапуска, то есть ровно то, что реестр обязан
             # предотвращать.
-            merged = self._state.outbound.snapshot()
-            fresh = stored.get("outbound") or {}
-            merged["sent"] = [*fresh.get("sent", []), *merged.get("sent", [])]
-            merged["incoming"] = {**fresh.get("incoming", {}), **merged.get("incoming", {})}
-            self._state.outbound.restore(merged)
-            self._delivered.restore(stored.get("delivery") or {})
+            # Кандидат проверяется до подключения: ошибка журнала не должна
+            # менять ни живую квоту, ни признак долговечности.
+            adopted_outbound = replace(self._state.outbound)
+            adopted_outbound.restore(stored.get("outbound", {}), merge=True)
+            adopted_delivery = DeliveryLedger()
+            adopted_delivery.restore(stored.get("delivery", {}))
+            # Цена проверяется до замены реестра выдач. После её восстановления
+            # остаётся подключить уже проверенные данные; публичные ссылки на
+            # price_audit и delivered продолжают указывать на живые журналы.
+            self._price_audit.restore(stored.get("price_audit", {}), merge=True)
+            self._delivered.restore(adopted_delivery.snapshot())
+            adopted_outbound.durable = True
+            self._state.outbound = adopted_outbound
+            self._ledger = state
+            self._price_audit.durable = True
 
             # ОТМЕТКА НЕ СНИМАЕТСЯ. Прежде усыновление файла её стирало, и
             # состояние здоровья переставало помнить, что часть отправок уже
@@ -3836,15 +4218,14 @@ class Engine:
         known_chats: dict[str, str] | None = None
         known_threads: dict[str, frozenset[str]] = {}
         pending: list[str] = []
-        # Сколько раз каждое событие уже пробовали доставить. Пустой словарь -
-        # штатное состояние: записи заводятся только на события, которые
-        # обработчик не принял.
-        attempts: dict[str, int] = {}
         greeted = False
+        pending_json: str | None = None
 
         if state is not None:
             stored = state.load()
-            restored = dedup.restore(stored.get("dedup", {}), monotonic())
+            restored = dedup.restore(
+                stored.get("dedup", {}), monotonic(), ordering=stored.get("dedup_order")
+            )
             if restored:
                 _log.info("восстановлено записей гашения: %d", restored)
 
@@ -3852,16 +4233,29 @@ class Engine:
             # уходил в холодный старт и молча съедал всё, что изменилось за
             # простой: заказ, оплаченный между остановкой и стартом, не порождал
             # события никогда - ни исключения, ни строки в журнале.
-            cursor = stored.get("cursor") or {}
+            cursor = stored.get("cursor", {})
+            if not isinstance(cursor, dict):
+                raise CursorIncompatibleError("неверный курсор watch")
+            if "market" in cursor:
+                raise CursorIncompatibleError("файл состояния принадлежит monitoring.watch")
             saved_orders = cursor.get("orders")
-            if isinstance(saved_orders, dict):
-                known_orders = dict(saved_orders)
-            elif saved_orders is not None:
-                # Курсор прежней редакции - список идентификаторов без состояний.
-                # Читается как «заказы известны, состояния нет»: так перезапуск
-                # не порождает лавину событий о создании, а событие об изменении
-                # не выдумывается из непрочитанного состояния.
-                known_orders = dict.fromkeys(saved_orders, UNREAD_STATUS)
+            if isinstance(saved_orders, list):
+                # Старый курсор знал идентификаторы, но не состояния заказов.
+                if not all(isinstance(value, str) and value for value in saved_orders):
+                    raise CursorIncompatibleError("неверные идентификаторы старого курсора watch")
+                saved_orders = dict.fromkeys(saved_orders, UNREAD_STATUS)
+            try:
+                cursor = validate_cursor(
+                    {
+                        "orders": saved_orders,
+                        "chats": cursor.get("chats"),
+                        "threads": cursor.get("threads", {}),
+                        "pending_threads": cursor.get("pending_threads", []),
+                    }
+                )
+            except ValueError as exc:
+                raise CursorIncompatibleError("повреждён курсор watch") from exc
+            known_orders = cursor["orders"]
             if cursor.get("chats") is not None:
                 known_chats = dict(cursor["chats"])
             known_threads = {
@@ -3872,13 +4266,6 @@ class Engine:
             # дочитаться, не дочитался бы уже никогда: событие о нём доставлено,
             # курсор диалогов сдвинут, и повода вернуться к нему больше нет.
             pending = list(cursor.get("pending_threads") or [])
-            restored_attempts = stored.get("attempts")
-            if isinstance(restored_attempts, dict):
-                attempts = {
-                    str(key): int(value)
-                    for key, value in restored_attempts.items()
-                    if isinstance(value, int) and value > 0
-                }
             # Здоровались ли уже. Восстановленный курсор любого из списков
             # означает, что здоровались: watch.primed - событие о начале
             # наблюдения, а не о начале процесса.
@@ -3890,231 +4277,447 @@ class Engine:
                     len(known_chats) if known_chats is not None else "нет",
                 )
 
+            owner = stored.get("watch_owner")
+            if "watch_owner" in stored and owner != account_id:
+                raise CursorIncompatibleError("файл watch принадлежит другому account_id")
+            if "watch_greeted" in stored:
+                if type(stored["watch_greeted"]) is not bool:
+                    raise CursorIncompatibleError("неверный признак начала watch")
+                greeted = stored["watch_greeted"]
+            pending_json = stored.get("watch_pending")
+            if pending_json is not None:
+                PendingBatch.decode(pending_json, account_id=account_id)
+
+        # Состояние быстрого пути. Живёт столько же, сколько сам цикл: токен и
+        # накопленные метки обнуляются вместе с ним, и это верно - и то, и
+        # другое привязано к сеансу.
+        channel = ChannelState()
+        channel_token: Secret | None = None
+        channel_user: str = ""
+
         step = 0
         while max_iterations is None or step < max_iterations:
             step += 1
-            orders = yield from self.read_orders()
-            chats = yield from self.read_chats()
-            now = monotonic()
+            base_cursor = {
+                "orders": known_orders,
+                "chats": known_chats,
+                "threads": {node: sorted(ids) for node, ids in known_threads.items()},
+                "pending_threads": list(pending),
+            }
 
-            # Состояние возможности событий по заказам выставляется ЗДЕСЬ и не
-            # через _note_success: своей операции у неё нет, и в перечне
-            # выполняемых ей не место - события порождает этот цикл.
-            #
-            # Прежде состояние не выставлялось вовсе, и возможность числилась
-            # невыполненной по честной причине: спросить её было можно, а ответ
-            # ни на что не влиял.
-            #
-            # Мерка - полнота списка продаж. Полный список означает, что
-            # пропавшая строка вправду исчезла. На неполном курсор нарочно не
-            # сдвигается, чтобы выпавшие строки не сочли исчезнувшими, а события
-            # по прочитанному всё равно порождаются - и принимающий их за полную
-            # картину ошибается. Пусть он видит об этом пометку.
-            self._state.capabilities[Capability.ORDERS_EVENTS] = (
-                CapabilityState.SUPPORTED
-                if orders.completeness is Completeness.COMPLETE
-                else CapabilityState.DEGRADED
-            )
+            if pending_json is None:
+                # БЫСТРЫЙ ПУТЬ. Спросить канал дешевле, чем прочитать две страницы,
+                # и ответ приходит за секунды вместо десятков секунд.
+                #
+                # Условий у него четыре, и каждое снимает свой риск:
+                #
+                # уже здоровались - первый проход обязан прочитать страницы, иначе
+                # брать опорную точку будет неоткуда;
+                #
+                # очередь переписок пуста - недочитанное с прошлого шага ждёт
+                # чтения, и тишина канала про него ничего не говорит;
+                #
+                # канал не остывает после отказа;
+                #
+                # токен есть. Токен берётся со страницы, и живёт он неизвестно
+                # сколько: сеанс наблюдения этого не выяснял. Поэтому он не
+                # добывается отдельным чтением - он ПОДБИРАЕТСЯ по дороге, из той
+                # страницы, которую цикл и так прочёл.
+                if use_channel and greeted and not pending and channel_token is not None:
+                    now = monotonic()
+                    if channel.available(now):
+                        signal, reason = yield from self.listen_once(
+                            channel, own_user_id=channel_user, token=channel_token
+                        )
+                        if signal is ChannelSignal.DEGRADED:
+                            if channel.note_failure(reason, now):
+                                _log.warning(
+                                    "канал обновлений непригоден (%s), наблюдение идёт опросом "
+                                    "страниц ближайшую минуту",
+                                    reason,
+                                )
+                            # Токен сбрасывается вместе с отказом. Что именно
+                            # протухло - токен или сессия, - различить нечем, а
+                            # перечитать страницу цикл всё равно собирается прямо
+                            # сейчас: она и принесёт свежий.
+                            channel_token = None
+                        elif signal is ChannelSignal.QUIET and not channel.watchdog_expired(now):
+                            channel.note_success(now, changed=False)
+                            # СТРАНИЦЫ НЕ ЧИТАЮТСЯ ВОВСЕ. Ради этого всё и затевалось:
+                            # молчащий аккаунт стоит одного маленького запроса в пять
+                            # секунд вместо двух полных страниц.
+                            #
+                            # Пауза короткая, и очередь исходящих разбирается в ней
+                            # так же, как разбиралась в длинной: Pause - единственное
+                            # место, где это происходит, и оно на месте.
+                            yield Pause(CHANNEL_INTERVAL_MS)
+                            continue
+                        else:
+                            channel.note_success(now, changed=True)
 
-            chat_events = diff_chats(known_chats, chats, account_id=account_id)
-            # Неполное чтение объявляется вслух и в той же партии, что и события
-            # по нему. Несдвинутый курсор защищает будущее - выпавшие строки не
-            # будут сочтены исчезнувшими, - а настоящее не защищает никак:
-            # события по прочитанному порождаются, и обработчик принимает их за
-            # полную картину.
-            notices = tuple(
-                incomplete(
-                    account_id,
-                    page.observed_at,
-                    entity=name,
-                    entity_ref=None,
-                    reason=page.reason,
-                    rows_total=page.rows_total,
-                    rows_accepted=page.rows_accepted,
+                orders = yield from self.read_orders()
+                chats = yield from self.read_chats()
+                now = monotonic()
+
+                # Токен и собственный идентификатор подбираются из уже прочитанного.
+                # Отдельного чтения ради них нет и быть не должно: чтение страницы
+                # ради того, чтобы не читать страницы, отменило бы всю выгоду.
+                context = self._runner_context
+                if use_channel and context is not None:
+                    if context.csrf_token is not None and context.own_user_id.is_observed:
+                        channel_token = context.csrf_token
+                        channel_user = context.own_user_id.value
+                        if not channel.tags:
+                            channel.tags = seed_tags(context)
+                    elif channel_token is None:
+                        # Токена на странице нет. Это не поломка: страница под
+                        # гостем его не несёт, и чтение под гостем - законное
+                        # состояние. Быстрый путь просто не включится.
+                        _log.debug("на списке диалогов нет защитного токена, канал не слушается")
+
+                # Состояние возможности событий по заказам выставляется ЗДЕСЬ и не
+                # через _note_success: своей операции у неё нет, и в перечне
+                # выполняемых ей не место - события порождает этот цикл.
+                #
+                # Прежде состояние не выставлялось вовсе, и возможность числилась
+                # невыполненной по честной причине: спросить её было можно, а ответ
+                # ни на что не влиял.
+                #
+                # Мерка - полнота списка продаж. Полный список означает, что
+                # пропавшая строка вправду исчезла. На неполном курсор нарочно не
+                # сдвигается, чтобы выпавшие строки не сочли исчезнувшими, а события
+                # по прочитанному всё равно порождаются - и принимающий их за полную
+                # картину ошибается. Пусть он видит об этом пометку.
+                self._state.capabilities[Capability.ORDERS_EVENTS] = (
+                    CapabilityState.SUPPORTED
+                    if orders.completeness is Completeness.COMPLETE
+                    else CapabilityState.DEGRADED
                 )
-                for name, page in (("orders", orders), ("chats", chats))
-                if page.completeness is not Completeness.COMPLETE
-            )
-            head = dedup.filter(
-                (
-                    *notices,
-                    *diff_orders(known_orders, orders, account_id=account_id),
-                    *chat_events,
-                ),
-                now,
-            )
 
-            # В очередь попадают только те диалоги, чьё изменение пережило
-            # гашение. Иначе повторно пришедшее событие заставляло бы перечитать
-            # переписку, в которой ничего нового нет: курсор её уже сдвинут.
-            delivered_ids = {event.id for event in head}
-            for event in chat_events:
-                if event.id in delivered_ids and event.entity_id not in pending:
-                    pending.append(event.entity_id)
-
-            # Очередь ограничена, и предел объявлен спецификацией. Он нужен:
-            # очередь пополняется на каждом изменении диалога, а вычерпывается
-            # по несколько штук за шаг - у продавца с полусотней активных
-            # переписок она растёт быстрее, чем убывает.
-            #
-            # Выброшенное объявляется вслух. Ограничить и промолчать - худший
-            # исход из возможных: сообщение покупателя не будет прочитано
-            # никогда, и узнать об этом неоткуда.
-            #
-            # Выбрасывается ХВОСТ, а не голова: в голове самые давние диалоги, и
-            # они ждут дольше всех. Выбросить их значило бы гарантировать, что
-            # именно они не дочитаются никогда.
-            dropped = 0
-            if len(pending) > MAX_QUEUE_DEPTH_PER_KEY:
-                dropped = len(pending) - MAX_QUEUE_DEPTH_PER_KEY
-                del pending[MAX_QUEUE_DEPTH_PER_KEY:]
-                _log.warning(
-                    "очередь дочитывания переполнена: %d диалогов выпало, предел %d",
-                    dropped,
-                    MAX_QUEUE_DEPTH_PER_KEY,
+                chat_events = diff_chats(known_chats, chats, account_id=account_id)
+                # Неполное чтение объявляется вслух и в той же партии, что и события
+                # по нему. Несдвинутый курсор защищает будущее - выпавшие строки не
+                # будут сочтены исчезнувшими, - а настоящее не защищает никак:
+                # события по прочитанному порождаются, и обработчик принимает их за
+                # полную картину.
+                notices = tuple(
+                    incomplete(
+                        account_id,
+                        page.observed_at,
+                        entity=name,
+                        entity_ref=None,
+                        reason=page.reason,
+                        rows_total=page.rows_total,
+                        rows_accepted=page.rows_accepted,
+                    )
+                    for name, page in (("orders", orders), ("chats", chats))
+                    if page.completeness is not Completeness.COMPLETE
+                )
+                head = dedup.filter(
+                    (
+                        *notices,
+                        *diff_orders(known_orders, orders, account_id=account_id),
+                        *chat_events,
+                    ),
+                    now,
                 )
 
-            messages, thread_cursors, followed = yield from self._follow(
-                pending,
-                known_threads,
+                # В очередь попадают только те диалоги, чьё изменение пережило
+                # гашение. Иначе повторно пришедшее событие заставляло бы перечитать
+                # переписку, в которой ничего нового нет: курсор её уже сдвинут.
+                delivered_ids = {event.id for event in head}
+                for event in chat_events:
+                    if event.id in delivered_ids and event.entity_id not in pending:
+                        pending.append(event.entity_id)
+
+                # Очередь ограничена, и предел объявлен спецификацией. Он нужен:
+                # очередь пополняется на каждом изменении диалога, а вычерпывается
+                # по несколько штук за шаг - у продавца с полусотней активных
+                # переписок она растёт быстрее, чем убывает.
+                #
+                # Выброшенное объявляется вслух. Ограничить и промолчать - худший
+                # исход из возможных: сообщение покупателя не будет прочитано
+                # никогда, и узнать об этом неоткуда.
+                #
+                # Выбрасывается ХВОСТ, а не голова: в голове самые давние диалоги, и
+                # они ждут дольше всех. Выбросить их значило бы гарантировать, что
+                # именно они не дочитаются никогда.
+                dropped = 0
+                if len(pending) > MAX_QUEUE_DEPTH_PER_KEY:
+                    dropped = len(pending) - MAX_QUEUE_DEPTH_PER_KEY
+                    del pending[MAX_QUEUE_DEPTH_PER_KEY:]
+                    _log.warning(
+                        "очередь дочитывания переполнена: %d диалогов выпало, предел %d",
+                        dropped,
+                        MAX_QUEUE_DEPTH_PER_KEY,
+                    )
+
+                messages, thread_cursors, followed = yield from self._follow(
+                    pending,
+                    known_threads,
+                    account_id=account_id,
+                    limit=max_threads_per_step,
+                )
+                losses = (
+                    (loss(account_id, orders.observed_at, lost=dropped, reason="queue_overflow"),)
+                    if dropped
+                    else ()
+                )
+                fresh = (*head, *dedup.filter((*losses, *messages), now))
+
+                # Смены состояния доступа идут первыми в партии. Порядок значим:
+                # получатель, узнав, что автоматика записи приостановлена, обязан
+                # увидеть это ДО событий, на которые он собрался бы отвечать.
+                batch = (*self.drain_health(account_id, orders.observed_at), *fresh)
+                greeting: Event | None = None
+                if not greeted:
+                    # Холодный старт молчит о данных и говорит один раз о себе:
+                    # иначе первый запуск дал бы лавину «изменений» по всему, что
+                    # уже существует. Молчание при этом обеспечивают сами diff_*,
+                    # возвращающие пустое при отсутствии курсора, - а приветствие
+                    # только добавляется к партии, а не заменяет её.
+                    #
+                    # Замена стоила дорого. Курсор заказов снимается лишь с полного
+                    # чтения, поэтому одна пропавшая ячейка в одной строке держала
+                    # признак холодного старта поднятым вечно: события о диалогах
+                    # выбрасывались, а вместо них каждый шаг уходило одно и то же
+                    # приветствие. Наблюдение за перепиской замолкало целиком из-за
+                    # состояния чужой страницы - молча.
+                    # Признак поднимается ПОСЛЕ раздачи, а не здесь. Поднятый
+                    # заранее, он терял приветствие навсегда: обработчик падал на
+                    # первой партии, курсор не двигался, а приветствие второй раз не
+                    # собиралось. И это не единственная потеря - несдвинутый курсор
+                    # держит холодный старт, при котором diff_* молчат по правилу
+                    # первого чтения. Наблюдение замолкало целиком и навсегда, при
+                    # живом цикле и без единой строки в журнале.
+                    greeting = primed(account_id, orders.observed_at, ("orders", "chats"))
+                    batch = (greeting, *batch)
+
+                target: dict[str, Any] = {
+                    "orders": orders_cursor(orders)
+                    if orders.completeness is Completeness.COMPLETE
+                    else known_orders,
+                    "chats": chats_cursor(chats)
+                    if chats.completeness is Completeness.COMPLETE
+                    else known_chats,
+                    "threads": {
+                        node: sorted(ids)
+                        for node, ids in {**known_threads, **thread_cursors}.items()
+                    },
+                    "pending_threads": list(pending),
+                }
+                pending_json = PendingBatch(
+                    tuple(replace(event, delivery=Delivery(attempt=0)) for event in batch),
+                    target,
+                    True,
+                ).encode()
+
+            prepared, pending_json = yield from self._deliver_pending(
+                pending_json,
                 account_id=account_id,
-                limit=max_threads_per_step,
+                state=state,
+                base_cursor=base_cursor,
+                greeted=greeted,
+                dedup=dedup,
+                persist_outbound=True,
             )
-            losses = (
-                (loss(account_id, orders.observed_at, lost=dropped, reason="queue_overflow"),)
-                if dropped
-                else ()
-            )
-            fresh = (*head, *dedup.filter((*losses, *messages), now))
+            if pending_json is None:
+                target = prepared.cursor
+                known_orders = target["orders"]
+                known_chats = target["chats"]
+                known_threads = {node: frozenset(ids) for node, ids in target["threads"].items()}
+                pending = list(target["pending_threads"])
+                greeted = prepared.greeted
+            yield Pause(plan.note(prepared.events, monotonic()))
 
-            # Смены состояния доступа идут первыми в партии. Порядок значим:
-            # получатель, узнав, что автоматика записи приостановлена, обязан
-            # увидеть это ДО событий, на которые он собрался бы отвечать.
-            batch = (*self.drain_health(account_id, orders.observed_at), *fresh)
-            greeting: Event | None = None
-            if not greeted:
-                # Холодный старт молчит о данных и говорит один раз о себе:
-                # иначе первый запуск дал бы лавину «изменений» по всему, что
-                # уже существует. Молчание при этом обеспечивают сами diff_*,
-                # возвращающие пустое при отсутствии курсора, - а приветствие
-                # только добавляется к партии, а не заменяет её.
-                #
-                # Замена стоила дорого. Курсор заказов снимается лишь с полного
-                # чтения, поэтому одна пропавшая ячейка в одной строке держала
-                # признак холодного старта поднятым вечно: события о диалогах
-                # выбрасывались, а вместо них каждый шаг уходило одно и то же
-                # приветствие. Наблюдение за перепиской замолкало целиком из-за
-                # состояния чужой страницы - молча.
-                # Признак поднимается ПОСЛЕ раздачи, а не здесь. Поднятый
-                # заранее, он терял приветствие навсегда: обработчик падал на
-                # первой партии, курсор не двигался, а приветствие второй раз не
-                # собиралось. И это не единственная потеря - несдвинутый курсор
-                # держит холодный старт, при котором diff_* молчат по правилу
-                # первого чтения. Наблюдение замолкало целиком и навсегда, при
-                # живом цикле и без единой строки в журнале.
-                greeting = primed(account_id, orders.observed_at, ("orders", "chats"))
-                batch = (greeting, *fresh)
-
-            # Номер попытки проставляется здесь, а не в строителе событий:
-            # строитель не знает, доставлялось ли это событие раньше, - знает
-            # цикл. Доставка объявлена как минимум однократной, и событие, на
-            # котором обработчик упал, приходит снова тем же отпечатком; без
-            # номера попытки обработчик не отличит повтор от нового события.
-            #
-            # Счётчик пересобирается по партии целиком, а не накапливается:
-            # событие, переставшее порождаться (список изменился, курсор ушёл
-            # вперёд), само выпадает из счётчика, и он не растёт без предела.
-            attempts = {event.id: attempts.get(event.id, 0) + 1 for event in batch}
-            batch = tuple(
-                replace(event, delivery=Delivery(attempt=attempts[event.id])) for event in batch
-            )
-
-            reply = yield Deliver(batch)
-            if not isinstance(reply, StepResult):
-                raise TypeError(f"на просьбу Deliver ожидался итог раздачи, получено {type(reply)}")
-            result = reply
-
-            dedup.commit(result.delivered, now)
-            if greeting is not None and greeting.id in {event.id for event in result.delivered}:
-                # Поздоровались только тогда, когда приветствие дошло. Иначе
-                # второго раза не будет: приветствие собирается один раз за
-                # признак, а не за партию.
-                greeted = True
-            # Доставленное выбывает: гашение повторов больше его не пропустит,
-            # и держать номер попытки не для чего.
-            for event in result.delivered:
-                attempts.pop(event.id, None)
-
-            # Курсор снимается только с полного чтения. Снятый с неполного, он
-            # потерял бы выпавшие строки, и при следующем чтении они выглядели
-            # бы новыми заказами: бот выдал бы товар по заказу, который был и
-            # раньше. Неполное чтение при этом не пропадает - события по нему
-            # порождаются, просто курсор остаётся прежним.
-            if result.advance:
-                if orders.completeness is Completeness.COMPLETE:
-                    known_orders = orders_cursor(orders)
-                if chats.completeness is Completeness.COMPLETE:
-                    known_chats = chats_cursor(chats)
-                known_threads.update(thread_cursors)
-            else:
-                # Прочитанные переписки возвращаются в очередь, и это половина
-                # правила, без которой вторая не работает. Событие об изменении
-                # диалога к этому моменту доставлено и погашено, повторно оно не
-                # придёт - значит без возврата диалог не перечитается уже
-                # никогда, сколько бы курсор ни откатывали.
-                pending[:0] = [node for node in followed if node not in pending]
-                _log.warning(
-                    "курсор не сдвинут: обработчик не принял %d событий, они придут снова",
-                    len(result.failed),
-                )
-
+    def monitor_market(
+        self,
+        watches: tuple[MarketWatch, ...],
+        *,
+        account_id: str,
+        state_path: str | Path | None = None,
+        max_iterations: int | None = None,
+        history_limit: int = MARKET_HISTORY_LIMIT,
+    ) -> Generator[Request, Reply, None]:
+        """Наблюдает набор выдач на публичной полосе с общим допуском и журналом."""
+        validate_watches(watches)
+        check_history_limit(0, history_limit)
+        if any(one.watch_id == account_id for one in watches):
+            raise ConfigurationError("watch_id рынка должен отличаться от account_id личного watch")
+        if max_iterations is not None and (type(max_iterations) is not int or max_iterations < 0):
+            raise ConfigurationError("max_iterations должен быть неотрицательным целым")
+        state = StateFile(Path(state_path)) if state_path is not None else None
+        with watch_lease(self._watch_lock, state.path if state else None):
+            cursor = initial_cursor(watches)
+            dedup = Deduplicator()
+            pending_json: str | None = None
+            greeted = False
             if state is not None:
+                stored = state.load()
+                if stored.get("watch_owner", account_id) != account_id:
+                    raise CursorIncompatibleError("файл наблюдений принадлежит другому account_id")
+                if "cursor" in stored:
+                    try:
+                        restored = validate_cursor(stored["cursor"])
+                        if "watch_owner" not in stored:
+                            raise ValueError("утрачен владелец истории")
+                        if "market" not in restored or {
+                            key: value["config"] for key, value in restored["market"].items()
+                        } != {key: value["config"] for key, value in cursor["market"].items()}:
+                            raise ValueError("другой набор наблюдений")
+                    except (ValueError, TypeError) as exc:
+                        raise CursorIncompatibleError(
+                            "файл содержит другую или повреждённую историю рынка"
+                        ) from exc
+                    cursor = restored
+                check_history_limit(history_size(cursor), history_limit)
+                greeted = stored.get("watch_greeted", False)
+                if type(greeted) is not bool:
+                    raise CursorIncompatibleError("неверный признак начала наблюдений")
+                dedup.restore(
+                    stored.get("dedup", {}), monotonic(), ordering=stored.get("dedup_order")
+                )
+                pending_json = stored.get("watch_pending")
+                if pending_json is not None:
+                    frozen = PendingBatch.decode(pending_json, account_id=account_id)
+                    try:
+                        validate_market_transition(cursor, frozen.cursor, frozen.events)
+                    except ValueError as exc:
+                        raise CursorIncompatibleError("непринятая партия другого снимка") from exc
+                    check_history_limit(history_size(frozen.cursor), history_limit)
+            # Регистрация выполняется после проверки файла и до первого Fetch.
+            with self._budget.admit_monitoring(watches, monotonic()) as admission:
+                # Средний прогноз не разрешает стартовать весь набор залпом.
+                # Общий ритм чтений ограничен долей monitoring теснейшего ведра.
+                read_gap = max(
+                    (
+                        float(OPERATIONS["market.snapshot"].cost_hint / limit.available_per_second)
+                        for limit in admission.limits
+                    ),
+                    default=0.0,
+                )
+                next_read_at = 0.0
+                due = dict.fromkeys((one.watch_id for one in watches), 0.0)
+                started: dict[str, float] = {}
+                step = 0
+                while max_iterations is None or step < max_iterations:
+                    step += 1
+                    if pending_json is None:
+                        watch = min(watches, key=lambda one: due[one.watch_id])
+                        wait = wait_until_ms(monotonic(), max(due[watch.watch_id], next_read_at))
+                        if wait:
+                            yield Pause(wait)
+                        read_started = monotonic()
+                        previous_start = started.get(watch.watch_id)
+                        snapshot = yield from self.read_market_snapshot(watch.node_id)
+                        target, events = observe_market(
+                            cursor,
+                            watch,
+                            snapshot,
+                            account_id=account_id,
+                            history_limit=history_limit,
+                            read_interval_ms=int((read_started - previous_start) * 1000)
+                            if previous_start is not None
+                            else None,
+                        )
+                        started[watch.watch_id] = read_started
+                        due[watch.watch_id] = read_started + watch.interval_ms / 1000
+                        next_read_at = read_started + read_gap
+                        pending_json = PendingBatch(
+                            tuple(
+                                replace(event, delivery=Delivery(attempt=0))
+                                for event in dedup.filter(events, monotonic())
+                            ),
+                            target,
+                            True,
+                        ).encode()
+                    prepared, pending_json = yield from self._deliver_pending(
+                        pending_json,
+                        account_id=account_id,
+                        state=state,
+                        base_cursor=cursor,
+                        greeted=greeted,
+                        dedup=dedup,
+                        persist_outbound=False,
+                    )
+                    if pending_json is None:
+                        watch_id = validate_market_transition(
+                            cursor, prepared.cursor, prepared.events
+                        )
+                        if watch_id not in started:
+                            # После восстановления начало прежнего чтения неизвестно.
+                            interval = prepared.cursor["market"][watch_id]["config"]["interval_ms"]
+                            due[watch_id] = monotonic() + interval / 1000
+                        cursor, greeted = prepared.cursor, prepared.greeted
+                    elif max_iterations is None or step < max_iterations:
+                        yield Pause(min(one.interval_ms for one in watches))
+
+    def _deliver_pending(
+        self,
+        pending_json: str,
+        *,
+        account_id: str,
+        state: StateFile | None,
+        base_cursor: dict[str, Any],
+        greeted: bool,
+        dedup: Deduplicator,
+        persist_outbound: bool,
+    ) -> Generator[Request, Reply, tuple[PendingBatch, str | None]]:
+        """Общий журнал личного watch и рынка: намерение, раздача, подтверждение."""
+        frozen = PendingBatch.decode(pending_json, account_id=account_id)
+        prepared = replace(
+            frozen,
+            events=tuple(
+                replace(event, delivery=Delivery(attempt=event.delivery.attempt + 1))
+                for event in frozen.events
+            ),
+        )
+        pending_json = prepared.encode()
+        if state is not None and prepared.events:
+            # Это журнал намерения доставить, а не подтверждение доставки.
+            # Запись обязана завершиться до первого обработчика партии.
+            state.update(
+                {
+                    "watch_owner": account_id,
+                    "watch_pending": pending_json,
+                    "cursor": base_cursor,
+                    "watch_greeted": greeted,
+                }
+            )
+
+        # Обработчик вправе менять payload. Он получает отдельную копию:
+        # такая правка не меняет повтор ни в памяти, ни после перезапуска.
+        reply = yield Deliver(PendingBatch.decode(pending_json, account_id=account_id).events)
+        if not isinstance(reply, StepResult):
+            raise TypeError(f"на просьбу Deliver ожидался итог раздачи, получено {type(reply)}")
+        result = reply
+        accepted = {event.id for event in result.delivered}
+        now = monotonic()
+        dedup.commit(tuple(event for event in prepared.events if event.id in accepted), now)
+        remaining = tuple(event for event in prepared.events if event.id not in accepted)
+        remaining_json = replace(prepared, events=remaining).encode() if remaining else None
+
+        if state is not None:
+            patch: dict[str, Any] = {
+                "watch_owner": account_id,
+                "dedup": dedup.snapshot(now),
+                "dedup_order": dedup.snapshot_order(),
+                "attempts": {event.id: event.delivery.attempt for event in remaining},
+                "watch_pending": remaining_json,
+            }
+            if persist_outbound:
                 self._state.outbound.forget_expired(
-                    now_ms=int(orders.observed_at.timestamp() * 1000), now_s=monotonic()
+                    now_ms=int(datetime.now(UTC).timestamp() * 1000), now_s=now
                 )
-                # Сохранение идёт после обработчиков, вместе с фиксацией
-                # доставленного. Сохрани мы раньше - перезапуск между записью и
-                # обработчиком потерял бы событие: файл говорил бы, что оно
-                # доставлено, а обработчик его не видел.
-                #
-                # ПРАВКА, А НЕ ЗАПИСЬ ЦЕЛИКОМ. У файла несколько владельцев:
-                # курсоры и гашение здесь, реестр отправок в send_text, реестр
-                # выдач у автовыдачи. Запись целиком стирала бы чужие ключи на
-                # каждом шаге - и стирала молча, при зелёном прогоне.
-                state.update(
-                    {
-                        "dedup": dedup.snapshot(now),
-                        # Номера попыток переживают перезапуск вместе с гашением.
-                        # Иначе перезапуск обнулял бы их, и событие, падавшее
-                        # пятый раз, приходило бы с номером один - то есть
-                        # выглядело бы новым ровно тогда, когда обработчику
-                        # важнее всего знать, что оно не новое.
-                        "attempts": attempts,
-                        "cursor": {
-                            "orders": known_orders,
-                            "chats": known_chats,
-                            "threads": {node: sorted(ids) for node, ids in known_threads.items()},
-                            "pending_threads": pending,
-                        },
-                        # Реестр отправок пишется вместе с курсорами, а не
-                        # вместо них: файл один, и владельцев у него несколько.
-                        #
-                        # Прополка идёт ЗДЕСЬ, а не только при отправке. Прежде
-                        # её звала одна send_text, и бот, который наблюдает и не
-                        # пишет, не прополаывал реестр никогда: метки тепла
-                        # копились в файле и переживали своё окно.
-                        "outbound": self._state.outbound.snapshot(),
-                    }
-                )
+                patch["outbound"] = self._state.outbound.snapshot()
+            if not remaining:
+                # Позиция и удаление партии фиксируются одной атомарной записью.
+                patch.update({"cursor": prepared.cursor, "watch_greeted": prepared.greeted})
+            state.update(patch)
 
-            if result.fatal is not None:
-                # Ошибка Funora из обработчика - не его баг, а условие площадки:
-                # истёкшая сессия, исчерпанный бюджет. Партия при этом
-                # дорабатывается до конца и состояние сохраняется, иначе отказ
-                # на первом событии терял бы все остальные.
-                raise result.fatal
-
-            yield Pause(plan.note(fresh, now))
+        if result.fatal is not None:
+            raise result.fatal
+        return prepared, remaining_json
 
     def _note_success(
         self,
@@ -4145,7 +4748,9 @@ class Engine:
             #
             # Состояние возможности при этом понижается так же -
             # повреждённое чтение остаётся повреждённым, о чём бы оно ни было.
-            _log.warning("чтение %s неполно: замечены повреждения страницы", capability.value)
+            _log.warning(
+                "полнота чтения %s не подтверждена: %s", capability.value, completeness.value
+            )
             return
 
         # Предупреждение пишется независимо от того, признал ли вызывающий
@@ -4178,6 +4783,7 @@ class Engine:
         Returns:
             None
         """
+        self.note_operation_error(error)
         if getattr(error, "provisional", False):
             return
         if isinstance(error, NetworkError):

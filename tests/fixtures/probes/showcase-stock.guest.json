@@ -1,0 +1,19 @@
+{
+  "observed_at": "2026-09-09T02:56:02+00:00",
+  "path": "/users/{id}/",
+  "http_status": 200,
+  "authentication": "guest",
+  "source": "Fetcher(None); scoped DOM text of showcase offer rows; no raw HTML stored",
+  "rows": 150,
+  "counts": {
+    "absent": 81,
+    "ascii_integer": 69
+  },
+  "numeric_examples": [
+    {
+      "text": "1",
+      "count": 69
+    }
+  ],
+  "note": "Только показанное количество и агрегаты; без владельца, ссылок, описаний и секретов. Нулевой остаток этим наблюдением не подтверждён."
+}

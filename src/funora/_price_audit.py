@@ -27,6 +27,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Final
 
+from .errors import StateSchemaIncompatibleError
+
 __all__ = [
     "PriceChange",
     "PriceAudit",
@@ -156,35 +158,54 @@ class PriceAudit:
             "dropped": self._dropped,
         }
 
-    def restore(self, payload: dict[str, Any]) -> None:
+    def restore(self, payload: dict[str, Any], *, merge: bool = False) -> None:
         """Восстанавливает состояние из файла.
 
-        Собирается в стороне и подставляется целиком: битая запись не рушит
-        остальные и не оставляет журнал восстановленным наполовину. Довод тот
-        же, что у реестра выданного, и цена ошибки та же - потерянный след
-        правки, которую нечем отменить.
+        Проверяется целиком до изменения живого журнала. Повреждённые записи
+        отклоняются: пропуск мог бы выдать промежуточную цену за исходную.
 
         Аргументы:
             payload (dict[str, Any]): Прочитанное из файла состояния.
+            merge (bool): Добавить записи текущего сеанса после сохранённых.
+                Первые цены с диска имеют приоритет; порядок не зависит от
+                перевода стенных часов.
 
         Возвращает:
             None
+
+        Raises:
+            StateSchemaIncompatibleError: Если раздел или запись повреждены.
         """
-        journal = _records(payload.get("journal"))
+        if not isinstance(payload, dict):
+            raise StateSchemaIncompatibleError("раздел price_audit обязан быть объектом")
+        journal = _records(payload.get("journal", []))
         first: dict[str, PriceChange] = {}
-        for one in _records(payload.get("first")):
-            first.setdefault(one.offer_id, one)
+        for one in _records(payload.get("first", [])):
+            if one.offer_id in first:
+                raise StateSchemaIncompatibleError("повтор первой цены лота в price_audit")
+            first[one.offer_id] = one
         # Записи журнала тоже кандидаты в первые: файл мог быть записан прежней
         # редакцией, у которой раздела first не было вовсе, и терять из-за
         # этого «как было до бота» нельзя.
         for one in journal:
+            if "first" in payload and one.offer_id not in first:
+                raise StateSchemaIncompatibleError("в price_audit отсутствует первая цена лота")
             first.setdefault(one.offer_id, one)
 
-        dropped = payload.get("dropped")
+        dropped = payload.get("dropped", 0)
         # Логическое исключается отдельно: истина в Python - это единица, и
         # счётчик True прочитался бы как одна вытесненная запись.
         if isinstance(dropped, bool) or not isinstance(dropped, int) or dropped < 0:
-            dropped = 0
+            raise StateSchemaIncompatibleError("неверный счётчик вытеснения price_audit")
+
+        if merge:
+            journal.extend(self._journal)
+            for offer_id, one in self._first.items():
+                first.setdefault(offer_id, one)
+            dropped += self._dropped
+            if self._limit > 0 and len(journal) > self._limit:
+                dropped += len(journal) - self._limit
+                journal = journal[-self._limit :]
 
         self._journal = journal
         self._first = first
@@ -219,7 +240,7 @@ def _flatten(change: PriceChange) -> dict[str, Any]:
 
 
 def _records(raw: Any) -> list[PriceChange]:
-    """Собирает записи из прочитанного, пропуская непригодные.
+    """Проверяет и собирает все записи без приведения и потери полей.
 
     Аргументы:
         raw (Any): Прочитанное из файла.
@@ -228,44 +249,33 @@ def _records(raw: Any) -> list[PriceChange]:
         list[PriceChange]: Пригодные записи по порядку.
     """
     if not isinstance(raw, list):
-        return []
+        raise StateSchemaIncompatibleError("записи price_audit обязаны быть списком")
 
     out: list[PriceChange] = []
     for one in raw:
         if not isinstance(one, dict):
-            continue
+            raise StateSchemaIncompatibleError("запись price_audit обязана быть объектом")
 
         offer_id = one.get("offer_id")
         if not isinstance(offer_id, str) or not offer_id.strip():
-            continue
+            raise StateSchemaIncompatibleError("неверный offer_id в price_audit")
+
+        for field in ("node_id", "price_before", "price_after", "revision_before"):
+            if not isinstance(one.get(field), str):
+                raise StateSchemaIncompatibleError(f"неверное поле {field} в price_audit")
 
         at_ms = one.get("at_ms")
         if isinstance(at_ms, bool) or not isinstance(at_ms, int):
-            continue
+            raise StateSchemaIncompatibleError("неверное время записи price_audit")
 
         out.append(
             PriceChange(
                 offer_id=offer_id,
-                node_id=_text(one.get("node_id")),
-                price_before=_text(one.get("price_before")),
-                price_after=_text(one.get("price_after")),
-                revision_before=_text(one.get("revision_before")),
+                node_id=one["node_id"],
+                price_before=one["price_before"],
+                price_after=one["price_after"],
+                revision_before=one["revision_before"],
                 at_ms=at_ms,
             )
         )
     return out
-
-
-def _text(value: Any) -> str:
-    """Возвращает строку либо пустую строку.
-
-    Приведения к строке НЕТ нарочно: число, обращённое в текст, выглядело бы
-    прочитанной ценой, а прочитано оно не было.
-
-    Аргументы:
-        value (Any): Прочитанное значение.
-
-    Возвращает:
-        str: Значение, если это строка, иначе пустая строка.
-    """
-    return value if isinstance(value, str) else ""

@@ -185,15 +185,13 @@ async def test_result_does_not_depend_on_who_finished_first() -> None:
     assert not serial.advance, "курсор не должен сдвигаться при упавшем обработчике"
     # Порядок явный, а не только «совпадает с последовательным». Иначе проверка
     # прошла бы и на реализации, которая одинаково перемешивает оба прогона.
-    assert [e.id for e in parallel.failed] == ["chat:b:1"]
+    assert [e.id for e in parallel.failed] == ["chat:b:1", "chat:b:2"]
     assert [e.id for e in parallel.delivered] == [
         "chat:a:0",
         "chat:a:1",
         "chat:a:2",
         "chat:b:0",
-        # chat:b:1 упал, но соседи по ключу от этого не пропадают: отказ одного
-        # события отменяет сдвиг курсора, а не остаток партии.
-        "chat:b:2",
+        # Следующее событие chat:b ждёт повтора; независимый chat:c проходит.
         "chat:c:0",
         "chat:c:1",
         "chat:c:2",

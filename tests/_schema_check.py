@@ -52,6 +52,7 @@ _PROPERTY_KEYWORDS: frozenset[str] = frozenset(
         "minimum",
         "maximum",
         "minItems",
+        "uniqueItems",
         "items",
         "pattern",
         "properties",
@@ -65,6 +66,7 @@ _PROPERTY_KEYWORDS: frozenset[str] = frozenset(
         "x-funora-nullable",
         "x-funora-observed-value",
         "$ref",
+        "anyOf",
     }
 )
 
@@ -90,20 +92,20 @@ _JSON_TYPES: dict[str, tuple[type, ...]] = {
 #:
 #: По умолчанию пусто: сверка, не получившая словаря, отказывается работать со
 #: всяким доменным типом. Отказ громкий - см. UnsupportedKeyword.
-KNOWN_TYPES: set[str] = set()
+KNOWN_TYPES: dict[str, str] = {}
 
 
-def use_types(names: object) -> None:
+def use_types(definitions: dict[str, Any]) -> None:
     """Задаёт словарь доменных типов, известных проверке.
 
     Args:
-        names (object): Имена типов из spec/types.yaml.
+        definitions (dict[str, Any]): Объявления типов из spec/types.yaml.
 
     Returns:
         None
     """
     KNOWN_TYPES.clear()
-    KNOWN_TYPES.update(str(name) for name in names)  # type: ignore[union-attr]
+    KNOWN_TYPES.update({name: definition["json"] for name, definition in definitions.items()})
 
 
 class SchemaError(AssertionError):
@@ -190,11 +192,29 @@ def _check_value(value: Any, schema: dict[str, Any], where: str) -> None:
     """
     _check_keywords(schema, _PROPERTY_KEYWORDS, where)
 
+    if "anyOf" in schema:
+        branches = schema["anyOf"]
+        if not isinstance(branches, list) or not branches:
+            raise UnsupportedKeyword(f"{where}: anyOf требует непустой список схем")
+        matches = False
+        for branch in branches:
+            try:
+                _check_value(value, branch, where)
+            except SchemaError:
+                continue
+            matches = True
+        if not matches:
+            _fail(where, "значение не входит ни в одну ветвь anyOf")
+
     domain = schema.get("x-funora-type")
     if domain is not None:
         if domain not in KNOWN_TYPES:
             raise UnsupportedKeyword(f"{where}: проверка не знает x-funora-type «{domain}»")
-        if not isinstance(value, str) or not value:
+        json_type = KNOWN_TYPES[domain]
+        if json_type not in _JSON_TYPES:
+            raise UnsupportedKeyword(f"{where}: неизвестное JSON-представление {json_type}")
+        _check_value(value, {"type": json_type}, where)
+        if json_type == "string" and not value:
             _fail(where, f"доменный тип {domain} требует непустую строку, получено {value!r}")
         return
 
@@ -241,8 +261,21 @@ def _check_value(value: Any, schema: dict[str, Any], where: str) -> None:
         if item_schema is not None:
             for index, item in enumerate(value):
                 _check_value(item, item_schema, f"{where}[{index}]")
+        unique = schema.get("uniqueItems", False)
+        if not isinstance(unique, bool):
+            raise UnsupportedKeyword(f"{where}: uniqueItems требует bool")
+        if unique:
+            # В текущем контракте уникальны только строковые имена/причины.
+            # Новая разновидность требует явной поддержки, а не Python ==,
+            # который считает True равным 1 и не совпадает с семантикой JSON.
+            if item_schema is None or item_schema.get("type") != "string":
+                raise UnsupportedKeyword(f"{where}: uniqueItems поддержан для строковых items")
+            if len(set(value)) != len(value):
+                _fail(where, "элементы массива повторяются")
 
-    if isinstance(value, dict) and "properties" in schema:
+    if isinstance(value, dict) and any(
+        key in schema for key in ("properties", "required", "additionalProperties")
+    ):
         check(value, schema, where=where, nested=True)
 
 
@@ -290,5 +323,7 @@ def check(
     for name, item in value.items():
         item_schema = properties.get(name)
         if item_schema is None:
-            continue
+            item_schema = schema.get("additionalProperties")
+            if not isinstance(item_schema, dict):
+                continue
         _check_value(item, item_schema, f"{where}.{name}")

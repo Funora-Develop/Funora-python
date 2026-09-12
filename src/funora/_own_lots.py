@@ -1,35 +1,9 @@
 """Чтение собственных лотов продавца со страницы раздела.
 
-ЗАЧЕМ ОНА, КОГДА ЕСТЬ ВИТРИНА. Витрина на профиле показывает те же предложения и
-даже больше полей - количество и признак автовыдачи, - но не даёт ГЛАВНОГО:
-идентификатора предложения. На витрине он лежит в строке запроса ссылки, а строку
-запроса скелет заменяет одной подписью; наблюдать его там нельзя по устройству
-формата.
-
-Здесь он лежит атрибутом. Наблюдено: двадцать строк, двадцать РАЗЛИЧНЫХ значений
-data-offer; на витрине - сто пятьдесят восемь строк и ни одного такого атрибута.
-
-Идентификатор нужен всем четырём операциям записи над лотами: включение,
-выключение, правка цены, поднятие. Каждая адресует лот по нему.
-
-ПРИЗНАКА «ЛОТ ПОКАЗЫВАЕТСЯ В ВЫДАЧЕ» ЗДЕСЬ НЕТ, и это стоит сказать громко. Узел
-.tc-visible-inside по имени похож на него, но им не является, и опровергается это
-счётом, а не рассуждением: тот же класс есть на ПУБЛИЧНОЙ витрине - в сорока
-строках из ста пятидесяти восьми, ровно там, где есть колонка сервера, и ни в
-одной из ста восемнадцати без неё.
-
-Наличие узла определяется НАБОРОМ КОЛОНОК таблицы, а не состоянием лота.
-Состояние лота не может зависеть от того, есть ли в таблице колонка сервера.
-
-Все двадцать строк структурно одинаковы - каждый класс внутри строки встречается
-ровно двадцать раз, - и различающего признака нет ни одного. Поэтому модель Lot,
-требующая is_active обязательным, со страницы НЕ СОБИРАЕТСЯ, и операция
-возвращает своё: то, что вправду читается.
-
-ЯЧЕЙКИ ЧИТАЮТСЯ ВНУТРИ СТРОКИ. Классы .tc-server, .tc-desc и .tc-price
-встречаются на странице по двадцать одному разу: двадцать строк плюс ШАПКА
-таблицы с теми же классами. Счёт по ячейке разошёлся бы с числом лотов на
-единицу, и разошёлся бы молча.
+Идентификатор предложения берётся из data-offer, видимость - из класса warning.
+Количество показывается не во всех разделах. Пустая ячейка и отсутствие колонки
+не подтверждают ноль; неизвестный формат сохраняется текстом и причиной.
+Поля читаются внутри строки: заголовки таблицы используют те же классы ячеек.
 """
 
 from __future__ import annotations
@@ -42,6 +16,7 @@ from selectolax.parser import HTMLParser, Node
 
 from ._observed import Observed
 from ._result import Completeness, Defect, Severity
+from ._stock import parse_stock_column
 from .errors import IncompleteResultError, ProtocolChangedError
 from .extraction import ATTRIBUTES, SELECTORS
 
@@ -64,6 +39,7 @@ _DESCRIPTION: Final[str] = SELECTORS["lots.fields.description_text"]
 _PRICE_CELL: Final[str] = SELECTORS["lots.fields.price_cell"]
 _PRICE_TEXT: Final[str] = SELECTORS["lots.fields.price_text"]
 _CURRENCY: Final[str] = SELECTORS["lots.fields.currency_symbol_text"]
+_AMOUNT: Final[str] = SELECTORS["lots.fields.amount_text"]
 _RAISE: Final[str] = SELECTORS["lots.controls.raise_button"]
 
 _OFFER_ID: Final[str] = ATTRIBUTES["lots.rows.attributes.offer_id"]
@@ -77,9 +53,9 @@ _NODE_ID: Final[str] = ATTRIBUTES["lots.controls.raise_button.attributes.node_id
 class OwnLot:
     """Одно собственное предложение продавца.
 
-    ПОЛЯ is_active ЗДЕСЬ НЕТ НАМЕРЕННО. Признака, по которому его определить,
-    на странице не наблюдалось ни одного, а выдумать его значило бы сказать
-    продавцу «лот скрыт» о показанном либо наоборот.
+    Идентичность берётся из data-offer, видимость - из класса warning.
+    Количество показывается только в части разделов и не выводится из
+    видимости: выключенный лот может иметь ненулевой остаток.
 
     Attributes:
         offer_id (Observed[str]): Идентификатор предложения. Ради него страница
@@ -97,6 +73,8 @@ class OwnLot:
             утверждала, что признака на странице нет вовсе; строки одинаковы,
             пока все лоты включены, а у владельца все и были включены.
         row_index (int): Место строки на странице, считая с нуля.
+        amount_text (Observed[str]): Показанное наличие исходным текстом.
+        stock (Observed[int]): Целое наличие либо неизвестное значение с причиной.
     """
 
     offer_id: Observed[str]
@@ -108,6 +86,10 @@ class OwnLot:
     sort_value: Observed[str]
     is_active: bool
     row_index: int
+    amount_text: Observed[str] = field(
+        default_factory=lambda: Observed.missing("stock_not_normalized")
+    )
+    stock: Observed[int] = field(default_factory=lambda: Observed.missing("stock_not_normalized"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -264,6 +246,8 @@ def _row(node: Node, index: int) -> tuple[OwnLot, list[Defect]]:
             # отсутствие здесь значимо.
             is_active=_OFF_CLASS not in ((node.attributes or {}).get("class") or "").split(),
             row_index=index,
+            amount_text=_text(node.css_first(_AMOUNT), "amount_text"),
+            stock=parse_stock_column(node, _AMOUNT),
         ),
         defects,
     )

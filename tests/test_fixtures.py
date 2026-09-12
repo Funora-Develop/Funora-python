@@ -37,6 +37,13 @@ _SPEC_DIR = os.environ.get("FUNORA_SPEC_DIR")
 
 #: Ожидаемый вердикт для каждой фикстуры.
 EXPECTED = {
+    "lots-trade-stock.logged.ru": ResponseClass.OK,
+    "lot-edit-stock.logged.ru": ResponseClass.OK,
+    "orders-filtered.logged.ru": ResponseClass.OK,
+    "orders-filtered-empty.logged.ru": ResponseClass.OK,
+    "account-balance-first.logged.ru": ResponseClass.OK,
+    "account-balance-end.logged.ru": ResponseClass.OK,
+    "catalog-search.guest.ru": ResponseClass.UNKNOWN,
     "order.logged.ru": ResponseClass.OK,
     "orders-trade.logged.ru": ResponseClass.OK,
     # Тот же список, снятый ДЕВЯТЬЮ ДНЯМИ ПОЗЖЕ и вчетверо длиннее: тридцать
@@ -53,6 +60,14 @@ EXPECTED = {
     # состоянию, в котором заказов нет: у аккаунта продажи были.
     "orders-trade.empty.ru": ResponseClass.OK,
     "user.logged.ru": ResponseClass.OK,
+    "reviews-first.guest.ru": ResponseClass.LOGIN_REQUIRED,
+    # Продолжение - фрагмент без панели аккаунта, общий классификатор требует её.
+    "reviews-next.guest.ru": ResponseClass.UNKNOWN,
+    "reviews-rating-first.guest.ru": ResponseClass.UNKNOWN,
+    "reviews-rating-next.guest.ru": ResponseClass.UNKNOWN,
+    "reviews-rating-end.guest.ru": ResponseClass.UNKNOWN,
+    "reviews-rating-empty.guest.ru": ResponseClass.UNKNOWN,
+    "reviews-last.guest.ru": ResponseClass.UNKNOWN,
     "account-balance.logged.ru": ResponseClass.OK,
     "root.logged.ru": ResponseClass.OK,
     # Свои лоты в категории. Снят 28.08.2026 форматом v8 - первым, сохраняющим
@@ -179,7 +194,13 @@ def test_fixture_parses(name: str) -> None:
     """
     tree = HTMLParser(_read(name))
     assert tree.body is not None, "тело документа не разобралось"
-    assert len(tree.css("*")) > 100, "дерево подозрительно мелкое"
+    # Пустой ответ отзывов содержит только фильтр и сообщение: 66 узлов.
+    minimum = {
+        "reviews-last.guest.ru": 90,
+        "catalog-search.guest.ru": 90,
+        "reviews-rating-empty.guest.ru": 60,
+    }.get(name, 100)
+    assert len(tree.css("*")) > minimum, "дерево подозрительно мелкое"
 
 
 @pytest.mark.parametrize("name", sorted(EXPECTED))

@@ -23,13 +23,14 @@
 
 from __future__ import annotations
 
-import json
-import os
 from dataclasses import dataclass
 from pathlib import Path
+from stat import S_ISDIR, S_ISREG
 from typing import Any, Final
 
 from ._canonical import canonical_dumps
+from ._fileio import atomic_write, file_lock
+from ._json import load_json
 from .contract import ADAPTER_FAMILY as _ADAPTER_FAMILY
 from .contract import CANONICAL_FORM_VERSION
 from .errors import CursorIncompatibleError, StateSchemaIncompatibleError
@@ -61,7 +62,10 @@ __all__ = ["StateFile", "STATE_FORMAT"]
 #: семидесятый - и весь кэш гашения молча выбрасывается по сроку. Это ровно
 #: то, что спецификация запрещает прямо: молчаливое чтение с начала порождает
 #: повторную обработку всего, что уже обработано.
-STATE_FORMAT: Final[str] = "funora-state-v4"
+#: v5 хранит непринятую партию до обработчиков. v4 без незавершённых попыток
+#: читается без сброса; v4 с попытками не содержит самих событий для повтора.
+#: v6 различает личный курсор и набор снимков рынка. v5 читается без сброса.
+STATE_FORMAT: Final[str] = "funora-state-v6"
 
 #: Семейство адаптера, к которому относится состояние.
 #:
@@ -76,10 +80,51 @@ class StateFile:
     """Файл состояния клиента.
 
     Args:
-        path (Path): Путь файла.
+        path (str | Path): Путь файла. Строка принимается наравне с Path и
+            приводится к нему здесь.
     """
 
     path: Path
+
+    def __post_init__(self) -> None:
+        """Закрепляет общий путь файла и блокировок, сохраняя рабочие ссылки."""
+        path = Path(self.path)
+        try:
+            try:
+                resolved = path.resolve(strict=True)
+            except FileNotFoundError:
+                # Новый файл допустим, но битая ссылка в любом компоненте
+                # пути не должна создавать пустой журнал в другом месте.
+                for component in (path, *path.parents):
+                    if component.is_symlink():
+                        component.resolve(strict=True)
+                resolved = path.resolve()
+            object.__setattr__(self, "path", resolved)
+            self._exists()
+        except (OSError, RuntimeError) as exc:
+            raise StateSchemaIncompatibleError(
+                f"путь файла состояния {path} недоступен: {type(exc).__name__}"
+            ) from exc
+
+    def _exists(self) -> bool:
+        """Отличает первый запуск от недоступного или специального файла."""
+        for component in (self.path, *self.path.parents):
+            try:
+                mode = component.stat().st_mode
+            except OSError as exc:
+                if isinstance(exc, FileNotFoundError) and not component.is_symlink():
+                    continue
+                raise StateSchemaIncompatibleError(
+                    f"путь состояния {self.path} недоступен: {type(exc).__name__}"
+                ) from exc
+            if component != self.path and S_ISDIR(mode):
+                return False
+            if component == self.path and S_ISREG(mode):
+                return True
+            raise StateSchemaIncompatibleError(
+                f"неверный тип файла или родительского каталога состояния {self.path}"
+            )
+        raise StateSchemaIncompatibleError(f"путь состояния {self.path} недоступен")
 
     def load(self) -> dict[str, Any]:
         """Читает состояние.
@@ -96,12 +141,11 @@ class StateFile:
                 Молчаливый старт с нуля здесь неотличим от штатной работы и
                 приводит к повторной обработке всего, что уже обработано.
         """
-        if not self.path.is_file():
-            return {}
-
         try:
-            raw = json.loads(self.path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            if not self._exists():
+                return {}
+            raw = load_json(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, RecursionError) as exc:
             raise StateSchemaIncompatibleError(
                 f"файл состояния {self.path} не читается: {type(exc).__name__}. "
                 "Удалите его вручную, если готовы к повторной обработке всего, "
@@ -114,7 +158,7 @@ class StateFile:
             )
 
         stored_format = raw.get("format")
-        if stored_format != STATE_FORMAT:
+        if stored_format not in (STATE_FORMAT, "funora-state-v5", "funora-state-v4"):
             raise StateSchemaIncompatibleError(
                 f"файл состояния {self.path} записан форматом {stored_format!r}, "
                 f"ожидался {STATE_FORMAT!r}"
@@ -148,7 +192,30 @@ class StateFile:
             )
 
         payload = raw.get("payload")
-        return payload if isinstance(payload, dict) else {}
+        if not isinstance(payload, dict):
+            raise StateSchemaIncompatibleError(
+                f"файл состояния {self.path}: payload обязан быть объектом; "
+                "начать с пустым журналом значило бы забыть уже выполненные действия"
+            )
+        if stored_format == "funora-state-v4" and payload.get("attempts"):
+            raise CursorIncompatibleError(
+                "файл v4 содержит незавершённые попытки без сохранённых событий; "
+                "завершите их прежней версией SDK перед обновлением. "
+                "Восстановить исходную партию по новому снимку невозможно"
+            )
+        if (
+            "watch_owner" in payload
+            and not {
+                "watch_pending",
+                "watch_greeted",
+                "cursor",
+            }
+            <= payload.keys()
+        ):
+            raise StateSchemaIncompatibleError("в состоянии watch отсутствует журнал или курсор")
+        if payload.get("attempts") and payload.get("watch_pending") is None:
+            raise StateSchemaIncompatibleError("попытки watch сохранены без непринятой партии")
+        return payload
 
     def update(self, patch: dict[str, Any]) -> None:
         """Правит часть состояния, не трогая остального.
@@ -175,9 +242,11 @@ class StateFile:
             StateSchemaIncompatibleError: Если существующий файл не читается.
             CursorIncompatibleError: Если он снят с другого семейства адаптера.
         """
-        current = self.load()
-        current.update(patch)
-        self.save(current)
+        self._exists()
+        with file_lock(self.path.with_suffix(self.path.suffix + ".lock")):
+            current = self.load()
+            current.update(patch)
+            self._save(current)
 
     def save(self, payload: dict[str, Any]) -> None:
         """Записывает состояние.
@@ -193,25 +262,18 @@ class StateFile:
         Returns:
             None
         """
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.path.with_suffix(self.path.suffix + ".tmp")
+        self._exists()
+        with file_lock(self.path.with_suffix(self.path.suffix + ".lock")):
+            self._save(payload)
 
-        # Каноническая форма, а не json.dumps с умолчаниями. Прежде файл
-        # штамповал в себя canonical_form_version и писался с пробелами после
-        # двоеточия и запятой, с числами с плавающей точкой и без нормализации
-        # Unicode: то есть утверждал про себя то, чего никто не делал.
+    def _save(self, payload: dict[str, Any]) -> None:
+        self._exists()
         body = canonical_dumps(
             {
                 "format": STATE_FORMAT,
                 "adapter_family": ADAPTER_FAMILY,
-                # Версия канонической формы записывается вместе с остальным.
-                # Она меняется отдельно от версии спецификации: одна и та же
-                # модель может сериализоваться по-новому, и это ломает
-                # сохранённые отпечатки. Файл, не помнящий её, нельзя проверить
-                # на пригодность - можно только надеяться.
                 "canonical_form_version": CANONICAL_FORM_VERSION,
                 "payload": payload,
             }
         )
-        temporary.write_text(body, encoding="utf-8", newline="\n")
-        os.replace(temporary, self.path)
+        atomic_write(self.path, body)

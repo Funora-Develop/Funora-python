@@ -20,9 +20,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+from fractions import Fraction
+from threading import RLock
 from typing import Final
 
+from ._monitoring import MarketWatch, MonitoringLimit, MonitoringPlan, validate_watches
 from .budget import (
     BUCKETS,
     BURST_WINDOW_MS,
@@ -37,6 +42,17 @@ from .budget import (
 from .errors import BudgetExhaustedError
 
 __all__ = ["TokenBucket", "Budget", "Reservation"]
+
+
+def _exact(value: float | Fraction) -> Fraction:
+    """Читает десятичное значение без переноса двоичной погрешности в запас."""
+    return value if isinstance(value, Fraction) else Fraction(str(value))
+
+
+def wait_until_ms(now: float | Fraction, until: float | Fraction) -> int:
+    """Округляет положительную паузу по общему правилу бюджета."""
+    remaining = _exact(until) - _exact(now)
+    return int(remaining * 1000) + WAIT_GUARD_MS if remaining > 0 else 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,16 +84,18 @@ class TokenBucket:
     """
 
     limits: BucketLimits
-    tokens: float = field(default=-1.0)
-    updated_at: float = 0.0
-    factor: float = 1.0
+    tokens: float | Fraction = field(default=-1.0)
+    updated_at: float | Fraction = 0.0
+    factor: float | Fraction = 1.0
+    _refill_rate: Fraction = field(init=False, repr=False)
+    _burst_rate: Fraction = field(init=False, repr=False)
 
     #: Право на залп: сколько ещё можно отправить, не переводя дыхания.
     #:
     #: Второй предел, независимый от запаса. Ведро, полное до краёв, всё равно
     #: не выпустит больше burst запросов подряд: запас копится в простое, а
     #: право на залп восстанавливается равномерно, burst единиц за окно.
-    allowance: float = 0.0
+    allowance: float | Fraction = 0.0
 
     def __post_init__(self) -> None:
         """Заполняет ведро, если начальный запас не задан.
@@ -86,11 +104,17 @@ class TokenBucket:
             None
         """
         if self.tokens < 0:
-            self.tokens = float(self.limits.capacity)
+            self.tokens = self.limits.capacity
         if self.allowance == 0.0:
-            self.allowance = float(self.limits.burst)
+            self.allowance = self.limits.burst
+        self.tokens = _exact(self.tokens)
+        self.allowance = _exact(self.allowance)
+        self.updated_at = _exact(self.updated_at)
+        self.factor = _exact(self.factor)
+        self._refill_rate = _exact(self.limits.refill_per_second)
+        self._burst_rate = Fraction(self.limits.burst * 1000, BURST_WINDOW_MS)
 
-    def _refill(self, now: float) -> None:
+    def _refill(self, now: float | Fraction) -> None:
         """Пополняет ведро по прошедшему времени.
 
         Args:
@@ -99,23 +123,23 @@ class TokenBucket:
         Returns:
             None
         """
-        if now <= self.updated_at:
+        moment = _exact(now)
+        if moment <= self.updated_at:
             # Монотонные часы назад не идут, но защита дешевле разбирательства:
             # отрицательный интервал молча выдал бы бесконечный бюджет.
-            self.updated_at = now
             return
-        elapsed = now - self.updated_at
+        elapsed = moment - _exact(self.updated_at)
         self.tokens = min(
-            self.limits.capacity * self.factor,
-            self.tokens + elapsed * self.limits.refill_per_second,
+            self.limits.capacity * _exact(self.factor),
+            _exact(self.tokens) + elapsed * self._refill_rate,
         )
         self.allowance = min(
-            float(self.limits.burst),
-            self.allowance + elapsed * self.limits.burst / (BURST_WINDOW_MS / 1000),
+            Fraction(self.limits.burst),
+            _exact(self.allowance) + elapsed * self._burst_rate,
         )
-        self.updated_at = now
+        self.updated_at = moment
 
-    def scale(self, factor: float) -> None:
+    def scale(self, factor: float | Fraction) -> None:
         """Урезает ёмкость ведра до доли от объявленной.
 
         Запас подрезается вместе с ёмкостью: ведро, полное по прежней мерке, при
@@ -128,12 +152,17 @@ class TokenBucket:
         Returns:
             None
         """
-        self.factor = factor
-        ceiling = self.limits.capacity * factor
+        exact_factor = _exact(factor)
+        if not 0 < exact_factor <= 1:
+            raise ValueError("доля ёмкости должна быть в границах (0, 1]")
+        self.factor = exact_factor
+        ceiling = self.limits.capacity * exact_factor
         if self.tokens > ceiling:
             self.tokens = ceiling
 
-    def wait_for(self, now: float, cost: float = 1.0, floor: float = 0.0) -> int:
+    def wait_for(
+        self, now: float | Fraction, cost: float | Fraction = 1.0, floor: float | Fraction = 0.0
+    ) -> int:
         """Сообщает, сколько ждать до появления нужного запаса.
 
         Порог ``floor`` - это доля ёмкости, которую запрос обязан оставить
@@ -155,8 +184,11 @@ class TokenBucket:
         Returns:
             int: Миллисекунды ожидания. Ноль, если занять можно прямо сейчас.
         """
+        charge, share = _exact(cost), _exact(floor)
+        if charge < 0 or not 0 <= share <= 1:
+            raise ValueError("стоимость не может быть отрицательной, доля должна быть в [0, 1]")
         self._refill(now)
-        needed = cost + self.limits.capacity * self.factor * floor
+        needed = charge + self.limits.capacity * _exact(self.factor) * share
 
         # Ждать приходится дольшего из двух пределов: запрос проходит, только
         # когда хватает и запаса, и права на залп.
@@ -165,17 +197,18 @@ class TokenBucket:
             if self.limits.refill_per_second <= 0:
                 return MAX_WAIT_MS
             by_tokens = (
-                int(((needed - self.tokens) / self.limits.refill_per_second) * 1000) + WAIT_GUARD_MS
+                int(((needed - _exact(self.tokens)) / self._refill_rate) * 1000) + WAIT_GUARD_MS
             )
 
         by_burst = 0
-        if self.allowance < cost:
-            per_second = self.limits.burst / (BURST_WINDOW_MS / 1000)
-            by_burst = int(((cost - self.allowance) / per_second) * 1000) + WAIT_GUARD_MS
+        if self.allowance < charge:
+            by_burst = (
+                int(((charge - _exact(self.allowance)) / self._burst_rate) * 1000) + WAIT_GUARD_MS
+            )
 
         return max(by_tokens, by_burst)
 
-    def take(self, now: float, cost: float = 1.0) -> None:
+    def take(self, now: float | Fraction, cost: float | Fraction = 1.0) -> None:
         """Занимает запас без проверки.
 
         Проверять обязан вызывающий: разделение нужно затем, что при вложенных
@@ -188,9 +221,12 @@ class TokenBucket:
         Returns:
             None
         """
+        charge = _exact(cost)
+        if charge < 0:
+            raise ValueError("стоимость не может быть отрицательной")
         self._refill(now)
-        self.tokens -= cost
-        self.allowance -= cost
+        self.tokens = _exact(self.tokens) - charge
+        self.allowance = _exact(self.allowance) - charge
 
 
 class Budget:
@@ -201,24 +237,121 @@ class Budget:
             нормативен: сначала общее, потом ведро аккаунта.
     """
 
-    __slots__ = ("_buckets", "_demanded_at", "_suspended_until")
+    __slots__ = (
+        "_buckets",
+        "_demanded_at",
+        "_suspended_until",
+        "_lock",
+        "_accounts",
+        "_monitoring",
+    )
 
-    def __init__(self, names: tuple[str, ...] = ("host", "account")) -> None:
+    def __init__(self, names: tuple[str, ...] = ("host", "account", "write")) -> None:
+        self._accounts: dict[str, Budget] = {}
+        self._monitoring: dict[object, tuple[tuple[TokenBucket, ...], tuple[MarketWatch, ...]]] = {}
+        self._lock = RLock()
         self._buckets = tuple(TokenBucket(BUCKETS[name]) for name in names)
         #: Когда каждый класс последний раз просил бюджет.
         #:
         #: Порог складывается только из долей претендующих. Без этого доля
         #: превратилась бы из пола в потолок: цикл обновлений на пустой
         #: площадке уступал бы тем, кто не пришёл.
-        self._demanded_at: dict[RequestClass, float] = {}
+        self._demanded_at: dict[RequestClass, Fraction] = {}
 
         #: До какого момента класс снят с очереди.
         #:
         #: Вторая ступень реакции на ограничение частоты. Снятие держится до
         #: конца остывания идентичности.
-        self._suspended_until: dict[RequestClass, float] = {}
+        self._suspended_until: dict[RequestClass, Fraction] = {}
 
-    def suspend(self, classes: tuple[RequestClass, ...], *, until: float) -> None:
+    def for_account(self, account: str) -> Budget:
+        """Возвращает личное ведро под общим сетевым пределом и общей блокировкой."""
+        if not isinstance(account, str) or not account.strip():
+            raise ValueError("ключ аккаунта не может быть пустым")
+        with self._lock:
+            if account not in self._accounts:
+                child = Budget(names=())
+                child._lock = self._lock
+                child._demanded_at = self._demanded_at
+                child._suspended_until = self._suspended_until
+                child._monitoring = self._monitoring
+                buckets = []
+                for bucket in self._buckets:
+                    if bucket.limits.name == "account":
+                        own = TokenBucket(bucket.limits)
+                        own.scale(bucket.factor)
+                        buckets.append(own)
+                    else:
+                        buckets.append(bucket)
+                child._buckets = tuple(buckets)
+                self._accounts[account] = child
+            return self._accounts[account]
+
+    def monitoring_plan(self, watches: tuple[MarketWatch, ...], now: float) -> MonitoringPlan:
+        """Проверяет суммарный прогноз под общей блокировкой, не расходуя токены."""
+        validate_watches(watches)
+        with self._lock:
+            rate = sum((one.requests_per_second for one in watches), Fraction())
+            limits = []
+            for bucket in self._buckets:
+                if bucket.limits.unit != "requests":
+                    continue
+                used = sum(
+                    (
+                        one.requests_per_second
+                        for buckets, existing in self._monitoring.values()
+                        if any(bucket is other for other in buckets)
+                        for one in existing
+                    ),
+                    Fraction(),
+                )
+                capacity = (
+                    _exact(bucket.limits.refill_per_second)
+                    * _exact(bucket.factor)
+                    * _exact(FLOOR_SHARE[RequestClass.MONITORING])
+                )
+                limits.append(MonitoringLimit(bucket.limits.name, used + rate, capacity))
+            occupied = {
+                one.watch_id for _, existing in self._monitoring.values() for one in existing
+            }
+            reason = (
+                "watch_id_in_use"
+                if any(one.watch_id in occupied for one in watches)
+                else "monitoring_suspended"
+                if self.is_suspended(RequestClass.MONITORING, now)
+                else "forecast_exceeds_budget"
+                if any(one.requests_per_second > one.available_per_second for one in limits)
+                else None
+            )
+            return MonitoringPlan(
+                reason is None,
+                rate,
+                tuple(limits),
+                tuple(one.watch_id for one in watches) if reason else (),
+                reason,
+            )
+
+    @contextmanager
+    def admit_monitoring(
+        self, watches: tuple[MarketWatch, ...], now: float
+    ) -> Iterator[MonitoringPlan]:
+        """Регистрирует весь набор атомарно и освобождает его при любом выходе."""
+        token = object()
+        with self._lock:
+            plan = self.monitoring_plan(watches, now)
+            if not plan.admitted:
+                raise BudgetExhaustedError(
+                    f"наблюдения не допущены ({plan.reason}); снимите или измените: "
+                    + ", ".join(plan.rejected_watch_ids)
+                )
+            self._monitoring[token] = (self._buckets, watches)
+        try:
+            yield plan
+        finally:
+            with self._lock:
+                del self._monitoring[token]
+
+    def suspend(self, classes: tuple[RequestClass, ...], *, until: float | Fraction) -> None:
         """Снимает классы запросов с очереди до названного момента.
 
         Вторая ступень реакции на ограничение частоты. Площадка сказала
@@ -237,12 +370,14 @@ class Budget:
         Returns:
             None
         """
-        for request_class in classes:
-            self._suspended_until[request_class] = max(
-                self._suspended_until.get(request_class, 0.0), until
-            )
+        deadline = _exact(until)
+        with self._lock:
+            for request_class in classes:
+                self._suspended_until[request_class] = max(
+                    self._suspended_until.get(request_class, Fraction()), deadline
+                )
 
-    def is_suspended(self, request_class: RequestClass, now: float) -> bool:
+    def is_suspended(self, request_class: RequestClass, now: float | Fraction) -> bool:
         """Сообщает, снят ли класс с очереди сейчас.
 
         Args:
@@ -252,9 +387,10 @@ class Budget:
         Returns:
             bool: True, если класс снят и запрос по нему сейчас не пройдёт.
         """
-        return now < self._suspended_until.get(request_class, 0.0)
+        with self._lock:
+            return _exact(now) < self._suspended_until.get(request_class, Fraction())
 
-    def _floor_for(self, request_class: RequestClass, now: float) -> float:
+    def _floor_for(self, request_class: RequestClass, now: float | Fraction) -> Fraction:
         """Считает порог допуска для класса по нынешнему спросу.
 
         Порог - сумма долей тех классов, которые защищены сильнее И вправду
@@ -273,15 +409,15 @@ class Budget:
             now (float): Текущий момент, монотонные секунды.
 
         Returns:
-            float: Доля ёмкости, которая обязана остаться после займа.
+            Fraction: Точная доля ёмкости, которая обязана остаться после займа.
         """
-        deadline = now - DEMAND_WINDOW_MS / 1000
-        floor = 0.0
+        deadline = _exact(now) - Fraction(DEMAND_WINDOW_MS, 1000)
+        floor = Fraction()
         for other in RequestClass:
             if other is request_class:
                 break
-            if self._demanded_at.get(other, float("-inf")) >= deadline:
-                floor += FLOOR_SHARE[other]
+            if other in self._demanded_at and self._demanded_at[other] >= deadline:
+                floor += _exact(FLOOR_SHARE[other])
         return floor
 
     def reserve(
@@ -289,6 +425,8 @@ class Budget:
         now: float,
         cost: float = 1.0,
         request_class: RequestClass = RequestClass.INTERACTIVE,
+        *,
+        action: bool = False,
     ) -> Reservation:
         """Пытается занять бюджет во всех вёдрах сразу.
 
@@ -311,37 +449,50 @@ class Budget:
             now (float): Текущий момент, монотонные секунды.
             cost (float): Стоимость запроса.
             request_class (RequestClass): Класс запроса.
+            action (bool): Начало логической записи. Списывает одну единицу
+                write вместе с первым запросом; остальные запросы - без неё.
 
         Returns:
             Reservation: Выдан ли бюджет, и сколько ждать, если нет.
         """
-        self._demanded_at[request_class] = now
-
-        # Снятый класс не проходит вовсе, сколько бы ни было в ведре. Ждать он
-        # обязан до конца остывания, а не до появления токена.
-        #
-        # Округление то же, что и у ожидания запаса: пауза строго больше точной
-        # величины. Здесь константа прежде стояла литералом - то есть правило
-        # выполнялось по совпадению, и правка объявленного числа обошла бы это
-        # место стороной.
-        if self.is_suspended(request_class, now):
-            return Reservation(
-                granted=False,
-                wait_ms=int((self._suspended_until[request_class] - now) * 1000) + WAIT_GUARD_MS,
-                bucket="suspended",
+        moment, charge = _exact(now), _exact(cost)
+        if charge < 0:
+            raise ValueError("стоимость не может быть отрицательной")
+        with self._lock:
+            self._demanded_at[request_class] = max(
+                moment, self._demanded_at.get(request_class, moment)
             )
 
-        floor = self._floor_for(request_class, now)
-        for bucket in self._buckets:
-            wait = bucket.wait_for(now, cost, floor)
-            if wait:
-                return Reservation(granted=False, wait_ms=wait, bucket=bucket.limits.name)
+            # Снятый класс не проходит вовсе, сколько бы ни было в ведре. Ждать он
+            # обязан до конца остывания, а не до появления токена.
+            #
+            # Округление то же, что и у ожидания запаса: пауза строго больше точной
+            # величины. Здесь константа прежде стояла литералом - то есть правило
+            # выполнялось по совпадению, и правка объявленного числа обошла бы это
+            # место стороной.
+            if self.is_suspended(request_class, moment):
+                return Reservation(
+                    granted=False,
+                    wait_ms=wait_until_ms(moment, self._suspended_until[request_class]),
+                    bucket="suspended",
+                )
 
-        for bucket in self._buckets:
-            bucket.take(now, cost)
-        return Reservation(granted=True, wait_ms=0, bucket="")
+            floor = self._floor_for(request_class, moment)
+            charges = tuple(
+                (bucket, Fraction(1) if bucket.limits.unit == "actions_per_hour" else charge)
+                for bucket in self._buckets
+                if bucket.limits.unit != "actions_per_hour" or action
+            )
+            for bucket, charge in charges:
+                wait = bucket.wait_for(moment, charge, floor)
+                if wait:
+                    return Reservation(granted=False, wait_ms=wait, bucket=bucket.limits.name)
 
-    def scale(self, factor: float) -> None:
+            for bucket, charge in charges:
+                bucket.take(moment, charge)
+            return Reservation(granted=True, wait_ms=0, bucket="")
+
+    def scale(self, factor: float | Fraction) -> None:
         """Урезает ёмкость всех вёдер до доли от объявленной.
 
         Нужно реакции на ограничение частоты. Прежде она была объявлена
@@ -364,19 +515,24 @@ class Budget:
             ValueError: Если доля вне разумных границ. Множитель больше единицы
                 означал бы, что ограничение частоты РАЗРЕШАЕТ ходить чаще.
         """
-        if not 0 < factor <= 1:
-            raise ValueError(
-                f"доля ёмкости {factor} вне границ (0, 1]: множитель больше "
-                "единицы означал бы, что ограничение частоты разрешает ходить чаще"
-            )
-        for bucket in self._buckets:
-            bucket.scale(factor)
+        with self._lock:
+            if not 0 < factor <= 1:
+                raise ValueError(
+                    f"доля ёмкости {factor} вне границ (0, 1]: множитель больше "
+                    "единицы означал бы, что ограничение частоты разрешает ходить чаще"
+                )
+            for bucket in self._buckets:
+                bucket.scale(factor)
+            for account in self._accounts.values():
+                account.scale(factor)
 
     def require(
         self,
         now: float,
         cost: float = 1.0,
         request_class: RequestClass = RequestClass.INTERACTIVE,
+        *,
+        action: bool = False,
     ) -> Reservation:
         """Занимает бюджет или отказывает, если ждать пришлось бы слишком долго.
 
@@ -392,7 +548,7 @@ class Budget:
                 этом не отправляется вовсе - в этом весь смысл: ошибка означает
                 решение SDK не ходить, а не ответ площадки.
         """
-        reservation = self.reserve(now, cost, request_class)
+        reservation = self.reserve(now, cost, request_class, action=action)
         if reservation.granted:
             return reservation
 

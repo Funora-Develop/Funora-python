@@ -27,10 +27,10 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from typing import Any, Final
 
+from ._json import load_json
 from .errors import ProtocolChangedError
 
 __all__ = [
@@ -60,8 +60,7 @@ class ChannelObject:
     Attributes:
         type (str): Вид объекта, как его назвала площадка.
         id (str): Идентификатор объекта.
-        tag (str): Метка, которую надо подставить в следующий опрос. Пустая
-            строка означает, что метки в ответе не было.
+        tag (str): Непустая метка для следующего опроса.
         data (dict[str, Any]): Данные объекта как есть. Разметка внутри НЕ
             разбирается: она проходит насквозь непрозрачной строкой.
     """
@@ -102,14 +101,14 @@ class UpdatesAnswer:
         objects (tuple[ChannelObject, ...]): Изменившиеся объекты. Пусто -
             штатное состояние, а не признак поломки: канал молчит, когда молчать
             нечего.
-        error (str): Что площадка сказала об ошибке. Пустая строка означает, что
-            ошибки не было.
+        error (object | None): Поле ошибки без преобразования. Только None означает
+            отсутствие отказа; форма непустого поля не интерпретируется.
         answered_action (bool): Был ли в запросе действие. Площадка отвечает
             объектом при опросе С ДЕЙСТВИЕМ и логическим - при опросе без него.
     """
 
     objects: tuple[ChannelObject, ...]
-    error: str
+    error: object | None
     answered_action: bool
 
     @property
@@ -192,12 +191,20 @@ def build_subscription(
 UNSEEN_TAG: Final[str] = "0000000000"
 
 
+def load_runner_json(body: str) -> object:
+    """Читает JSON канала без потери полей и неконечных чисел.
+
+    Опрос и отправка делят один декодер. Ошибки ValueError/RecursionError
+    вызывающий переводит в свой исход: откат к страницам либо unconfirmed.
+    """
+    return load_json(body)
+
+
 def parse_updates_answer(body: str) -> UpdatesAnswer:
     """Разбирает тело ответа канала.
 
-    Порядок шагов тот же, что у разбора ответа на отправку, и по той же
-    причине: тело канала - одно и то же тело, и два разных порядка разбора
-    разошлись бы молча.
+    Декодер JSON общий с отправкой. Опрос дополнительно проверяет все объекты
+    подписки, прежде чем вызывающий сможет подтвердить их метки.
 
     Аргументы:
         body (str): Тело ответа.
@@ -210,8 +217,8 @@ def parse_updates_answer(body: str) -> UpdatesAnswer:
             как наблюдалось.
     """
     try:
-        parsed = json.loads(body)
-    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        parsed = load_runner_json(body)
+    except (ValueError, RecursionError) as exc:
         raise ProtocolChangedError(
             "ответ канала обновлений не разобрался как JSON. Канал отвечал JSON "
             "во всех наблюдениях; разбор чего-то иного означал бы, что мы "
@@ -234,29 +241,51 @@ def parse_updates_answer(body: str) -> UpdatesAnswer:
     # Объект при опросе С ДЕЙСТВИЕМ, логическое - без действия. Различие
     # наблюдено, и по нему же читается ошибка: у логического ошибке взяться
     # неоткуда.
-    error = ""
+    error = None
     if isinstance(answer, dict):
+        if "error" not in answer:
+            raise ProtocolChangedError("в ответе действия канала нет поля error")
         action = True
-        reported = answer.get("error")
-        error = "" if reported is None else str(reported)
-    else:
+        error = answer["error"]
+    elif isinstance(answer, bool):
         action = False
+    else:
+        raise ProtocolChangedError("поле response канала - не логическое и не объект действия")
 
     objects: list[ChannelObject] = []
+    seen: set[tuple[str, str]] = set()
     for one in raw:
         if not isinstance(one, dict):
-            continue
+            raise ProtocolChangedError("элемент objects канала - не объект")
         kind = one.get("type")
         if not isinstance(kind, str) or not kind:
-            # Объект без вида читать нечем: что в его data - неизвестно.
-            continue
+            raise ProtocolChangedError("у объекта канала нет непустого строкового type")
+        entity = one.get("id")
+        if not (type(entity) is int or isinstance(entity, str) and entity):
+            raise ProtocolChangedError("id объекта канала - не целое число и не непустая строка")
+        tag = one.get("tag")
+        if not isinstance(tag, str) or not tag:
+            raise ProtocolChangedError("у объекта канала нет непустой строковой tag")
         data = one.get("data")
+        if not isinstance(data, dict):
+            raise ProtocolChangedError("data объекта канала - не объект")
+        key = (kind, str(entity))
+        try:
+            for value in (*key, tag):
+                value.encode("utf-8")
+        except UnicodeEncodeError:
+            raise ProtocolChangedError(
+                "ключ или метка канала содержит некорректный Unicode"
+            ) from None
+        if key in seen:
+            raise ProtocolChangedError("в ответе канала повторяется объект подписки")
+        seen.add(key)
         objects.append(
             ChannelObject(
                 type=kind,
-                id=str(one.get("id", "")),
-                tag=str(one.get("tag", "")),
-                data=data if isinstance(data, dict) else {},
+                id=key[1],
+                tag=tag,
+                data=data,
             )
         )
 

@@ -139,7 +139,11 @@ def _engine() -> Engine:
     Возвращает:
         Engine: Движок.
     """
-    return Engine(TransportSettings(), Budget())
+    engine = Engine(TransportSettings(), Budget(), unsafe_sends_without_ledger=True)
+    from datetime import UTC, datetime
+
+    engine._state.outbound.note_incoming(NODE, at_ms=int(datetime.now(UTC).timestamp() * 1000))
+    return engine
 
 
 def test_no_consent_is_asked_because_nothing_here_is_borrowed() -> None:

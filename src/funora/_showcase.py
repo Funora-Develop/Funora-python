@@ -35,6 +35,7 @@ from selectolax.parser import HTMLParser, Node
 
 from ._observed import Observed
 from ._result import Completeness, Defect, Severity
+from ._stock import parse_stock_column
 from .errors import IncompleteResultError, ProtocolChangedError
 from .extraction import SELECTORS
 
@@ -79,6 +80,9 @@ class ShowcaseOffer:
         currency_symbol_text (Observed[str]): Знак валюты.
         sort_value (Observed[str]): Значение сортировки из атрибута ячейки цены.
         amount_text (Observed[str]): Остаток, если раздел его показывает.
+        stock (Observed[int]): Показанный целый остаток. Отсутствие, пустая
+            ячейка и непонятный формат остаются ненаблюдёнными с разными
+            причинами; ноль появляется только из явно показанного числа.
         server_text (Observed[str]): Сервер, если раздел его показывает.
         auto_delivery (Observed[bool]): Признак автоматической выдачи.
         row_index (int): Место строки в разделе, считая с нуля.
@@ -93,6 +97,7 @@ class ShowcaseOffer:
     server_text: Observed[str]
     auto_delivery: Observed[bool]
     row_index: int
+    stock: Observed[int] = field(default_factory=lambda: Observed.missing("stock_not_normalized"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,6 +246,7 @@ def _offer(row: Node, index: int) -> ShowcaseOffer:
         server_text=_text(row.css_first(_SERVER), "server_text"),
         auto_delivery=Observed.present(row.css_first(_AUTO_DELIVERY) is not None),
         row_index=index,
+        stock=parse_stock_column(row, _AMOUNT),
     )
 
 

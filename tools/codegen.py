@@ -1,4 +1,4 @@
-"""Генерация модулей SDK из спецификации.
+r"""Генерация модулей SDK из спецификации.
 
 Зачем это существует. В спецификации 35 ошибок и 22 возможности. Переписать их
 руками в шесть языков - гарантированное расхождение: одна реализация забудет
@@ -401,6 +401,15 @@ def render_capabilities(spec: Path) -> str:
         str: Содержимое модуля.
     """
     doc = _load(spec, "spec/capabilities.yaml")
+    expected_profile = {
+        "network": "none",
+        "evaluation_sources": ["static", "probe", "observed_failure"],
+        "invalidate_on": ["authentication_error", "protocol_changed"],
+        "invalidation_scope": "transport_lane",
+        "reset_on": "resume",
+    }
+    if doc.get("probe", {}).get("profile") != expected_profile:
+        raise SystemExit("правила профиля возможностей не поддержаны реализацией")
     states: dict[str, Any] = doc["states"]
     caps: dict[str, Any] = doc["capabilities"]
 
@@ -995,6 +1004,8 @@ def render_retry(spec: Path) -> str:
         str: Содержимое модуля.
     """
     doc = _load(spec, "spec/protocol/retry-policy.yaml")
+    if (doc.get("conformance") or {}).get("suite") != "retries":
+        raise SystemExit("spec/protocol/retry-policy.yaml: поддерживается набор retries")
 
     rule = doc.get("fail_closed_rule") or {}
     named = list(rule.get("applies_to") or [])
@@ -1305,6 +1316,58 @@ def render_budget(spec: Path) -> str:
         str: Содержимое модуля.
     """
     doc = _load(spec, "spec/runtime/budget.yaml")
+    if doc.get("waiting", {}).get("arithmetic") != "exact_decimal":
+        raise SystemExit("арифметика бюджета не поддержана реализацией")
+    admission = doc.get("admission_control", {})
+    if not isinstance(admission, dict) or set(admission) - {
+        "enabled",
+        "cost_source",
+        "dry_run",
+        "run",
+        "forecast_share",
+        "lifetime",
+        "rule",
+        "forecast",
+        "cost_note",
+    }:
+        raise SystemExit("неизвестные правила допуска наблюдений")
+    for key, expected in {
+        "enabled": True,
+        "cost_source": "adapter_capability_profile",
+        "dry_run": "monitoring.plan",
+        "run": "monitoring.watch",
+        "forecast_share": "monitoring_floor",
+        "lifetime": "watch_call",
+    }.items():
+        if admission.get(key) != expected or type(admission.get(key)) is not type(expected):
+            raise SystemExit(f"неподдерживаемое правило допуска наблюдений: {key}")
+    market = doc.get("market_watch", {})
+    if not isinstance(market, dict) or set(market) != {
+        "default_interval_ms",
+        "history_limit_default",
+        "history_overflow",
+        "consecutive_absences",
+        "revision",
+        "incomplete",
+        "cold_start",
+        "schedule",
+        "degradation",
+        "rule",
+    }:
+        raise SystemExit("неизвестный состав market_watch")
+    for key, expected in {
+        "revision": "watch_id_and_snapshot_sequence",
+        "incomplete": "keep_known_reset_absences",
+        "cold_start": "silence_until_complete_baseline",
+        "schedule": "read_start_no_catch_up",
+        "degradation": "whole_interval_missed",
+        "history_overflow": "refuse_without_advancing",
+    }.items():
+        if market.get(key) != expected:
+            raise SystemExit(f"неподдерживаемое правило market_watch: {key}")
+    for key in ("default_interval_ms", "consecutive_absences", "history_limit_default"):
+        if type(market.get(key)) is not int or market[key] < 1:
+            raise SystemExit(f"неверное число market_watch: {key}")
     buckets: dict[str, Any] = doc["buckets"]
     limits: dict[str, Any] = doc["limits"]
 
@@ -1313,7 +1376,7 @@ def render_budget(spec: Path) -> str:
         "площадки означало бы намеренно их превышать. Поэтому они подобраны\n"
         "консервативно и будут уточняться наблюдением, а не подбором.\n"
         "\n"
-        "Расходуются отправленные запросы, включая повторы и переходы по\n"
+        "Сетевые вёдра расходуют запросы, включая повторы и переходы по\n"
         "редиректам. Считать только логические операции нельзя: тогда шторм\n"
         "повторов оказывается бесплатным ровно в тот момент, когда площадке\n"
         "хуже всего.\n"
@@ -1364,6 +1427,9 @@ def render_budget(spec: Path) -> str:
         "Scheduling",
         "SCHEDULING",
         "PROVISIONAL",
+        "MARKET_INTERVAL_MS",
+        "MARKET_ABSENCES",
+        "MARKET_HISTORY_LIMIT",
     ):
         out.append(f'    "{name}",\n')
     out.append("]\n")
@@ -1373,30 +1439,34 @@ def render_budget(spec: Path) -> str:
     out.append('    """Ёмкость и скорость пополнения одного ведра.\n\n')
     out.append("    Attributes:\n")
     out.append("        name (str): Имя ведра.\n")
-    out.append("        capacity (int): Сколько запросов помещается всего.\n")
+    out.append("        capacity (int): Сколько единиц помещается всего.\n")
     out.append("        refill_per_second (float): Сколько восстанавливается за секунду.\n")
     out.append("        burst (int): Сколько можно потратить залпом.\n")
+    out.append("        unit (str): requests либо actions_per_hour для логических записей.\n")
     out.append('    """\n\n')
     out.append("    name: str\n")
     out.append("    capacity: int\n")
     out.append("    refill_per_second: float\n")
     out.append("    burst: int\n")
+    out.append('    unit: str = "requests"\n')
 
     out.append("\n\n#: Вёдра бюджета. Вложены: запрос расходует сначала общее, потом ведро\n")
     out.append("#: аккаунта. Порядок нормативен, иначе при нескольких аккаунтах в одном\n")
     out.append("#: процессе общий предел обходится.\n")
     # Ключи ведра, которые кодогенератор ЧИТАЕТ.
-    read_here = {"capacity", "refill_per_second", "burst"}
+    read_here = {"capacity", "refill_per_second", "burst", "unit"}
 
     # Ключи, объявленные и намеренно не читаемые. Каждый обязан быть назван
     # записью реестра неисполненного - иначе он «объявлен и молчит», а это в
     # проекте запрещено.
     #
     # summary - проза для человека, механизма за ней нет.
-    # unit - единица учёта ведра записи; записана как write_bucket_unit.
-    known_unread = {"summary": None, "unit": "write_bucket_unit"}
+    known_unread = {"summary": None}
 
     for name, entry in buckets.items():
+        expected_unit = "actions_per_hour" if name == "write" else "requests"
+        if entry.get("unit", "requests") != expected_unit:
+            raise SystemExit(f"spec/runtime/budget.yaml: неподдерживаемая единица ведра {name}")
         unknown = set(entry) - read_here - set(known_unread)
         if unknown:
             # Прежде такой ключ пропадал МОЛЧА. Признак unit у ведра записи
@@ -1417,6 +1487,8 @@ def render_budget(spec: Path) -> str:
         out.append(f"        capacity={entry['capacity']},\n")
         out.append(f"        refill_per_second={float(entry['refill_per_second'])},\n")
         out.append(f"        burst={entry['burst']},\n")
+        if "unit" in entry:
+            out.append(f'        unit="{entry["unit"]}",\n')
         out.append("    ),\n")
     out.append("}\n")
 
@@ -1763,6 +1835,9 @@ def render_budget(spec: Path) -> str:
     out.append("#: Снимается только тогда, когда пороги станут известны из наблюдений.\n")
     out.append("#: Измерять их намеренным превышением нельзя.\n")
     out.append(f"PROVISIONAL: Final[bool] = {bool(doc.get('provisional', True))}\n")
+    out.append(f"\nMARKET_INTERVAL_MS: Final[int] = {market['default_interval_ms']}\n")
+    out.append(f"MARKET_ABSENCES: Final[int] = {market['consecutive_absences']}\n")
+    out.append(f"MARKET_HISTORY_LIMIT: Final[int] = {market['history_limit_default']}\n")
 
     return "".join(out)
 
@@ -1777,6 +1852,22 @@ def render_events(spec: Path) -> str:
         str: Содержимое модуля.
     """
     doc = _load(spec, "spec/events/delivery.yaml")
+    pending = doc.get("pending_delivery", {})
+    expected_pending = {
+        "persist_before_handlers": True,
+        "replay_source": "stored_batch",
+        "new_reads": "after_acknowledgement",
+        "acknowledgement": "atomic_cursor_and_pending",
+        "failed_ordering_key": "block_following_events",
+        "state_owner": "exclusive_watch",
+    }
+    if (
+        not isinstance(pending, dict)
+        or pending.get("persist_before_handlers") is not True
+        or any(pending.get(key) != value for key, value in expected_pending.items())
+        or set(pending) - set(expected_pending) - {"rule", "backpressure", "ownership"}
+    ):
+        raise SystemExit("spec/events/delivery.yaml: неподдерживаемый контракт непринятой партии")
     derivation: dict[str, Any] = doc["ordering"]["derivation"]
     identity: dict[str, Any] = doc["identity"]
     dedup: dict[str, Any] = doc["deduplication"]
@@ -1892,6 +1983,8 @@ def render_events(spec: Path) -> str:
     out.append("#: совпадению: в реализации оно было литералом. Слишком малое\n")
     out.append("#: значение вытесняет запись о доставленном событии до истечения\n")
     out.append("#: срока, и событие приходит второй раз - тихо и не всегда.\n")
+    if dedup.get("eviction") != "lru":
+        raise SystemExit("spec/events/delivery.yaml: поддерживается только eviction: lru")
     out.append(f"MIN_ENTRIES_PER_KEY: Final[int] = {dedup['min_entries_per_key']}\n")
 
     out.append("\n#: Сколько хранится запись о доставленном событии, миллисекунды.\n")
@@ -2014,6 +2107,24 @@ def render_contract(spec: Path) -> str:
         SystemExit: Если в файле версии незнакомый ключ.
     """
     doc = _load(spec, "spec/version.yaml")
+    cursor = _load(spec, "spec/types.yaml")["types"]["cursor"]["encoding"]
+    expected_cursor = {
+        "format_version": 2,
+        "accepted_format_versions": [1, 2],
+        "max_token_bytes": 16384,
+        "alphabet": "base64url_unpadded",
+        "envelope": "canonical_json",
+        "owner_and_position": "base64url_utf8",
+        "scope": "base64url_utf8_or_null",
+        "kinds": ["chats.history_before", "reviews.get"],
+    }
+    if (
+        cursor != expected_cursor
+        or type(cursor["format_version"]) is not int
+        or any(type(version) is not int for version in cursor["accepted_format_versions"])
+        or type(cursor["max_token_bytes"]) is not int
+    ):
+        raise SystemExit("формат курсора не поддержан реализацией")
 
     known = {
         "spec_version",
@@ -2065,6 +2176,9 @@ def render_contract(spec: Path) -> str:
         "__all__ = [\n"
         '    "SPEC_VERSION",\n'
         '    "SPEC_STATUS",\n'
+        '    "CURSOR_FORMAT_VERSION",\n'
+        '    "ACCEPTED_CURSOR_FORMAT_VERSIONS",\n'
+        '    "MAX_CURSOR_BYTES",\n'
         '    "CANONICAL_FORM_VERSION",\n'
         '    "RUNNER_PROTOCOL",\n'
         '    "SUPPORTED_LOCALES",\n'
@@ -2088,6 +2202,14 @@ def render_contract(spec: Path) -> str:
     out.append("#: может сериализоваться по-новому, и это ломает сохранённые\n")
     out.append("#: отпечатки и ключи гашения повторов.\n")
     out.append(f"CANONICAL_FORM_VERSION: Final[int] = {doc['canonical_form_version']}\n")
+
+    out.append("\n#: Формат и предельный размер переносимого курсора пагинации.\n")
+    out.append(f"CURSOR_FORMAT_VERSION: Final[int] = {cursor['format_version']}\n")
+    out.append(
+        "ACCEPTED_CURSOR_FORMAT_VERSIONS: Final[frozenset[int]] = "
+        f"frozenset({cursor['accepted_format_versions']!r})\n"
+    )
+    out.append(f"MAX_CURSOR_BYTES: Final[int] = {cursor['max_token_bytes']}\n")
 
     out.append("\n#: Версия протокола запуска набора соответствия.\n")
     out.append(f"RUNNER_PROTOCOL: Final[int] = {doc['runner_protocol']}\n")
@@ -2296,17 +2418,62 @@ def render_operations(spec: Path) -> str:
     out.append('    request_provenance: str = ""\n')
     out.append('    provenance_source: str = ""\n')
     out.append('    provenance_rests_on: str = ""\n')
+    out.append("    cache_ttl_ms: int = 0\n")
+    out.append('    transport_lane: str = "authenticated"\n')
+    out.append("    cost_hint: int = 0\n")
+    out.append("    cache_invalidate_on: tuple[str, ...] = ()\n")
 
     out.append("\n\n#: Операции служб по идентификатору.\n")
     out.append("OPERATIONS: Final[dict[str, Operation]] = {\n")
     for name in sorted(operations):
         body = operations[name]
+        lane = body.get("transport_lane", "authenticated")
+        cost = body.get("cost_hint", 0)
+        if type(cost) is not int or cost < 0 or (name == "market.snapshot" and cost != 1):
+            raise SystemExit(f"{name}: неподдерживаемый cost_hint")
+        expected_lane = (
+            "public_read"
+            if name in {"market.offers", "market.snapshot", "chips.offers", "catalog.search"}
+            else "authenticated"
+        )
+        if lane != expected_lane or (lane == "public_read" and body["safety"] != "safe"):
+            raise SystemExit(f"spec/services: неподдерживаемая транспортная полоса {name}: {lane}")
+        expected_governor = (
+            "outbound_message" if name in {"chats.send_text", "chats.send_image"} else None
+        )
+        if body.get("governor") != expected_governor:
+            raise SystemExit(f"spec/services: неподдерживаемый ограничитель отправки {name}")
+        if name == "market.snapshot" and body.get("completeness_required") is not True:
+            raise SystemExit("spec/services: market.snapshot обязан сохранять полноту чтения")
+        cache = body.get("cacheable")
+        if cache is not None:
+            if name != "catalog.categories" or set(cache) - {"ttl_ms", "invalidate_on", "notes"}:
+                raise SystemExit(f"spec/services: неподдерживаемое правило кэша {name}")
+            if type(cache.get("ttl_ms")) is not int or cache["ttl_ms"] <= 0:
+                raise SystemExit(f"spec/services: {name} требует положительный ttl_ms")
+            if set(cache.get("invalidate_on", [])) != {
+                "adapter_version_change",
+                "protocol_changed",
+                "session_change",
+            }:
+                raise SystemExit(f"spec/services: неподдерживаемая инвалидация кэша {name}")
         out.append(f'    "{name}": Operation(\n')
         out.append(f'        name="{name}",\n')
         out.append(f'        capability="{body["capability"]}",\n')
         out.append(f"        safety=Safety.{body['safety'].upper()},\n")
         out.append(f'        request_class="{body["request_class"]}",\n')
         out.append(f'        returns="{body["returns"]}",\n')
+        if lane != "authenticated":
+            out.append(f'        transport_lane="{lane}",\n')
+        if cost:
+            out.append(f"        cost_hint={cost},\n")
+        if cache is not None:
+            out.append(f"        cache_ttl_ms={cache['ttl_ms']},\n")
+            out.append(
+                "        cache_invalidate_on=("
+                + ", ".join(json.dumps(value) for value in cache["invalidate_on"])
+                + "),\n"
+            )
         # Пустой перечень и отсутствующий - разные вещи. Пустой говорит «эта
         # операция не отказывает», и это утверждение, за которое отвечают.
         # Отсутствующий не говорит ничего, и вызывающему нечего выписать в
@@ -2771,6 +2938,9 @@ def render_extraction(spec: Path) -> str:
         "ROW_MARKER_BY_STATUS",
         "PRESENCE_BY_CLASS",
         "CURRENCY_BY_SYMBOL",
+        "MONEY_MIN_MINOR",
+        "MONEY_MAX_MINOR",
+        "MONEY_MAX_SCALE",
         "AMBIGUOUS_CURRENCY_SYMBOLS",
         "ATTRIBUTES",
         "QUERY_PARAMS",
@@ -2904,6 +3074,41 @@ def render_extraction(spec: Path) -> str:
 
     # --- Знак валюты и её код ------------------------------------------------
     money = _load(spec, "spec/types.yaml")["types"]["money"]
+    props = money["properties"]
+    amount, scale = props["amount_minor"], props["scale"]
+    if (
+        any(
+            type(value) is not int
+            for value in (
+                amount.get("minimum"),
+                amount.get("maximum"),
+                scale.get("minimum"),
+                scale.get("maximum"),
+            )
+        )
+        or amount.get("format") != "int64"
+        or amount.get("minimum") != -(2**63)
+        or amount.get("maximum") != 2**63 - 1
+        or scale.get("minimum") != 0
+        or scale.get("maximum") != 6
+        or type(scale.get("maximum")) is not int
+    ):
+        raise SystemExit("spec/types.yaml: неподдерживаемые границы Money")
+    display = money.get("market_display", {})
+    expected = {
+        "scale": 6,
+        "decimal_separator": ".",
+        "grouping_separator": " ",
+        "source": "displayed_text",
+    }
+    if (
+        type(display.get("scale")) is not int
+        or {key: display.get(key) for key in expected} != expected
+    ):
+        raise SystemExit("spec/types.yaml: неподдерживаемый формат цены рынка")
+    out.append(f"MONEY_MIN_MINOR: Final[int] = {amount['minimum']}\n")
+    out.append(f"MONEY_MAX_MINOR: Final[int] = {amount['maximum']}\n")
+    out.append(f"MONEY_MAX_SCALE: Final[int] = {scale['maximum']}\n")
     table = money.get("symbol_table") or {}
     if not table:
         raise SystemExit(

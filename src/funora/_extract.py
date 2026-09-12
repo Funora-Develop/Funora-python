@@ -22,7 +22,15 @@ from selectolax.parser import HTMLParser, Node
 from ._observed import Observed, Presence
 from .extraction import ATTRIBUTES, SELECTORS
 
-__all__ = ["attribute"]
+__all__ = ["attribute", "text"]
+
+
+def text(node: Node | None, field_name: str) -> Observed[str]:
+    """Читает подпись, различая отсутствие узла и пустой текст."""
+    if node is None:
+        return Observed.missing(f"selector_no_match:{field_name}")
+    value = " ".join((node.text() or "").split())
+    return Observed.present(value) if value else Observed.empty("")
 
 
 def attribute(node: Node | None, name: str, field_name: str) -> Observed[str]:

@@ -1,0 +1,12 @@
+{
+  "captured_at": "2026-09-07",
+  "captured_by": "read-only anonymous HTTP observation; funora._skeleton.skeletonize",
+  "format": "structural-skeleton-v9",
+  "http_status": 200,
+  "locale": "ru",
+  "path": "/games/promoFilter",
+  "authentication": "guest",
+  "note": "HTML из публичного JSON поиска: 2 группы, 4 карточки, 4 игры, 31 раздел. Наблюдены POST с полем query и пустой ответ {\"html\":\"\"}. Тексты и идентификаторы обезличены; сырой ответ в репозиторий не включён.",
+  "captured_format": "structural-skeleton-v9",
+  "converted": false
+}

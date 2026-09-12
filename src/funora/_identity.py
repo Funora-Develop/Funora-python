@@ -27,11 +27,13 @@ from __future__ import annotations
 import logging
 import threading
 from dataclasses import dataclass, field
+from fractions import Fraction
 from time import monotonic
 from typing import Final
 
-from ._budget import Budget
+from ._budget import Budget, _exact
 from .budget import RATE_LIMIT_RESPONSE, RequestClass
+from .retry import RETRY_POLICIES
 
 __all__ = ["Identity", "IdentityRegistry", "REGISTRY", "identity_of"]
 
@@ -77,10 +79,10 @@ class Identity:
 
     name: str
     budget: Budget = field(default_factory=Budget)
-    capacity_factor: float = 1.0
-    cooldown_until: float = 0.0
+    capacity_factor: float | Fraction = 1.0
+    cooldown_until: float | Fraction = 0.0
     limits_seen: int = 0
-    window_started_at: float = 0.0
+    window_started_at: float | Fraction | None = None
     successes: int = 0
 
     def is_cooling(self, now: float) -> bool:
@@ -92,7 +94,7 @@ class Identity:
         Returns:
             bool: True, если пользоваться ею пока нельзя.
         """
-        return now < self.cooldown_until
+        return _exact(now) < _exact(self.cooldown_until)
 
     def note_limit(self, now: float, *, retry_after_ms: int | None = None) -> None:
         """Учитывает полученное ограничение частоты.
@@ -115,15 +117,19 @@ class Identity:
             None
         """
         window_ms = RATE_LIMIT_RESPONSE.window_ms
-        if self.window_started_at == 0.0 or (now - self.window_started_at) * 1000 > window_ms:
-            self.window_started_at = now
+        moment = _exact(now)
+        if (
+            self.window_started_at is None
+            or (moment - _exact(self.window_started_at)) * 1000 > window_ms
+        ):
+            self.window_started_at = moment
             self.limits_seen = 0
 
         self.limits_seen += 1
         self.successes = 0
         self.capacity_factor = max(
-            RATE_LIMIT_RESPONSE.min_capacity_factor,
-            self.capacity_factor * RATE_LIMIT_RESPONSE.capacity_multiplier,
+            _exact(RATE_LIMIT_RESPONSE.min_capacity_factor),
+            _exact(self.capacity_factor) * _exact(RATE_LIMIT_RESPONSE.capacity_multiplier),
         )
         # Дольшее из двух: собственное остывание и просьба площадки.
         #
@@ -136,8 +142,11 @@ class Identity:
         # ограничение и переходит в блокировку.
         cooldown_ms = RATE_LIMIT_RESPONSE.cooldown_ms * self.limits_seen
         if retry_after_ms is not None:
-            cooldown_ms = max(cooldown_ms, retry_after_ms)
-        self.cooldown_until = now + cooldown_ms / 1000
+            # Заголовок ограничен и для общей паузы, иначе предел политики
+            # повтора обходится вторым ожиданием перед следующим запросом.
+            limit = RETRY_POLICIES["funora.transport.rate_limited"].max_retry_after_ms
+            cooldown_ms = max(cooldown_ms, min(max(0, retry_after_ms), limit))
+        self.cooldown_until = moment + Fraction(cooldown_ms, 1000)
         self.budget.scale(self.capacity_factor)
 
         # Вторая ступень. Классы monitoring и automation снимаются с очереди до
@@ -180,7 +189,8 @@ class Identity:
 
         self.successes = 0
         self.capacity_factor = min(
-            1.0, self.capacity_factor * RATE_LIMIT_RESPONSE.recovery_multiplier
+            Fraction(1),
+            _exact(self.capacity_factor) * _exact(RATE_LIMIT_RESPONSE.recovery_multiplier),
         )
         self.budget.scale(self.capacity_factor)
         _log.info(

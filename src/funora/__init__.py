@@ -46,11 +46,13 @@ from ._diff import (
     orders_cursor,
     thread_cursor,
 )
+from ._field_schema import FieldDefinition, FieldOption, FieldSchema
 from ._gate import check_capability
 from ._host import host_of, is_safe_hop, same_host
 from ._lot_form import LotForm, parse_lot_form
 from ._market import MarketOffer, MarketPage
 from ._money import CURRENCY_BY_SYMBOL, Money, currency_of_symbol
+from ._monitoring import MarketWatch, MonitoringLimit, MonitoringPlan
 from ._observed import Confidence, Observed, Presence
 from ._order import OrderParam, OrderView
 from ._order_details import OrderDetails, OrderDetailsBatch
@@ -69,7 +71,7 @@ from ._raise import RaiseResult
 from ._refund import RefundResult
 from ._retry import Attempt, Safety, plan_attempt, policy_for
 from ._review_write import ReviewResult
-from ._reviews import Review, ReviewsPage
+from ._reviews import Review, ReviewsCursor, ReviewsPage
 from ._runner import SendResult
 from ._secret import (
     CallableSecretProvider,
@@ -95,7 +97,7 @@ from ._updates import (
 from ._verdicts import error_for
 from ._viewing import BuyerViewing
 from ._watch import Router, StepResult, adispatch, dispatch
-from ._whoami import Account, CapabilityProfile, SessionHealth
+from ._whoami import Account, CapabilityEvaluation, CapabilityProfile, SessionHealth
 from .capabilities import CAPABILITY_INITIAL, Capability, CapabilityState
 from .errors import ERROR_BY_ABI_CODE, ERROR_BY_STABLE_ID, FunoraError
 from .events import EventType
@@ -106,9 +108,15 @@ from .extraction import (
     OrderStatus,
 )
 
-__version__ = "0.0.1.dev0"
+__version__ = "0.0.1.dev2"
 
 __all__ = [
+    "MarketWatch",
+    "MonitoringPlan",
+    "MonitoringLimit",
+    "FieldDefinition",
+    "FieldOption",
+    "FieldSchema",
     "__version__",
     # клиент
     "Client",
@@ -188,11 +196,13 @@ __all__ = [
     "Account",
     "SessionHealth",
     "CapabilityProfile",
+    "CapabilityEvaluation",
     "BalancePage",
     "WithdrawalChannel",
     "WithdrawalOption",
     "Transaction",
     "ReviewsPage",
+    "ReviewsCursor",
     "Review",
     "OwnLotsPage",
     "CurrencySwitch",

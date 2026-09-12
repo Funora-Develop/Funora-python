@@ -26,6 +26,9 @@ __all__ = [
     "ROW_MARKER_BY_STATUS",
     "PRESENCE_BY_CLASS",
     "CURRENCY_BY_SYMBOL",
+    "MONEY_MIN_MINOR",
+    "MONEY_MAX_MINOR",
+    "MONEY_MAX_SCALE",
     "AMBIGUOUS_CURRENCY_SYMBOLS",
     "ATTRIBUTES",
     "QUERY_PARAMS",
@@ -111,6 +114,7 @@ SELECTORS: Final[dict[str, str]] = {
     "catalog.field_schema.fields": ".lot-field",
     "catalog.field_schema.input": ".lot-field-input",
     "catalog.field_schema.kinds.choice": ".lot-field-radio-box",
+    "catalog.field_schema.kinds.choice.options": "button",
     "catalog.field_schema.kinds.range": ".lot-field-range-box",
     "catalog.field_schema.label": ".control-label",
     "catalog.game.card": ".promo-games-all .promo-game-item",
@@ -122,6 +126,8 @@ SELECTORS: Final[dict[str, str]] = {
     "catalog.lists.favourites": "div.promo-games.promo-games-fav",
     "catalog.lists.letter_groups": ".promo-games-all .promo-game-list > .promo-game-list-title",
     "catalog.search.form": "form.promo-games-filter",
+    "catalog.search.letter_groups": ".promo-games .promo-game-list-header",
+    "catalog.search.response": "body > div.promo-games",
     "catalog.sections.link": ".promo-game-item > ul.list-inline > li > a",
     "catalog.sections.list": ".promo-game-item > ul.list-inline",
     "catalog.sections.list.within_card": "ul.list-inline",
@@ -152,9 +158,11 @@ SELECTORS: Final[dict[str, str]] = {
     "chips.numeric_carriers.amount": "div.tc-amount[data-s]",
     "chips.numeric_carriers.price": "div.tc-price[data-s]",
     "chips.rows": "a.tc-item",
+    "lot-edit.fields.amount": '[name="amount"]',
     "lot-edit.fields.currency_symbol": ".form-control-feedback",
     "lot-edit.form": "form.form-offer-editor",
     "lots.controls.raise_button": "button.js-lot-raise",
+    "lots.fields.amount_text": ".tc-amount",
     "lots.fields.currency_symbol_text": ".tc-price .unit",
     "lots.fields.description_text": ".tc-desc-text",
     "lots.fields.price_cell": ".tc-price",
@@ -207,6 +215,7 @@ SELECTORS: Final[dict[str, str]] = {
     "orders.filters.form": "form.orders-filter",
     "orders.row": "a.tc-item",
     "orders.rows_container": ".dyn-table-body",
+    "reviews.empty_filtered": "div.param-item + p.pb20",
     "reviews.fields.author_href": ".media-user-name a",
     "reviews.fields.author_name": ".media-user-name a",
     "reviews.fields.author_photo_href": ".review-item-photo a",
@@ -218,6 +227,9 @@ SELECTORS: Final[dict[str, str]] = {
     "reviews.filter": ".reviews-filter",
     "reviews.filter.endpoint": 'form[action$="/users/reviews"]',
     "reviews.pagination.continue_button": "button.dyn-table-continue",
+    "reviews.pagination.fields.continue": 'form.dyn-table-form input[name="continue"]',
+    "reviews.pagination.fields.filter": 'form.dyn-table-form input[name="filter"]',
+    "reviews.pagination.fields.user_id": 'form.dyn-table-form input[name="user_id"]',
     "reviews.pagination.form": "form.dyn-table-form",
     "reviews.row": ".review-item",
     "reviews.row.wrapper": ".review-container",
@@ -340,6 +352,7 @@ SELECTOR_GROUPS: Final[dict[str, tuple[str, ...]]] = {
     ),
     "orders.fields.status.carriers": (".tc-status",),
     "session.content_markers": (
+        ".review-container",
         ".navbar-toggle-logged",
         ".orders-table",
         ".chat-contacts",
@@ -380,6 +393,9 @@ SELECTOR_GROUPS: Final[dict[str, tuple[str, ...]]] = {
         ".param-item.chat-panel",
     ),
 }
+MONEY_MIN_MINOR: Final[int] = -9223372036854775808
+MONEY_MAX_MINOR: Final[int] = 9223372036854775807
+MONEY_MAX_SCALE: Final[int] = 6
 
 
 #: Код валюты по знаку, которым площадка выводит цену.

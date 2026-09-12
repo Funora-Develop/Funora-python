@@ -88,6 +88,7 @@ markdown_extensions:
 
 nav:
   - Введение: index.md
+  - Тестовый pre-alpha: pre-alpha.md
   - Начало работы:
       - guide/install.md
       - guide/secret.md
@@ -97,6 +98,7 @@ nav:
       - guide/observed.md
       - guide/errors.md
   - Операции:
+      - guide/catalog.md
       - guide/orders.md
       - guide/chats.md
       - guide/sending.md
@@ -109,6 +111,8 @@ nav:
       - guide/budget.md
       - guide/async.md
   - Внутреннее устройство:
+      - completeness.md
+      - validation.md
       - architecture.md
       - observations.md
       - observing.md

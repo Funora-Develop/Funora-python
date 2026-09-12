@@ -48,6 +48,7 @@ from dataclasses import dataclass
 from typing import Final
 
 from .errors import CurrencyMismatchError, ValidationError
+from .extraction import CURRENCY_BY_SYMBOL, MONEY_MAX_MINOR, MONEY_MAX_SCALE, MONEY_MIN_MINOR
 
 __all__ = ["Money", "CURRENCY_BY_SYMBOL", "currency_of_symbol"]
 
@@ -60,11 +61,6 @@ __all__ = ["Money", "CURRENCY_BY_SYMBOL", "currency_of_symbol"]
 #: Замкнутость - не украшение: именно она отличает эту таблицу от выдумки.
 #: Знак доллара носят полтора десятка валют мира, и выбор среди них наугад был
 #: бы гаданием. Выбор среди ТРЁХ объявленных площадкой - чтение.
-CURRENCY_BY_SYMBOL: Final[dict[str, str]] = {
-    "\u20bd": "RUB",
-    "$": "USD",
-    "\u20ac": "EUR",
-}
 
 
 def currency_of_symbol(symbol: str) -> str:
@@ -109,10 +105,10 @@ class Money:
     площадка.
 
     Attributes:
-        amount_minor (int): Сумма в минорных единицах. Знак допустим: возвраты
+        amount_minor (int): Сумма в минорных единицах, в границах int64. Знак допустим: возвраты
             и корректировки бывают отрицательными.
         currency (str): Код валюты по ISO 4217, три заглавные латинские буквы.
-        scale (int): Сколько минорных единиц в мажорной, степенью десяти.
+        scale (int): Степень десяти от 0 до 6 для перевода в минорные единицы.
             Двойка означает копейки: 123410 при scale 2 это 1234.10.
     """
 
@@ -127,10 +123,10 @@ class Money:
             None
 
         Raises:
-            ValidationError: Если код валюты не по ISO 4217, разрядность
-                отрицательна либо сумма не целая.
+            ValidationError: Если код валюты неверен, сумма не целая либо
+                выходит за int64, разрядность не целая или вне диапазона 0-6.
         """
-        if not _CURRENCY.match(self.currency):
+        if not isinstance(self.currency, str) or not _CURRENCY.fullmatch(self.currency):
             raise ValidationError(
                 f"код валюты {self.currency!r} не по ISO 4217: нужны ровно три "
                 "заглавные латинские буквы. Символ валюты кодом не является - "
@@ -142,8 +138,10 @@ class Money:
                 "определению, а дробное представление не воспроизводится одинаково "
                 "в разных языках"
             )
-        if self.scale < 0:
-            raise ValidationError(f"разрядность {self.scale} отрицательна")
+        if not MONEY_MIN_MINOR <= self.amount_minor <= MONEY_MAX_MINOR:
+            raise ValidationError("сумма выходит за границы int64")
+        if type(self.scale) is not int or not 0 <= self.scale <= MONEY_MAX_SCALE:
+            raise ValidationError(f"разрядность должна быть целым числом от 0 до {MONEY_MAX_SCALE}")
 
     def _same_kind(self, other: Money) -> None:
         """Проверяет, что суммы одного рода.
@@ -265,3 +263,17 @@ class Money:
         units, minor = divmod(abs(self.amount_minor), 10**self.scale)
         sign = "-" if self.amount_minor < 0 else ""
         return f"{sign}{units}.{minor:0{self.scale}d} {self.currency}"
+
+
+_DISPLAY_PRICE: Final[re.Pattern[str]] = re.compile(
+    rf"(?:[0-9]+|[1-9][0-9]{{0,2}}(?: [0-9]{{3}})+)(?:\.[0-9]{{1,{MONEY_MAX_SCALE}}})?"
+)
+
+
+def parse_display_price(text: str, symbol: str) -> Money:
+    """Нормализует наблюдённую цену рынка в scale 6, без float и округления."""
+    if len(text) > 128 or _DISPLAY_PRICE.fullmatch(text) is None:
+        raise ValidationError("неподдерживаемый формат показанной цены")
+    units, _, fraction = text.replace(" ", "").partition(".")
+    amount = int(units) * 10**MONEY_MAX_SCALE + int(fraction.ljust(MONEY_MAX_SCALE, "0"))
+    return Money(amount, currency_of_symbol(symbol), MONEY_MAX_SCALE)

@@ -21,6 +21,9 @@ from typing import Final
 __all__ = [
     "SPEC_VERSION",
     "SPEC_STATUS",
+    "CURSOR_FORMAT_VERSION",
+    "ACCEPTED_CURSOR_FORMAT_VERSIONS",
+    "MAX_CURSOR_BYTES",
     "CANONICAL_FORM_VERSION",
     "RUNNER_PROTOCOL",
     "SUPPORTED_LOCALES",
@@ -28,7 +31,7 @@ __all__ = [
 ]
 
 #: Версия спецификации, которую реализует пакет.
-SPEC_VERSION: Final[str] = "0.45.0"
+SPEC_VERSION: Final[str] = "0.64.0"
 
 #: Состояние спецификации: draft либо released.
 #:
@@ -43,6 +46,11 @@ SPEC_STATUS: Final[str] = "draft"
 #: может сериализоваться по-новому, и это ломает сохранённые
 #: отпечатки и ключи гашения повторов.
 CANONICAL_FORM_VERSION: Final[int] = 3
+
+#: Формат и предельный размер переносимого курсора пагинации.
+CURSOR_FORMAT_VERSION: Final[int] = 2
+ACCEPTED_CURSOR_FORMAT_VERSIONS: Final[frozenset[int]] = frozenset([1, 2])
+MAX_CURSOR_BYTES: Final[int] = 16384
 
 #: Версия протокола запуска набора соответствия.
 RUNNER_PROTOCOL: Final[int] = 1

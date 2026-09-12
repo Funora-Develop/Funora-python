@@ -1,0 +1,14 @@
+{
+  "captured_at": "2026-09-08T22:09:02+00:00",
+  "captured_by": "anonymous SDK Fetcher.submit; funora._skeleton.skeletonize",
+  "captured_format": "structural-skeleton-v9",
+  "format": "structural-skeleton-v9",
+  "converted": false,
+  "http_status": 200,
+  "locale": "ru",
+  "path": "/users/reviews",
+  "authentication": "guest",
+  "request_filter": 1,
+  "request_continue": false,
+  "note": "Анонимный HTTP-ответ формы чтения отзывов. Значения и тексты обезличены; HTML и идентификаторы не сохранялись."
+}

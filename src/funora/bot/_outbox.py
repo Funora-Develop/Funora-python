@@ -19,11 +19,10 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from queue import Empty, Queue
+from queue import Empty, Full, Queue
 from typing import Final
 
 from .._runner import SendResult
-from ..errors import FunoraError
 
 __all__ = ["SendCommand", "SendTicket", "Outbox"]
 
@@ -75,7 +74,7 @@ class SendTicket:
     command: SendCommand
     _done: threading.Event = field(default_factory=threading.Event)
     _result: SendResult | None = None
-    _error: FunoraError | None = None
+    _error: Exception | None = None
     _duplicate: bool = False
 
     @property
@@ -91,7 +90,7 @@ class SendTicket:
         self,
         *,
         result: SendResult | None = None,
-        error: FunoraError | None = None,
+        error: Exception | None = None,
         duplicate: bool = False,
     ) -> None:
         """Закрывает квитанцию.
@@ -198,21 +197,14 @@ class Outbox:
                 # бы своей отбраковки только у исполнителя.
                 ticket.settle(duplicate=True)
                 return ticket
+            try:
+                self._queue.put_nowait(ticket)
+            except Full as exc:
+                raise UsageError(
+                    f"очередь исходящих переполнена: {self._queue.maxsize} заданий ждут отправки"
+                ) from exc
             self._seen.add(command.idempotency_key)
 
-        try:
-            self._queue.put_nowait(ticket)
-        except Exception as exc:  # noqa: BLE001 - очередь бросает голый Full
-            with self._lock:
-                # Ключ снимается обратно: задание не принято, и запрещать его
-                # навсегда было бы наказанием за нашу же переполненность.
-                self._seen.discard(command.idempotency_key)
-            raise UsageError(
-                f"очередь исходящих переполнена: {self._queue.maxsize} заданий ждут "
-                "отправки. Наблюдение разбирает её по нескольку за шаг, и класть "
-                "быстрее, чем она вычерпывается, значит копить сообщения, которые "
-                "уйдут с опозданием на часы"
-            ) from exc
         return ticket
 
     def take(self, limit: int) -> list[SendTicket]:
@@ -238,7 +230,18 @@ class Outbox:
         Returns:
             None
         """
-        self._owner = threading.get_ident()
+        from ..errors import UsageError
+
+        with self._lock:
+            if self._owner is not None:
+                raise UsageError("очередь уже принадлежит запущенному циклу бота")
+            self._owner = threading.get_ident()
+
+    def release(self) -> None:
+        """Снимает владение после выхода из цикла."""
+        with self._lock:
+            if self._owner == threading.get_ident():
+                self._owner = None
 
     def is_owner(self) -> bool:
         """Сообщает, тот ли это поток, что разбирает очередь.

@@ -1,12 +1,20 @@
 # Установка
 
-## Чего ещё нет
+## Тестовая сборка
 
-Пакета на PyPI нет: `pip install funora` установит не то, что вы ищете. Пока
-ставится из исходников.
+Версия `0.0.1.dev2` доступна на [PyPI](https://pypi.org/project/funora/0.0.1.dev2/).
+В активированном виртуальном окружении:
 
 ```bash
-git clone https://github.com/Funora-Develop/Funora-python.git
+python -m pip install "funora==0.0.1.dev2"
+```
+
+Ограничения тестовой версии описаны в [заметке о выпуске](../pre-alpha.md).
+
+Для работы с исходниками используйте тот же тег:
+
+```bash
+git clone --branch v0.0.1.dev2 https://github.com/Funora-Develop/Funora-python.git
 cd Funora-python
 python -m venv .venv
 .venv/Scripts/python.exe -m pip install -e ".[dev]"
@@ -55,3 +63,30 @@ print(funora.__version__)
 .venv/Scripts/python.exe -m pip install -e ".[docs]"
 .venv/Scripts/python.exe -m mkdocs serve
 ```
+
+
+## Проверки и сборка пакета
+
+Следующие команды относятся к версии `0.0.1.dev2`.
+
+Для полного прогона нужна соседняя рабочая копия `Funora-spec` версии `0.64.0`.
+CI закреплён на ревизии `fa83fa17d548524815d42be74d24dc6100af9e66`.
+Укажите корень спецификации через `FUNORA_SPEC_DIR`. В корне этой копии
+выполните `npm ci`: полный набор использует зависимости раннера conformance.
+
+```bash
+python -m pip install -e ".[dev,docs]" build twine
+python -m pytest -q --cov=funora --cov-fail-under=100
+python tools/codegen.py --check
+python -m mkdocs build --strict
+python -m build
+python -m twine check dist/*
+python tools/check_distribution.py dist
+```
+
+Последняя команда устанавливает wheel и sdist в отдельные временные окружения и
+проверяет импорт публичного API и CLI вне дерева исходников. Перед публикацией
+CI также требует совпадения тега `v<версия>` с `pyproject.toml` и
+`funora.__version__`. Сборка выпуска выполняется только после полного набора CI.
+После проверок тег разрешает публикацию в PyPI, включая версии `.dev`.
+Новые теги выпуска создаются на крупных этапах; обычные коммиты и PR не публикуются.

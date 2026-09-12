@@ -11,7 +11,13 @@ import pytest
 
 from funora._classify import ResponseClass, Verdict
 from funora._result import Severity
-from funora._whoami import CapabilityProfile, SessionHealth, parse_account, parse_app_data
+from funora._whoami import (
+    CapabilityEvaluation,
+    CapabilityProfile,
+    SessionHealth,
+    parse_account,
+    parse_app_data,
+)
 from funora.capabilities import Capability, CapabilityState
 from funora.errors import ProtocolChangedError
 
@@ -159,7 +165,10 @@ def test_the_profile_names_every_capability_of_the_contract() -> None:
         None
     """
     profile = CapabilityProfile(
-        observed_at=WHEN, _states={one: CapabilityState.UNKNOWN for one in Capability}
+        observed_at=WHEN,
+        _evaluations={
+            one: CapabilityEvaluation(CapabilityState.UNKNOWN, WHEN, "static") for one in Capability
+        },
     )
     states = profile.states()
 
@@ -182,7 +191,7 @@ def test_the_profile_refuses_to_invent_a_missing_capability() -> None:
     Возвращает:
         None
     """
-    partial = CapabilityProfile(observed_at=WHEN, _states={})
+    partial = CapabilityProfile(observed_at=WHEN, _evaluations={})
     with pytest.raises(KeyError):
         partial.state_of(Capability.ORDERS_LIST)
 

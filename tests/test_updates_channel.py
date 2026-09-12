@@ -52,7 +52,7 @@ def test_a_quiet_channel_is_a_normal_state() -> None:
 
     assert answer.is_quiet is True
     assert answer.objects == ()
-    assert answer.error == ""
+    assert answer.error is None
 
 
 def test_the_numbers_come_as_numbers() -> None:
@@ -122,15 +122,11 @@ def test_the_tags_are_collected_for_the_next_poll() -> None:
             [
                 {"type": "chat_node", "id": "1", "tag": "aaa", "data": {}},
                 {"type": "chat_node", "id": "2", "tag": "bbb", "data": {}},
-                {"type": "chat_node", "id": "3", "tag": "", "data": {}},
             ]
         )
     )
 
-    assert answer.tags() == {("chat_node", "1"): "aaa", ("chat_node", "2"): "bbb"}, (
-        "метка без значения попала в перечень: подставленная пустой, она "
-        "означала бы не то, что означает выдуманная"
-    )
+    assert answer.tags() == {("chat_node", "1"): "aaa", ("chat_node", "2"): "bbb"}
 
 
 def test_the_tags_of_silent_objects_are_carried_forward() -> None:
@@ -208,14 +204,14 @@ def test_an_error_is_read_only_from_an_action_answer() -> None:
     """
     plain = parse_updates_answer(_answer([], response=False))
     assert plain.answered_action is False
-    assert plain.error == ""
+    assert plain.error is None
 
     acted = parse_updates_answer(_answer([], response={"error": "нельзя"}))
     assert acted.answered_action is True
     assert acted.error == "нельзя"
 
     fine = parse_updates_answer(_answer([], response={"error": None}))
-    assert fine.error == "", "пустая ошибка прочитана как ошибка"
+    assert fine.error is None, "пустая ошибка прочитана как ошибка"
 
 
 @pytest.mark.parametrize(
@@ -238,18 +234,17 @@ def test_a_body_of_another_shape_is_a_protocol_change(body: str) -> None:
         parse_updates_answer(body)
 
 
-def test_an_object_without_a_kind_is_skipped() -> None:
-    """Требует пропускать объект без вида.
-
-    Что лежит в его data - неизвестно, и читать это нечем.
-
-    Возвращает:
-        None
-    """
-    answer = parse_updates_answer(
-        _answer([{"id": "1", "tag": "t", "data": {"buyer": 1}}, {"type": "ok", "id": "2"}])
-    )
-    assert [one.type for one in answer.objects] == ["ok"]
+def test_an_object_without_a_kind_is_not_silently_discarded() -> None:
+    """Повреждение не разрешает принять метки соседей или объявить тишину."""
+    with pytest.raises(ProtocolChangedError):
+        parse_updates_answer(
+            _answer(
+                [
+                    {"id": "1", "tag": "t", "data": {"buyer": 1}},
+                    {"type": "ok", "id": "2", "tag": "new", "data": {}},
+                ]
+            )
+        )
 
 
 def test_the_subscription_is_cut_into_portions_of_ten() -> None:

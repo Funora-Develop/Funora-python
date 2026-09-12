@@ -57,7 +57,7 @@ from ._extract import attribute
 from ._money import Money
 from ._observed import Confidence, Observed
 from ._result import Completeness, Defect, Severity, collect_rows
-from .errors import IncompleteResultError, ProtocolChangedError
+from .errors import IncompleteResultError, ProtocolChangedError, ValidationError
 from .extraction import (
     AMBIGUOUS_CURRENCY_SYMBOLS,
     CURRENCY_BY_SYMBOL,
@@ -77,6 +77,44 @@ __all__ = [
     "OrdersPage",
     "parse_orders_page",
 ]
+
+
+def normalize_order_filters(
+    *,
+    order_id: str | None = None,
+    buyer: str | None = None,
+    status: OrderStatus | str | None = None,
+    game_id: str | None = None,
+    section: str | None = None,
+) -> dict[str, str]:
+    """Проверяет фильтры до сети и переводит имена SDK в поля формы FunPay."""
+    fields: dict[str, str] = {}
+    for name, value in (
+        ("id", order_id),
+        ("buyer", buyer),
+        ("state", status),
+        ("game", game_id),
+        ("section", section),
+    ):
+        if value is None:
+            continue
+        if not isinstance(value, str) or not value.strip():
+            raise ValidationError(f"фильтр {name} должен быть непустой строкой")
+        fields[name] = value.strip()
+        try:
+            fields[name].encode("utf-8")
+        except UnicodeEncodeError:
+            raise ValidationError(f"фильтр {name} содержит некорректный Unicode") from None
+    if "state" in fields and fields["state"] not in {one.value for one in OrderStatus}:
+        raise ValidationError("статус должен быть paid, closed или refunded")
+    if "id" in fields and not (fields["id"].isascii() and fields["id"].isalnum()):
+        raise ValidationError("номер заказа должен содержать только латинские буквы и цифры")
+    if "game" in fields and not (fields["game"].isascii() and fields["game"].isdecimal()):
+        raise ValidationError("номер игры должен содержать только цифры ASCII")
+    if "section" in fields and "game" not in fields:
+        raise ValidationError("категория section требует game_id")
+    return fields
+
 
 #: Контейнер таблицы заказов.
 _TABLE: Final[str] = SELECTORS["orders.container"]

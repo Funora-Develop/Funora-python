@@ -1,0 +1,122 @@
+<html>
+  <head></head>
+  <body>
+    <div class="param-item mb10 mt35">
+      <h5 class="mb10">
+        T16:cs
+      </h5>
+      <div class="row row-20 row-inline">
+        <div class="col-lg-8 mb10">
+          <div class="rating-value text-nowrap inline-block-vat mr10">
+            <span class="big">
+              T1:d
+            </span>
+            <span class="inline-block-vat">
+              T4:cds
+            </span>
+          </div>
+          <div class="rating-full inline-block-vat">
+            <div class="rating-full-item5">
+              <div class="rating-mini"></div>
+              <div class="rating-progress">
+                <div style="T12:adps#1"></div>
+              </div>
+            </div>
+            <div class="rating-full-item4">
+              <div class="rating-mini"></div>
+              <div class="rating-progress">
+                <div style="T10:adps#2"></div>
+              </div>
+            </div>
+            <div class="rating-full-item3">
+              <div class="rating-mini"></div>
+              <div class="rating-progress">
+                <div style="T10:adps#2"></div>
+              </div>
+            </div>
+            <div class="rating-full-item2">
+              <div class="rating-mini"></div>
+              <div class="rating-progress">
+                <div style="T10:adps#2"></div>
+              </div>
+            </div>
+            <div class="rating-full-item1">
+              <div class="rating-mini"></div>
+              <div class="rating-progress">
+                <div style="T10:adps#2"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-4 col-xs-12 mb10">
+          <div class="text-mini text-light mb5">
+            T19:cds
+          </div>
+          <div class="dyn-table-filter reviews-filter">
+            <a aria-expanded="T5:a#1" aria-haspopup="T4:a#1" class="btn btn-default btn-block dropdown-toggle" data-toggle="T8:a#1" role="T6:a#1">
+              <span class="filter-text">
+                T10:cs
+              </span>
+              <span class="caret"></span>
+            </a>
+            <ul class="dropdown-menu">
+              <li>
+                <a data-value href="{n1}">
+                  T10:cs
+                </a>
+              </li>
+              <li>
+                <a data-value="T1:d#1" href="{n1}">
+                  <span class="review-rating">
+                    <div class="rating">
+                      <div class="rating1"></div>
+                    </div>
+                  </span>
+                </a>
+              </li>
+              <li>
+                <a data-value="T1:d#2" href="{n1}">
+                  <span class="review-rating">
+                    <div class="rating">
+                      <div class="rating2"></div>
+                    </div>
+                  </span>
+                </a>
+              </li>
+              <li>
+                <a data-value="T1:d#3" href="{n1}">
+                  <span class="review-rating">
+                    <div class="rating">
+                      <div class="rating3"></div>
+                    </div>
+                  </span>
+                </a>
+              </li>
+              <li>
+                <a data-value="T1:d#4" href="{n1}">
+                  <span class="review-rating">
+                    <div class="rating">
+                      <div class="rating4"></div>
+                    </div>
+                  </span>
+                </a>
+              </li>
+              <li>
+                <a data-value="T1:d#5" href="{n1}">
+                  <span class="review-rating">
+                    <div class="rating">
+                      <div class="rating5"></div>
+                    </div>
+                  </span>
+                </a>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="pb20">
+      T12:cp
+    </p>
+  </body>
+</html>

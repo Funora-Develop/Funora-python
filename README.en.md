@@ -8,28 +8,35 @@
 
 <p align="center">
   <img alt="status" src="https://img.shields.io/badge/status-draft-6E7681?style=flat-square">
-  <img alt="pypi" src="https://img.shields.io/badge/pypi-not%20published-6E7681?style=flat-square">
+  <a href="https://pypi.org/project/funora/"><img alt="PyPI" src="https://img.shields.io/pypi/v/funora?style=flat-square"></a>
   <img alt="license" src="https://img.shields.io/badge/license-Apache--2.0-2F7D95?style=flat-square">
   <img alt="FunPay" src="https://img.shields.io/badge/FunPay-unofficial-B4501E?style=flat-square">
 </p>
 
-<p align="center"><a href="README.md">Русский</a></p>
+<p align="center"><a href="https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/README.md">Русский</a></p>
 
 ---
 
 > **Unofficial project.** Funora is not affiliated with, endorsed by, or connected to FunPay.
 > It works against a private web interface that can change at any time without notice.
 > Using it may lead to your account being suspended and your funds frozen - that risk is yours.
-> Read [DISCLAIMER.md](DISCLAIMER.md) before relying on this for anything that earns you money.
+> Read [DISCLAIMER.md](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/DISCLAIMER.md) before relying on this for anything that earns you money.
 
-## Status: `draft`
+## Test pre-alpha: `0.0.1.dev2`
 
-There is no released package and nothing to install yet. The contract is not
-stabilised and still changes.
+Install from [PyPI](https://pypi.org/project/funora/0.0.1.dev2/):
 
-Thirty-three operations work: twenty-two reads and eleven writes - sending text and images, marking a chat read, leaving and removing a review, changing a lot price, raising offers, and activating or deactivating a lot.
+```bash
+python -m pip install "funora==0.0.1.dev2"
+```
 
-**The guide lives in [docs/index.md](docs/index.md).** It builds into a site
+See the [release guide](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/pre-alpha.md) for installation and known limitations.
+The contract is still a draft; a successful build does not certify live account operations.
+PyPI versions are published at major milestones; ongoing development continues in branches and PRs.
+
+Thirty-five operations are implemented and tested: twenty-four reads and eleven writes - sending text and images, marking a chat read, leaving and removing a review, changing a lot price, raising offers, activating or deactivating a lot, switching the display currency, and refunding an order.
+
+**The guide lives in [docs/index.md](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/index.md).** It builds into a site
 (`mkdocs serve`) and is checked by the same run as the code: examples are parsed
 by the interpreter, links are resolved, and every operation it mentions is looked
 up on a real client.
@@ -98,15 +105,18 @@ async with AsyncClient(EnvSecretProvider()) as client:
 | `client.account.switch_currency(code)` | the display currency switched |
 | `client.account.capabilities()` | which of the declared capabilities are available |
 | `client.catalog.categories()` | the marketplace sections |
+| `client.catalog.search(query)` | public game search; completeness of matches remains unconfirmed |
+| `client.catalog.field_schema(section_id)` | section filters, choices and ranges |
+| `client.chats.history_before(node_id, before_message_id=...)` | earlier chat messages |
+| `client.market.calculate_chip_prices(game_id, price)` | prices on the quantity marketplace |
 
-There are two write operations, and each carries its own cost of getting it
-wrong.
+Write operations require explicit outcomes and preservation of the previous state.
 
-**Sending text** - [its own guide chapter](docs/guide/sending.md): a send has
+**Sending text** - [its own guide chapter](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/guide/sending.md): a send has
 three outcomes rather than two, and the third one, "unknown", is what the chapter
 is about.
 
-**Changing a price** - [the lots chapter](docs/guide/lots.md): the form is sent
+**Changing a price** - [the lots chapter](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/guide/lots.md): the form is sent
 back as it was read, exactly one field changes, and the previous price is written
 to a durable journal before the request leaves. Without a state file the operation
 refuses: the marketplace keeps no price history and offers no undo, so what the
@@ -122,70 +132,36 @@ There is a second queue too - **a directory of files** - for a Telegram bot
 started as a SEPARATE command: an in-memory queue is out of its reach entirely.
 A command claimed by a process that then died is never sent again: its fate is
 unknown, and a person decides about it. The whole picture is in the [bot
-chapter](docs/guide/bot.md).
+chapter](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/guide/bot.md).
 
-The public section listing is parsed too, but has no operation: the `Offer` model
-requires an id, a price and a category, and the page carries none of the three.
+The unfinished mechanisms and their reasons are tracked in
+`Funora-spec/spec/conformance/not-implemented.yaml`. Having all service methods
+implemented does not mean the entire cross-language contract is complete.
 
-Sending an image, marking read, paging chat history backwards, the section field
-schema, the account transaction history, the order event feed, the interface
-locale and two lot write operations - activate and deactivate - are declared by
-the contract and not written: nobody has observed the requests the marketplace
-makes for them. Calling them raises `NotImplementedOperationError` - a refusal
-from Funora itself, not a built-in Python error.
+## Current limits
 
-The full list, with a reason on every row, lives in the registry at
-`spec/conformance/not-implemented.yaml`. It is not a reference but a build
-condition: an operation that is declared and silently absent does not pass the
-gate.
+- Withdrawals are not implemented.
+- Pagination of long order lists and account transactions: the meaning of
+  `continue` is still unknown. Earlier chat messages have a separate operation.
+- Replay of missed channel events by position: the implementation currently
+  re-reads pages and uses persisted watch cursors.
+- Preemption of in-flight requests.
 
-## Observed, but not an operation
+Public market reads already use a separate transport without the account secret.
+The shared request budget and pause after HTTP 429 still apply.
 
-Three of the marketplace's write endpoints have been observed as **forms** - the
-address and the fields are visible, but nobody has sent the request:
+Order states `paid`, `closed`, and `refunded` are recognised. Other carriers
+produce an unobserved value. Delivery must require a specific state; a chat
+message is not proof of payment.
 
-| Endpoint | What it is | What is missing |
-|---|---|---|
-| `POST /orders/refund` | refunding an order | the response |
-| `POST /withdraw/withdraw` | withdrawing funds | the response; needs 2FA |
-| `POST /users/transactions` | paging the account ledger | the meaning of `continue` |
+`orders.details()` reads numeric amounts and currency codes from the structured
+response. Exact timestamps remain unavailable where only display text is supplied.
 
-A write operation that cannot tell success from refusal will not be added here:
-it would report success always. Refunds and withdrawals are also irreversible and
-both are about money.
+Order refunds are implemented: the available form is checked before submission,
+and the result is determined from the response. Tests against recorded responses
+do not replace verification on a live test account.
 
-## What the SDK cannot do, and why that is stated here
-
-Sections like this are usually buried. It sits in plain view because everything
-listed affects whether this library is worth taking today.
-
-**It tells apart two order states out of however many exist.** It reads `paid`
-and `closed`; refunds, disputes and rejections exist but never made it into a
-snapshot, and we have seen no carriers for them. An order in a third state yields
-an unobserved value - not the nearest match and not `unknown`. The latter would
-claim we read the status and failed to recognise it, when in fact we did not read
-it at all.
-
-The practical consequence: a handler shaped like «if not `closed`, we owe
-delivery» will behave on such an order in a way its author did not intend. Ask
-about a specific state, and handle separately the case where the state was not
-read.
-
-And `paid` itself is not financial confirmation. It means the marketplace shows
-the paid state in the sales section; it can be reversed after the fact, and it
-does not replace your own check where the cost of being wrong is high.
-
-**It gives neither a numeric amount nor an exact time.** There is no
-machine-readable time on the orders page at all, and no currency was observed.
-Only display text.
-
-**It does not treat a chat message as proof of payment.** Even a correctly
-identified platform message is not proof: it could belong to another order, be
-stale, or follow a reversed payment. The platform itself warns about this as the
-first message in every dialog. The sales list is the only source of truth.
-
-**It does not page through long lists.** No pagination markup was observed, and
-promising a cursor the adapter cannot produce is worse than promising nothing.
+See the [SDK limits](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/limits.md) and [observation plan](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/observation-plan.md).
 
 ## How it works
 
@@ -205,7 +181,7 @@ raises instead of returning `None`.
 policies, the budget and the verdict-to-error table are not hand-written in any
 of the six SDKs. The build fails when generated output falls behind its source.
 
-More in [docs/architecture.md](docs/architecture.md).
+More in [docs/architecture.md](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/architecture.md).
 
 ## Protocol observations
 
@@ -213,11 +189,11 @@ The package ships `funora-observe`, the tool that produced every protocol fact
 the specification rests on. It stores a structural skeleton of a page: full
 markup, with text and attribute values replaced by signatures.
 
-- [docs/observations.md](docs/observations.md) - what is established and how to
+- [docs/observations.md](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/observations.md) - what is established and how to
   verify it.
-- [docs/limits.md](docs/limits.md) - what Funora cannot do, and why code will not fix it.
-- [docs/protocol-questions.md](docs/protocol-questions.md) - what remains open.
-- [tests/fixtures/pages/README.md](tests/fixtures/pages/README.md) - the snapshot
+- [docs/limits.md](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/limits.md) - what Funora cannot do, and why code will not fix it.
+- [docs/protocol-questions.md](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/protocol-questions.md) - what remains open.
+- [tests/fixtures/pages/README.md](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/tests/fixtures/pages/README.md) - the snapshot
   format and why publishing it is safe.
 
 ## The wider project
@@ -249,7 +225,7 @@ Three things help most right now.
 
 Snapshots of pages in states we do not have: an order in refund or dispute, an
 unread dialog, a long list with pagination. Each one closes an item in
-[docs/protocol-questions.md](docs/protocol-questions.md).
+[docs/protocol-questions.md](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/docs/protocol-questions.md).
 
 Review of [Funora-spec](https://github.com/Funora-Develop/Funora-spec): it is
 verified by use, and the first attempt to apply it surfaced eighteen places where
@@ -266,4 +242,4 @@ A FunPay session key is your entire account. Report privately through
 
 ## License
 
-[Apache-2.0](LICENSE) © Funora Contributors
+[Apache-2.0](https://github.com/Funora-Develop/Funora-python/blob/v0.0.1.dev2/LICENSE) © Funora Contributors

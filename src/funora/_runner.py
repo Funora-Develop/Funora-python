@@ -28,7 +28,6 @@ chat-not-selected, и из пяти атрибутов остаются два: 
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from typing import Final
 
@@ -38,6 +37,7 @@ from ._observed import Observed
 from ._result import Completeness, Defect, Severity
 from ._secret import Secret
 from ._thread import Origin, Thread
+from ._updates import load_runner_json
 from ._whoami import parse_app_data
 from .extraction import ATTRIBUTES, SELECTORS
 from .reconciliation import ReconcileVerdict
@@ -360,7 +360,9 @@ def _unconfirmed(reason: str) -> SendResult:
     )
 
 
-def classify_send_response(body: str, *, sent_to: str) -> SendResult:
+def classify_send_response(
+    body: str, *, sent_to: str, transport_failed: bool = False, http_status: int = 200
+) -> SendResult:
     """Устанавливает исход отправки по ответу канала.
 
     ПОРЯДОК ШАГОВ НОРМАТИВЕН и объявлен в spec/protocol/send-outcome.yaml. Две
@@ -380,17 +382,21 @@ def classify_send_response(body: str, *, sent_to: str) -> SendResult:
     Returns:
         SendResult: Исход, причина и прочитанное из ответа.
     """
-    # Шаг 1. Тело разбирается как JSON.
+    # Шаги 1-3. Ответ получен, статус допускает подтверждение, тело - JSON.
+    if transport_failed:
+        return _unconfirmed("transport_error")
+    if http_status != 200:
+        return _unconfirmed("unexpected_http_status")
     try:
-        parsed: object = json.loads(body)
-    except ValueError:
+        parsed: object = load_runner_json(body)
+    except (ValueError, RecursionError):
         return _unconfirmed("body_not_json")
 
-    # Шаг 2. Разобранное - объект.
+    # Шаг 4. Разобранное - объект.
     if not isinstance(parsed, dict):
         return _unconfirmed("body_not_an_object")
 
-    # Шаг 3. Поле response - объект.
+    # Шаг 5. Поле response - объект.
     #
     # При запросе БЕЗ действия оно приходит булевым, и это наблюдено. Булево
     # здесь означает, что ответ пришёл на опрос, а не на действие: подтверждать
@@ -399,7 +405,11 @@ def classify_send_response(body: str, *, sent_to: str) -> SendResult:
     if not isinstance(answer, dict):
         return _unconfirmed("response_not_an_object")
 
-    # Шаг 4. Поле error пусто.
+    # Шаг 6. Отсутствующее поле не свидетельствует об успешном действии.
+    if "error" not in answer:
+        return _unconfirmed("response_error_missing")
+
+    # Шаг 7. Поле error равно null.
     #
     # Формы отказа никто не видел, и она здесь не нужна: довольно предиката.
     if answer.get("error") is not None:
@@ -411,7 +421,7 @@ def classify_send_response(body: str, *, sent_to: str) -> SendResult:
             messages_in_answer=0,
         )
 
-    # Шаг 5. Среди объектов есть узел диалога.
+    # Шаг 8. Среди объектов есть узел диалога.
     objects = parsed.get("objects")
     nodes = [
         one
@@ -421,7 +431,7 @@ def classify_send_response(body: str, *, sent_to: str) -> SendResult:
     if not nodes:
         return _unconfirmed("no_chat_node_in_answer")
 
-    # Шаг 6. Узел диалога - тот самый.
+    # Шаг 9. Узел диалога - тот самый.
     mine = None
     for one in nodes:
         data = one.get("data")
@@ -435,7 +445,7 @@ def classify_send_response(body: str, *, sent_to: str) -> SendResult:
     if mine is None:
         return _unconfirmed("node_mismatch")
 
-    # Шаг 7. Список сообщений непуст.
+    # Шаг 10. Список сообщений непуст.
     data = mine.get("data")
     messages = data.get("messages") if isinstance(data, dict) else None
     written = [
@@ -444,7 +454,7 @@ def classify_send_response(body: str, *, sent_to: str) -> SendResult:
     if not written:
         return _unconfirmed("empty_message_list")
 
-    # Шаг 8. Подтверждено.
+    # Шаг 11. Подтверждено.
     last = written[-1].get("id")
     return SendResult(
         outcome=SendOutcome.CONFIRMED,

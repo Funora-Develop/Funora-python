@@ -18,8 +18,9 @@ import logging
 from collections.abc import Callable, Generator
 from dataclasses import replace
 from pathlib import Path
+from threading import Lock
 from time import monotonic, sleep
-from typing import TYPE_CHECKING, Final, TypeVar
+from typing import TYPE_CHECKING, NoReturn, TypeVar
 
 from ._account import BalancePage
 from ._budget import Budget
@@ -40,11 +41,14 @@ from ._engine import (
     Request,
     Submit,
     Upload,
+    public_read_request,
 )
+from ._field_schema import FieldSchema
 from ._host import host_of
 from ._identity import REGISTRY
 from ._lot_form import LotForm
 from ._market import MarketPage
+from ._monitoring import MarketWatch, MonitoringPlan
 from ._observed import Observed
 from ._order import OrderView
 from ._order_details import OrderDetailsBatch
@@ -55,7 +59,7 @@ from ._proxies import DEFAULT_ACCOUNT, Proxy, ProxyPool
 from ._raise import RaiseResult
 from ._refund import RefundResult
 from ._review_write import ReviewResult
-from ._reviews import ReviewsPage
+from ._reviews import ReviewsCursor, ReviewsPage
 from ._runner import SendResult
 from ._secret import Secret, SecretProvider
 from ._showcase import ShowcasePage
@@ -65,8 +69,11 @@ from ._transport import Fetcher, TransportSettings
 from ._viewing import BuyerViewing
 from ._watch import Router, dispatch
 from ._whoami import Account, CapabilityProfile, SessionHealth
+from .budget import MARKET_HISTORY_LIMIT
 from .capabilities import Capability, CapabilityState
 from .errors import ConfigurationError, FunoraError, HandlerError, NotImplementedOperationError
+from .extraction import OrderStatus
+from .operations import OPERATIONS
 
 if TYPE_CHECKING:
     from ._transport import Observation
@@ -78,22 +85,6 @@ _log = logging.getLogger("funora.client")
 #: Тип, которым завершается сопрограмма ядра. Синтаксис PEP 695 не годится:
 #: пакет поддерживает Python 3.11, где его ещё нет.
 T = TypeVar("T")
-
-
-#: Службы, объявленные контрактом, и записи реестра о том, чего в них нет.
-#:
-#: Перечень здесь, а не в порождённом файле: он говорит о РЕАЛИЗАЦИИ - какие
-#: службы она не написала, - а не о контракте.
-#:
-#: Записи «lots» здесь больше нет: служба написана с 0.11.0. Написана она,
-#: правда, наполовину - витрина читается, операций записи нет, - но обращение к
-#: client.lots языковой ошибкой уже не отвечает, и место ему не тут. Сверяется он проверкой, которая
-#: читает spec/services и spec/conformance/not-implemented.yaml: разойдись
-#: перечень с ними, обращение к новой службе давало бы голый отказ языка.
-_SERVICES_IN_CONTRACT: Final[dict[str, str]] = {
-    "account": "account_service_operations",
-    "market": "market_service_operations",
-}
 
 
 class OrdersService:
@@ -130,20 +121,41 @@ class OrdersService:
         """
         return self._client.run(self._client.engine.read_order(order_id))
 
-    def list(self) -> OrdersPage:
-        """Читает список заказов.
+    def list(
+        self,
+        *,
+        order_id: str | None = None,
+        buyer: str | None = None,
+        status: OrderStatus | str | None = None,
+        game_id: str | None = None,
+        section: str | None = None,
+    ) -> OrdersPage:
+        """Читает продажи с необязательными серверными фильтрами.
+
+        Args:
+            order_id: Номер заказа без символа #.
+            buyer: Поиск по имени покупателя средствами FunPay.
+            status: paid, closed или refunded, в том числе OrderStatus.
+            game_id: Номер игры из формы фильтра.
+            section: Значение категории из формы, например lot-1908.
+                Требует game_id: категории принадлежат выбранной игре.
 
         Returns:
             OrdersPage: Разобранная страница. Записи выдаются через `rows()`:
             без accept_incomplete он требует полноты, с ним отдаёт что есть.
 
-            Прежде здесь обещался ещё и `entries()` - метода с таким именем у
-            страницы нет и не было.
+            Полнота относится к выбранным фильтрам. Вызов без аргументов
+            читает общий список, как и цикл наблюдения за заказами.
 
         Raises:
+            ValidationError: Если фильтры непригодны. Запрос не выполняется.
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
-        return self._client.run(self._client.engine.read_orders())
+        return self._client.run(
+            self._client.engine.read_orders(
+                order_id=order_id, buyer=buyer, status=status, game_id=game_id, section=section
+            )
+        )
 
     def details(
         self, *order_ids: str, include: tuple[str, ...] = ("details", "users")
@@ -273,7 +285,9 @@ class ChatsService:
         """
         return self._client.run(self._client.engine.read_thread(node_id))
 
-    def history_before(self, node_id: str, *, before_message_id: str) -> ChatHistory:
+    def history_before(
+        self, node_id: str, *, before_message_id: str | None = None, cursor: str | None = None
+    ) -> ChatHistory:
         """Догружает сообщения переписки СТАРШЕ указанного.
 
         ЗАПРОС ЗАИМСТВОВАН ЦЕЛИКОМ - и адрес, и оба имени параметров, и форма
@@ -287,19 +301,23 @@ class ChatsService:
 
         Args:
             node_id (str): Идентификатор диалога.
-            before_message_id (str): Курсор - идентификатор сообщения, от
-                которого просят назад. Только цифры.
+            before_message_id (str | None): Идентификатор сообщения для первого
+                запроса назад. Только цифры ASCII; не передаётся вместе с cursor.
+            cursor (str | None): Сохранённый next_cursor предыдущей страницы.
 
         Returns:
             ChatHistory: Догруженные сообщения вместе с признаком конца.
 
         Raises:
             ValidationError: Если идентификатор либо курсор непригодны.
-            CursorIncompatibleError: Если площадка вернула не ту сторону.
+            CursorIncompatibleError: Если токен несовместим или принадлежит
+                другой переписке либо площадка вернула не ту сторону.
             FunoraError: Если ответ непригоден.
         """
         return self._client.run(
-            self._client.engine.read_history_before(node_id, before_message_id=before_message_id)
+            self._client.engine.read_history_before(
+                node_id, before_message_id=before_message_id, cursor=cursor
+            )
         )
 
     def mark_read(self, node_id: str) -> None:
@@ -333,6 +351,7 @@ class ChatsService:
         *,
         filename: str,
         content_type: str = "image/png",
+        declared_cold: bool = False,
     ) -> SendResult:
         """Отправляет изображение в переписку.
 
@@ -359,7 +378,11 @@ class ChatsService:
         """
         return self._client.run(
             self._client.engine.send_image(
-                node_id, content, filename=filename, content_type=content_type
+                node_id,
+                content,
+                filename=filename,
+                content_type=content_type,
+                declared_cold=declared_cold,
             )
         )
 
@@ -400,12 +423,19 @@ class ReviewsService:
     def __init__(self, client: Client) -> None:
         self._client = client
 
-    def get(self, user_id: str) -> ReviewsPage:
+    def get(
+        self,
+        user_id: str,
+        *,
+        rating: int | None = None,
+        cursor: ReviewsCursor | str | None = None,
+    ) -> ReviewsPage:
         """Читает отзывы с профиля продавца.
 
-        Полнота здесь означает «разобраны все строки, которые страница отдала»,
-        а не «прочитаны все отзывы продавца»: сверить их число не с чем. Разница
-        объявлена записью reviews_page_totality в реестре неисполненного.
+        Следующую страницу запрашивают с next_cursor предыдущего результата.
+        rating выбирает оценку 1..5; None читает все оценки. При продолжении
+        передавайте ту же оценку, с которой получен курсор.
+        Отсутствие курсора само по себе не означает полноту: проверяйте completeness.
 
         Args:
             user_id (str): Идентификатор продавца. Тот самый, что стоит в адресе
@@ -418,7 +448,9 @@ class ReviewsService:
             ValidationError: Если идентификатор непригоден для подстановки.
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
-        return self._client.run(self._client.engine.read_reviews(user_id))
+        return self._client.run(
+            self._client.engine.read_reviews(user_id, rating=rating, cursor=cursor)
+        )
 
     def leave(self, order_id: str, *, rating: int, text: str = "") -> ReviewResult:
         """Пишет отзыв к заказу либо правит уже написанный.
@@ -478,6 +510,14 @@ class AccountService:
     def __init__(self, client: Client) -> None:
         self._client = client
 
+    def __getattr__(self, name: str) -> NoReturn:
+        if name == "withdraw":
+            raise NotImplementedOperationError(
+                "вывод не реализован: "
+                "spec/conformance/not-implemented.yaml#withdraw_stays_unwritten"
+            )
+        raise AttributeError(name)
+
     def get(self) -> Account:
         """Читает собственный аккаунт: идентификатор, имя и метку языка.
 
@@ -527,7 +567,7 @@ class AccountService:
         Returns:
             CapabilityProfile: Состояние каждой возможности контракта.
         """
-        return self._client.engine.capability_profile()
+        return self._client._capability_profile()
 
     def balance(self) -> BalancePage:
         """Читает баланс аккаунта и операции по счёту.
@@ -776,6 +816,51 @@ class LotsService:
         return self._client.run(self._client.engine.calculate_prices(node_id=node_id, price=price))
 
 
+class Monitoring:
+    """Планирование и наблюдение публичных выдач без авторизации."""
+
+    __slots__ = ("_client",)
+
+    def __init__(self, client: Client) -> None:
+        self._client = client
+
+    def plan(self, *watches: MarketWatch) -> MonitoringPlan:
+        """Проверяет прогноз набора вместе с действующими наблюдениями, без HTTP."""
+        return self._client._public_engine._budget.monitoring_plan(watches, monotonic())
+
+    def watch(
+        self,
+        router: Router,
+        *watches: MarketWatch,
+        state_path: str | Path | None = None,
+        max_iterations: int | None = None,
+        history_limit: int = MARKET_HISTORY_LIMIT,
+        on_handler_error: Callable[[HandlerError], None] | None = None,
+    ) -> None:
+        """Регистрирует набор до выхода из цикла; повторяет сохранённые события.
+
+        Файл состояния отдельный от личного watch. Без файла история живёт
+        только в текущем вызове. Набор и интервалы в файле неизменны.
+        max_iterations ограничивает число шагов, включая повтор без HTTP.
+        history_limit ограничивает записи предложений во всём наборе (100000
+        по умолчанию). При превышении ConfigurationError сохраняет прежний
+        курсор; предел можно увеличить при продолжении с тем же файлом.
+        """
+        engine = self._client._public_engine
+        self._client.run(
+            engine.monitor_market(
+                watches,
+                account_id=self._client._account_id,
+                state_path=state_path,
+                max_iterations=max_iterations,
+                history_limit=history_limit,
+            ),
+            engine=engine,
+            router=router,
+            on_handler_error=on_handler_error,
+        )
+
+
 class MarketService:
     """Публичные предложения раздела.
 
@@ -806,7 +891,7 @@ class MarketService:
             ValidationError: Если номер непригоден для подстановки.
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
-        return self._client.run(self._client.engine.read_market(node_id))
+        return self._client._read("market.offers", lambda engine: engine.read_market(node_id))
 
     def snapshot(self, node_id: str) -> MarketSnapshot:
         """Снимает состояние выдачи для сравнения во времени.
@@ -816,13 +901,15 @@ class MarketService:
 
         Returns:
             MarketSnapshot: Снимок. Сравнивать его можно только с другим
-            снимком того же запроса - это делает `funora.market.compare`.
+            снимком того же запроса - это делает `funora.compare`.
 
         Raises:
             ValidationError: Если номер непригоден для подстановки.
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
-        return self._client.run(self._client.engine.read_market_snapshot(node_id))
+        return self._client._read(
+            "market.snapshot", lambda engine: engine.read_market_snapshot(node_id)
+        )
 
     def chips(self, node_id: str) -> ChipsPage:
         """Читает публичные предложения раздела ЧИПОВ - второго рынка.
@@ -840,7 +927,7 @@ class MarketService:
             ValidationError: Если номер непригоден для подстановки.
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
-        return self._client.run(self._client.engine.read_chips(node_id))
+        return self._client._read("chips.offers", lambda engine: engine.read_chips(node_id))
 
     def calculate_chip_prices(self, game_id: str, price: str) -> PriceCalculation:
         """Считает цену покупателя на рынке по количеству.
@@ -869,12 +956,13 @@ class CatalogService:
         client (Client): Клиент, которому принадлежит сервис.
     """
 
-    __slots__ = ("_client",)
+    __slots__ = ("_client", "_lock")
 
     def __init__(self, client: Client) -> None:
         self._client = client
+        self._lock = Lock()
 
-    def categories(self) -> CatalogPage:
+    def categories(self, *, refresh: bool = False) -> CatalogPage:
         """Читает каталог: игры, их варианты и разделы каждого.
 
         Читается только основной список. Избранное повторяет его целиком -
@@ -886,7 +974,18 @@ class CatalogService:
         Raises:
             FunoraError: Если ответ непригоден либо разметка изменилась.
         """
-        return self._client.run(self._client.engine.read_catalog())
+        with self._lock:
+            return self._client.run(self._client.engine.read_catalog(refresh=refresh))
+
+    def search(self, query: str) -> CatalogPage:
+        """Ищет игры без секрета; games() требует явного принятия неполной выдачи."""
+        return self._client._read(
+            "catalog.search", lambda engine: engine.read_catalog_search(query)
+        )
+
+    def field_schema(self, section_id: str) -> FieldSchema:
+        """Читает поля фильтра раздела; неполнота требует явного принятия."""
+        return self._client.run(self._client.engine.read_field_schema(section_id))
 
 
 class Client:
@@ -902,6 +1001,14 @@ class Client:
             собирает его сам, и в проверках: создание транспорта поднимает
             контекст TLS, а это полсекунды на каждый вызов, из-за чего набор
             проверок начинают выключать.
+        public_transport (Fetcher | None): Отдельный транспорт рынка без секрета.
+            При подставном transport передаётся явно; иначе создаётся лениво.
+        public_only (bool): Работа без секрета, только market.offers,
+            market.snapshot, market.chips и catalog.search.
+            Личный транспорт и файл состояния не принимаются.
+        account_id (str): Устойчивый ключ аккаунта для квоты и привязки прокси.
+            По умолчанию self: клиенты без ключа делят персональную квоту.
+            Ключ не подтверждает авторизацию; её проверяет ответ площадки.
         budget (Budget | None): Общий бюджет запросов. Передаётся, когда в одном
             процессе живут несколько клиентов: площадке видна сетевая
             идентичность, а не то, сколько клиентов мы завели у себя, и общий
@@ -909,7 +1016,7 @@ class Client:
 
         proxies (tuple[Proxy, ...]): Выходы, между которыми распределяются
             аккаунты. Пустой набор означает прямое соединение.
-        state_path (Path | None): Файл, в котором реестр отправок, реестр
+        state_path (str | Path | None): Файл, в котором реестр отправок, реестр
             выданного и журнал правок цены переживают перезапуск. Без него
             отправка и правка цены ОТКАЗЫВАЮТ: обе защиты держатся памятью
             процесса, а память обнуляется.
@@ -921,18 +1028,26 @@ class Client:
             здесь - потерянная прежняя цена: истории цен у площадки нет.
 
     Raises:
-        ConfigurationError: Если не передано ни секрета, ни транспорта. Повтор
+        ConfigurationError: Если параметры несовместимы или личному клиенту
+            не передано ни секрета, ни транспорта. Повтор
             здесь не поможет, исправлять надо вызов.
     """
 
     __slots__ = (
         "_fetcher",
+        "_public_fetcher",
+        "_public_lock",
+        "_public_engine",
+        "_custom_transport",
+        "_closed",
         "account",
         "catalog",
         "chats",
         "engine",
         "lots",
         "market",
+        "monitoring",
+        "_account_id",
         "orders",
         "pool",
         "reviews",
@@ -945,94 +1060,83 @@ class Client:
         settings: TransportSettings | None = None,
         experimental: frozenset[Capability] | None = None,
         transport: Fetcher | None = None,
+        public_transport: Fetcher | None = None,
+        public_only: bool = False,
+        account_id: str = DEFAULT_ACCOUNT,
         budget: Budget | None = None,
         proxies: tuple[Proxy, ...] = (),
-        state_path: Path | None = None,
+        state_path: str | Path | None = None,
         unsafe_sends_without_ledger: bool = False,
         unsafe_price_changes_without_audit: bool = False,
     ) -> None:
         resolved_settings = settings or TransportSettings()
-
-        if transport is not None:
-            self._fetcher = transport
-        elif secret is not None:
-            resolved = secret if isinstance(secret, Secret) else secret.get("golden_key")
-            self._fetcher = Fetcher(resolved, settings=resolved_settings)
-        else:
+        if not isinstance(account_id, str) or not account_id.strip():
+            raise ConfigurationError("account_id должен быть непустой строкой")
+        if public_only and (secret is not None or transport is not None or state_path is not None):
             raise ConfigurationError(
-                "клиенту нужен либо секрет, либо готовый транспорт: без них "
-                "обратиться к площадке не от кого"
+                "public_only не принимает секрет, личный транспорт или файл состояния"
             )
-
-        # Пул заводится до движка: бюджет берётся у выбранной идентичности, а
-        # выбор идентичности - его работа.
+        if public_transport is not None and public_transport is transport:
+            raise ConfigurationError("публичный и личный транспорт должны быть разными")
+        if isinstance(public_transport, Fetcher) and public_transport._secret is not None:
+            raise ConfigurationError("публичный транспорт не должен содержать секрет")
+        if not public_only and secret is None and transport is None:
+            raise ConfigurationError(
+                "клиенту нужен либо секрет, либо готовый транспорт; для рынка есть public_only=True"
+            )
         self.pool = ProxyPool(
-            proxies,
-            host=host_of(resolved_settings.base_url) or resolved_settings.base_url,
+            proxies, host=host_of(resolved_settings.base_url) or resolved_settings.base_url
         )
-
-        # Идентичность выбирается один раз и передаётся движку: ограничение
-        # частоты обязано дойти до неё, а не до безымянного бюджета. Наблюдение
-        # перепривяжет аккаунт к другой, если эта остынет.
-        identity_name, proxy_url = self.pool.choose(DEFAULT_ACCOUNT)
+        identity_name, proxy_url = self.pool.choose(account_id)
         identity = REGISTRY.get(identity_name)
         if proxy_url is not None:
             resolved_settings = replace(resolved_settings, proxy_url=proxy_url)
-
+        root_budget = budget or identity.budget
         self.engine = Engine(
             resolved_settings,
-            budget or identity.budget,
+            budget
+            if budget is not None and account_id == DEFAULT_ACCOUNT
+            else root_budget.for_account("account:" + account_id),
             experimental or frozenset(),
             identity,
             state_path=state_path,
             unsafe_sends_without_ledger=unsafe_sends_without_ledger,
             unsafe_price_changes_without_audit=unsafe_price_changes_without_audit,
         )
+        self._public_engine = Engine(
+            resolved_settings,
+            root_budget.for_account("public_read"),
+            experimental or frozenset(),
+            identity,
+        )
+        self._closed = False
+        self._custom_transport = transport is not None
+        self._public_fetcher = public_transport
+        self._public_lock = Lock()
+        self._fetcher: Fetcher | None = None
+        if transport is not None:
+            self._fetcher = transport
+        elif secret is not None:
+            resolved = secret if isinstance(secret, Secret) else secret.get("golden_key")
+            self._fetcher = Fetcher(resolved, settings=resolved_settings)
+
         self.orders = OrdersService(self)
         self.chats = ChatsService(self)
         self.reviews = ReviewsService(self)
         self.account = AccountService(self)
         self.lots = LotsService(self)
         self.catalog = CatalogService(self)
+        self._account_id = account_id
+        self.monitoring = Monitoring(self)
         self.market = MarketService(self)
 
-    def __getattr__(self, name: str) -> object:
-        """Отвечает на обращение к службе, которой у этой реализации нет.
-
-        Служб в контракте шесть, написаны две. Прежде обращение к остальным
-        давало голый AttributeError: бот, обернувший работу в except FunoraError,
-        падал не операцией, а всем процессом, и узнавал причину из трассировки.
-
-        Заглушек не заводится нарочно. Заглушка существует как атрибут, и
-        hasattr на ней вернул бы True - проверка «умеет ли эта версия SDK
-        работать с лотами» начала бы врать. Здесь атрибута нет, hasattr
-        возвращает False, а обращение поднимает отказ, который ловится и общим
-        перехватом, и привычным except AttributeError.
-
-        Args:
-            name (str): Имя, которого у клиента нет.
-
-        Returns:
-            object: Ничего не возвращает.
-
-        Raises:
-            NotImplementedOperationError: Если имя - объявленная контрактом
-                служба. Текст называет запись реестра, где сказано, чего именно
-                не хватает.
-            AttributeError: Если имя просто опечатка. Обычный отказ языка: имя,
-                которого нет ни в контракте, ни в реализации, - не пробел
-                реализации, а ошибка вызывающего.
-        """
-        declared = _SERVICES_IN_CONTRACT.get(name)
-        if declared is None:
-            raise AttributeError(f"{type(self).__name__!r} не имеет атрибута {name!r}")
-        raise NotImplementedOperationError(
-            f"служба «{name}» объявлена контрактом и не написана этой "
-            f"реализацией. Чего именно не хватает, сказано в записи реестра "
-            f"«{declared}» - spec/conformance/not-implemented.yaml.\n\n"
-            "Проверить заранее можно через hasattr: у ненаписанной службы он "
-            "возвращает False."
+    def _read(self, operation: str, build: Callable[[Engine], Generator[Request, Reply, T]]) -> T:
+        engine = (
+            self._public_engine
+            if OPERATIONS[operation].transport_lane == "public_read"
+            else self.engine
         )
+        return self.run(build(engine), engine=engine)
 
     def __enter__(self) -> Client:
         """Входит в контекстный менеджер.
@@ -1059,7 +1163,14 @@ class Client:
         Returns:
             None
         """
-        self._fetcher.close()
+        self._closed = True
+        try:
+            if self._fetcher is not None:
+                self._fetcher.close()
+        finally:
+            with self._public_lock:
+                if self._public_fetcher is not None:
+                    self._public_fetcher.close()
 
     @property
     def locale(self) -> Observed[str]:
@@ -1074,7 +1185,8 @@ class Client:
             Observed[str]: Локаль либо причина, по которой её не видно. До
             первого чтения - не наблюдалась.
         """
-        return self.engine._state.locale
+        engine = self._public_engine if self._fetcher is None else self.engine
+        return engine._state.locale
 
     @property
     def stopped(self) -> FunoraError | None:
@@ -1087,7 +1199,8 @@ class Client:
         Returns:
             FunoraError | None: Ошибка либо None, если клиент работает.
         """
-        return self.engine.stopped
+        engine = self._public_engine if self._fetcher is None else self.engine
+        return engine.stopped
 
     def resume(self) -> None:
         """Снимает полную остановку и разрешает снова ходить на площадку.
@@ -1101,6 +1214,22 @@ class Client:
             None
         """
         self.engine.resume()
+        self._public_engine.resume()
+
+    def _capability_profile(self) -> CapabilityProfile:
+        profile = self.engine.capability_profile()
+        public = self._public_engine.capability_profile()
+        return replace(
+            profile,
+            observed_at=max(profile.observed_at, public.observed_at),
+            _evaluations={
+                capability: public.evaluation_of(capability)
+                if (operation := OPERATIONS.get(capability.value))
+                and operation.transport_lane == "public_read"
+                else evaluation
+                for capability, evaluation in profile.evaluations().items()
+            },
+        )
 
     def capability(self, capability: Capability) -> CapabilityState:
         """Возвращает текущее состояние возможности.
@@ -1111,7 +1240,13 @@ class Client:
         Returns:
             CapabilityState: Состояние, каким его видит клиент сейчас.
         """
-        return self.engine.capability(capability)
+        operation = OPERATIONS.get(capability.value)
+        engine = (
+            self._public_engine
+            if operation and operation.transport_lane == "public_read"
+            else self.engine
+        )
+        return engine.capability(capability)
 
     def watch(
         self,
@@ -1120,8 +1255,9 @@ class Client:
         account_id: str = "self",
         max_iterations: int | None = None,
         schedule: Schedule | None = None,
-        state_path: Path | None = None,
+        state_path: str | Path | None = None,
         max_threads_per_step: int = 5,
+        use_channel: bool = True,
         on_handler_error: Callable[[HandlerError], None] | None = None,
     ) -> None:
         """Ведёт наблюдение: опрашивает площадку и раздаёт события обработчикам.
@@ -1136,8 +1272,16 @@ class Client:
                 бесконечно; ограничение нужно проверкам и разовым прогонам.
             schedule (Schedule | None): Расписание опроса. По умолчанию из
                 спецификации.
-            state_path (Path | None): Файл, в котором состояние гашения повторов
+            state_path (str | Path | None): Файл, в котором состояние гашения повторов
                 переживает перезапуск.
+            use_channel (bool): Слушать ли канал обновлений площадки.
+
+                ПО УМОЛЧАНИЮ ДА. Канал отвечает за секунды; опрос страниц
+                замечал изменение от трёх секунд до двух минут. События при этом
+                по-прежнему собираются чтением страниц - из канала берётся одно
+                решение «изменилось или нет», - и достоверность не меняется.
+
+                Выключение возвращает прежнее поведение целиком.
             max_threads_per_step (int): Сколько переписок дочитывать за один
                 шаг. Изменившийся диалог говорит, что в нём что-то произошло, но
                 само сообщение видно только на странице переписки. Предел нужен:
@@ -1147,11 +1291,10 @@ class Client:
                 делать с отказом обработчика. Вызывается по одному разу на
                 каждый отказ, сразу после раздачи партии.
 
-                Без него отказ виден только в журнале. Наблюдение при этом не
-                встаёт и не слепнет - новые события порождаются по-прежнему, -
-                но курсор не двигается, и непринятое событие приходит снова
-                каждый шаг. Бесконечно, пока обработчик не перестанет падать.
-                Заметить это, не читая журнал, нечем.
+                Без него отказ виден только в журнале. Непринятая партия
+                повторяется каждый шаг; новые чтения ждут её подтверждения.
+                Пока обработчик падает, промежуточные изменения на площадке
+                не наблюдаются. Обработчик обязан быть идемпотентным.
 
         Returns:
             None
@@ -1167,6 +1310,7 @@ class Client:
                 schedule=schedule,
                 state_path=state_path,
                 max_threads_per_step=max_threads_per_step,
+                use_channel=use_channel,
             ),
             router=router,
             on_handler_error=on_handler_error,
@@ -1176,6 +1320,7 @@ class Client:
         self,
         core: Generator[Request, Reply, T],
         *,
+        engine: Engine | None = None,
         router: Router | None = None,
         on_handler_error: Callable[[HandlerError], None] | None = None,
         on_idle: Callable[[int], None] | None = None,
@@ -1188,6 +1333,8 @@ class Client:
 
         Args:
             core (Generator[Request, Reply, T]): Сопрограмма ядра.
+            engine (Engine | None): Принадлежащее клиенту ядро выбранной полосы.
+                По умолчанию личное; публичное допускает только чтение рынка.
             router (Router | None): Реестр обработчиков. Нужен только тем
                 сопрограммам, которые просят раздать события.
             on_handler_error (Callable[[HandlerError], None] | None): Что делать
@@ -1199,11 +1346,9 @@ class Client:
                 миллисекундах.
 
                 Крючок нужен затем, чтобы работу, которую просит посторонний
-                поток, выполнял ТОТ ЖЕ поток, что ведёт наблюдение. Клиент не
-                защищён ни одной блокировкой: у бюджета и у ограничителя
-                исходящих проверка с последующей записью не атомарна, и второй
-                поток, зовущий отправку, недосчитывает предел - то есть
-                превышает настоящий предел площадки.
+                поток, выполнял ТОТ ЖЕ поток, что ведёт наблюдение. Работа с состоянием
+                наблюдения и отправок остаётся в одном потоке. Атомарное
+                резервирование бюджета не делает всё ядро потокобезопасным.
 
                 Пауза при этом НЕ УДЛИНЯЕТСЯ: потраченное вычитается из сна.
                 Иначе разбор очереди сдвигал бы темп опроса, и чем больше
@@ -1215,85 +1360,118 @@ class Client:
         Raises:
             FunoraError: Любая ошибка, которую ядро не погасило повтором.
         """
+        active = self.engine if engine is None else engine
+        if self._closed or active not in (self.engine, self._public_engine):
+            core.close()
+            raise ConfigurationError("клиент закрыт либо ядро принадлежит другому клиенту")
+        if active is self._public_engine:
+            with self._public_lock:
+                if self._closed:
+                    core.close()
+                    raise ConfigurationError("клиент закрыт")
+                if self._public_fetcher is None:
+                    if self._custom_transport:
+                        core.close()
+                        raise ConfigurationError(
+                            "для подставного клиента передайте отдельный public_transport"
+                        )
+                    self._public_fetcher = Fetcher(None, settings=active._settings)
+        fetcher = self._public_fetcher if active is self._public_engine else self._fetcher
+        if fetcher is None:
+            core.close()
+            raise ConfigurationError("public_only разрешает только операции публичной полосы")
         reply: Reply = None
         failure: FunoraError | None = None
-        while True:
-            try:
-                request = core.throw(failure) if failure is not None else core.send(reply)
-            except StopIteration as stop:
-                return stop.value  # type: ignore[no-any-return]
-            failure = None
-            reply = None
+        try:
+            while True:
+                try:
+                    request = core.throw(failure) if failure is not None else core.send(reply)
+                except StopIteration as stop:
+                    return stop.value  # type: ignore[no-any-return]
+                except FunoraError as exc:
+                    active.note_operation_error(exc)
+                    raise
+                if active is self._public_engine and not public_read_request(request):
+                    core.close()
+                    raise ConfigurationError("публичная полоса допускает только чтение")
+                failure = None
+                reply = None
 
-            if isinstance(request, Pause):
-                spent = 0.0
-                if on_idle is not None:
-                    started = monotonic()
-                    on_idle(request.ms)
-                    spent = (monotonic() - started) * 1000
-                remaining = request.ms - spent
-                if remaining > 0:
-                    sleep(remaining / 1000)
-            elif isinstance(request, Fetch):
-                try:
-                    reply = self._fetch(request.path)
-                except FunoraError as exc:
-                    failure = exc
-            elif isinstance(request, Submit):
-                # Отправка идёт мимо _fetch нарочно: у записи своё правило -
-                # переход в ответ на неё не повторяется.
-                try:
-                    reply = self._fetcher.submit(request.path, request.fields, request.headers)
-                except FunoraError as exc:
-                    failure = exc
-            elif isinstance(request, Upload):
-                # Загрузка идёт мимо _fetch по той же причине, что и отправка
-                # формы: переход в ответ на запись не повторяется.
-                try:
-                    reply = self._fetcher.upload(
-                        request.path,
-                        field=request.field,
-                        filename=request.filename,
-                        content=request.content,
-                        content_type=request.content_type,
-                        headers=request.headers,
-                    )
-                except FunoraError as exc:
-                    failure = exc
-            elif isinstance(request, Query):
-                # Структурный вопрос идёт мимо _fetch: тело у него JSON, а не
-                # поля формы. Правило перехода при этом ЧТЕНИЯ, а не записи -
-                # повтор здесь безвреден.
-                try:
-                    reply = self._fetcher.query(request.path, request.payload, request.headers)
-                except FunoraError as exc:
-                    failure = exc
-            elif isinstance(request, Ask):
-                # Вопрос методом GET с ответом объектом. Мимо _fetch: переходы
-                # здесь не выполняются - переход отсюда означает не «страница
-                # переехала», а «нас выкинуло на страницу», и разбирать её как
-                # объект нельзя.
-                try:
-                    reply = self._fetcher.ask(request.path, request.headers)
-                except FunoraError as exc:
-                    failure = exc
-            elif isinstance(request, Deliver):
-                if router is None:
-                    raise ConfigurationError(
-                        "ядро просит раздать события, но реестр обработчиков не передан"
-                    )
-                reply = dispatch(router, request.events)
-                # Итог раздачи дальше уходит ядру, а ядро читает у него
-                # delivered, advance, fatal и длину failed. Причина отказа
-                # живёт только здесь, и не отдать её сейчас значит потерять
-                # насовсем.
-                if on_handler_error is not None:
-                    # Имя намеренно не failure: так зовут переменную, которой
-                    # цикл бросает ошибку ВНУТРЬ ядра. Затерев её здесь, мы
-                    # отправили бы отказ обработчика в ядро как условие
-                    # площадки и уронили бы наблюдение вместо жалобы.
-                    for handler_error in reply.errors:
-                        on_handler_error(handler_error)
+                if isinstance(request, Pause):
+                    spent = 0.0
+                    if on_idle is not None:
+                        started = monotonic()
+                        on_idle(request.ms)
+                        spent = (monotonic() - started) * 1000
+                    remaining = request.ms - spent
+                    if remaining > 0:
+                        sleep(remaining / 1000)
+                elif isinstance(request, Fetch):
+                    try:
+                        reply = (
+                            self._fetch(request.path)
+                            if active is self.engine
+                            else fetcher.fetch(request.path)
+                        )
+                    except FunoraError as exc:
+                        failure = exc
+                elif isinstance(request, Submit):
+                    # Отправка идёт мимо _fetch нарочно: у записи своё правило -
+                    # переход в ответ на неё не повторяется.
+                    try:
+                        reply = fetcher.submit(request.path, request.fields, request.headers)
+                    except FunoraError as exc:
+                        failure = exc
+                elif isinstance(request, Upload):
+                    # Загрузка идёт мимо _fetch по той же причине, что и отправка
+                    # формы: переход в ответ на запись не повторяется.
+                    try:
+                        reply = fetcher.upload(
+                            request.path,
+                            field=request.field,
+                            filename=request.filename,
+                            content=request.content,
+                            content_type=request.content_type,
+                            headers=request.headers,
+                        )
+                    except FunoraError as exc:
+                        failure = exc
+                elif isinstance(request, Query):
+                    # Структурный вопрос идёт мимо _fetch: тело у него JSON, а не
+                    # поля формы. Правило перехода при этом ЧТЕНИЯ, а не записи -
+                    # повтор здесь безвреден.
+                    try:
+                        reply = fetcher.query(request.path, request.payload, request.headers)
+                    except FunoraError as exc:
+                        failure = exc
+                elif isinstance(request, Ask):
+                    # Вопрос методом GET с ответом объектом. Мимо _fetch: переходы
+                    # здесь не выполняются - переход отсюда означает не «страница
+                    # переехала», а «нас выкинуло на страницу», и разбирать её как
+                    # объект нельзя.
+                    try:
+                        reply = fetcher.ask(request.path, request.headers)
+                    except FunoraError as exc:
+                        failure = exc
+                elif isinstance(request, Deliver):
+                    if router is None:
+                        raise ConfigurationError(
+                            "ядро просит раздать события, но реестр обработчиков не передан"
+                        )
+                    reply = dispatch(router, request.events)
+                    # Итог раздачи дальше уходит ядру, а ядро читает у него
+                    # delivered, advance, fatal и длину failed. Причина отказа
+                    # живёт только здесь, и не отдать её сейчас значит потерять
+                    # насовсем.
+                    if on_handler_error is not None:
+                        # Имя намеренно не failure: так зовут переменную, которой
+                        # цикл бросает ошибку ВНУТРЬ ядра. Затерев её здесь, мы
+                        # отправили бы отказ обработчика в ядро как условие
+                        # площадки и уронили бы наблюдение вместо жалобы.
+                        for handler_error in reply.errors:
+                            on_handler_error(handler_error)
+        finally:
+            core.close()
 
     def _fetch(self, path: str) -> Observation:
         """Выполняет одно обращение к площадке.
@@ -1307,4 +1485,6 @@ class Client:
         Raises:
             FunoraError: При сетевом отказе либо непригодном ответе.
         """
+        if self._fetcher is None:
+            raise ConfigurationError("личный транспорт недоступен")
         return self._fetcher.fetch(path)

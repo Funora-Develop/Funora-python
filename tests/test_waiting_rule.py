@@ -50,6 +50,10 @@ def test_every_pause_rounds_by_the_declared_guard() -> None:
         for number, line in enumerate(lines, start=1):
             if not ROUNDING.search(line):
                 continue
+            if "read_interval_ms=" in line:
+                # Измеренная длительность - данные watch.degraded, а не Pause.
+                # Её контракт требует округлять вниз, без сторожевой добавки.
+                continue
             tail = " ".join(lines[number - 1 : number + 1])
             if "WAIT_GUARD_MS" not in tail:
                 offenders.append(f"{path.name}:{number}: {line.strip()}")

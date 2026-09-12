@@ -21,9 +21,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Final
 
-__all__ = ["Delivery", "DeliveryLedger"]
+from .errors import StateSchemaIncompatibleError
+
+__all__ = ["Delivery", "DeliveryLedger", "QUEUED_OUTCOME"]
+
+#: Исход, с которым запись о выдаче заводится.
+#:
+#: Означает «задание поставлено в очередь, чем кончилось - ещё не известно».
+#: Запись, оставшаяся с ним после разбора очереди, - повод посмотреть заказ
+#: глазами: см. :meth:`DeliveryLedger.unsettled`.
+QUEUED_OUTCOME: Final[str] = "queued"
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +108,58 @@ class DeliveryLedger:
         """
         self._done.setdefault(delivery.order_id, delivery)
 
+    def settle(self, order_id: str, outcome: str) -> None:
+        """Проставляет записи настоящий исход отправки.
+
+        ЗАПИСЬ ЗАВОДИТСЯ ИСХОДОМ ``queued`` И ПРЕЖДЕ ТАК И ОСТАВАЛАСЬ. Поле
+        объявлялось «исход отправки, каким его вернул канал», а канал к нему не
+        притрагивался никто: успешная выдача и выдача, потерянная между записью
+        и отправкой, лежали в реестре одинаковыми.
+
+        Отсюда и был вред: найти потерянные было нечем. Проверка «выдавали ли»
+        на исход не смотрит и смотреть не должна - запись о заказе означает
+        «больше не выдавать», и это верно при любом исходе. Но человеку,
+        который разбирается, чем кончился день, нужно уметь их различать.
+
+        Записи нет - ничего не происходит: settle не заводит записей. Завести
+        её здесь значило бы объявить выданным заказ, по которому решения не
+        принимали.
+
+        Аргументы:
+            order_id (str): Заказ.
+            outcome (str): Исход, каким его вернул канал, либо имя отказа.
+
+        Возвращает:
+            None
+        """
+        existing = self._done.get(order_id)
+        if existing is None:
+            return
+        self._done[order_id] = Delivery(
+            order_id=existing.order_id,
+            offer_id=existing.offer_id,
+            at_ms=existing.at_ms,
+            outcome=outcome,
+        )
+
+    def unsettled(self) -> tuple[str, ...]:
+        """Перечисляет заказы, у которых исход так и остался ``queued``.
+
+        ЭТО И ЕСТЬ СПИСОК ПОДОЗРИТЕЛЬНЫХ. Задание поставлено в очередь, а чем
+        кончилась отправка, реестр не узнал: процесс мог умереть между записью и
+        разбором очереди. Товар при этом покупателю мог не уйти, а повторно он
+        не уйдёт уже никогда - запись о заказе стоит.
+
+        Звать стоит при запуске: заказы отсюда - те, по которым стоит посмотреть
+        переписку глазами.
+
+        Возвращает:
+            tuple[str, ...]: Заказы с незакрытым исходом, в порядке записи.
+        """
+        return tuple(
+            order_id for order_id, one in self._done.items() if one.outcome == QUEUED_OUTCOME
+        )
+
     def snapshot(self) -> dict[str, Any]:
         """Отдаёт состояние обычными значениями для файла состояния.
 
@@ -118,60 +179,47 @@ class DeliveryLedger:
         }
 
     def restore(self, payload: dict[str, Any]) -> None:
-        """Восстанавливает состояние из файла.
+        """Восстанавливает реестр целиком после проверки всех записей.
 
-        Запись, у которой обязательное поле отсутствует ЛИБО НЕПРИГОДНО,
-        пропускается. Проверять только наличие ключа было мало: значение
-        приводилось к строке молча, и запись с пустым либо чужеродным
-        идентификатором говорила «выдавали», не зная чего.
-
-        НИ ОДНА ПЛОХАЯ ЗАПИСЬ НЕ РУШИТ ОСТАЛЬНЫЕ. Прежде разбор шёл по месту -
-        сперва обнулял реестр, потом добавлял по одной, - и первая же битая
-        метка времени бросала голое исключение из середины: реестр оставался
-        наполовину восстановленным, а всё, что стояло дальше, пропадало.
-        Пропадало насовсем: по этим заказам товар выдали бы второй раз.
-
-        Собирается в стороне и подставляется целиком: либо восстановилось, либо
-        осталось как было.
-
-        Аргументы:
-            payload (dict[str, Any]): Прочитанное из файла состояния.
-
-        Возвращает:
-            None
+        Повреждение даёт StateSchemaIncompatibleError и сохраняет прежний
+        реестр. Пропущенная выдача разрешила бы выдать тот же заказ повторно.
+        Отсутствующий раздел старого файла означает пустой список; отсутствующие
+        offer_id и outcome остаются пустыми строками, сохраняя защиту по order_id.
         """
-        raw = payload.get("done")
+        if not isinstance(payload, dict):
+            raise StateSchemaIncompatibleError("реестр выдач должен быть объектом")
+        raw = payload.get("done", [])
         if not isinstance(raw, list):
-            # Ни списка, ни записей. Пустой реестр здесь честнее исключения:
-            # файл мог быть записан прежней редакцией, у которой раздела не
-            # было вовсе.
-            self._done = {}
-            return
+            raise StateSchemaIncompatibleError("выдачи должны быть списком записей")
 
         restored: dict[str, Delivery] = {}
         for one in raw:
             if not isinstance(one, dict):
-                continue
+                raise StateSchemaIncompatibleError("непригодная запись выдачи")
 
             order_id = one.get("order_id")
             # Только строка и только непустая. Число, None и словарь дали бы
             # ключ вида 'None' либо "{'a': 1}" - запись о заказе, которого нет.
             if not isinstance(order_id, str) or not order_id.strip():
-                continue
+                raise StateSchemaIncompatibleError("непригодный идентификатор выданного заказа")
 
             at_ms = one.get("at_ms")
             # Логическое исключается отдельно: в Python истина - это единица, и
             # метка времени True прочиталась бы как первая миллисекунда эпохи.
             if isinstance(at_ms, bool) or not isinstance(at_ms, int):
-                continue
+                raise StateSchemaIncompatibleError("непригодная метка времени выдачи")
 
             offer_id = one.get("offer_id", "")
             outcome = one.get("outcome", "")
+            if not isinstance(offer_id, str) or not isinstance(outcome, str):
+                raise StateSchemaIncompatibleError("непригодное предложение или исход выдачи")
+            if order_id in restored:
+                raise StateSchemaIncompatibleError("повтор заказа в реестре выдач")
             restored[order_id] = Delivery(
                 order_id=order_id,
-                offer_id=offer_id if isinstance(offer_id, str) else "",
+                offer_id=offer_id,
                 at_ms=at_ms,
-                outcome=outcome if isinstance(outcome, str) else "",
+                outcome=outcome,
             )
 
         self._done = restored

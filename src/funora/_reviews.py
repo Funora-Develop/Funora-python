@@ -17,12 +17,9 @@
 [data-href] строки, в снимке их было два, оба вели на одного человека, и ошибка
 не была видна ровно до того дня, когда перестала бы.
 
-Полнота здесь слабее, чем у продаж, и это объявлено. COMPLETE означает
-«разобраны все строки, которые страница отдала», а не «прочитаны все отзывы
-продавца». Сверить не с чем: управления постраничным выводом на наблюдённой
-странице нет ни одного узла, а число отзывов в шапке показано локализованным
-текстом в две строки. Разница внесена в реестр как reviews_page_totality и ждёт
-снимка профиля с сотнями отзывов.
+Полнота определяется строками и наблюдённым управлением догрузкой. COMPLETE
+подтверждает конец текущей выборки при целостном ответе. Продолжение связано
+с продавцом и выбранной оценкой, которую сервер может не повторять в форме.
 """
 
 from __future__ import annotations
@@ -34,13 +31,19 @@ from typing import Final
 
 from selectolax.parser import HTMLParser, Node
 
+from ._cursor import decode_cursor, encode_cursor
 from ._extract import attribute
 from ._observed import Observed
 from ._result import Completeness, Defect, Severity, collect_rows
-from .errors import IncompleteResultError, ProtocolChangedError
+from .errors import (
+    CursorIncompatibleError,
+    IncompleteResultError,
+    ProtocolChangedError,
+    ValidationError,
+)
 from .extraction import SELECTORS
 
-__all__ = ["Review", "ReviewsPage", "parse_reviews_page"]
+__all__ = ["Review", "ReviewsCursor", "ReviewsPage", "parse_reviews_page"]
 
 #: Внешний контейнер таблицы отзывов.
 _TABLE: Final[str] = SELECTORS["reviews.table"]
@@ -119,6 +122,42 @@ class Review:
 
 
 @dataclass(frozen=True, slots=True)
+class ReviewsCursor:
+    """Позиция отзывов одного продавца с той же выбранной оценкой."""
+
+    user_id: str
+    value: str = field(repr=False)
+    rating: int | None = None
+
+    def to_token(self) -> str:
+        """Сериализует курсор для сохранения между запусками."""
+        try:
+            scope = normalize_review_rating(self.rating) or None
+        except ValidationError:
+            raise CursorIncompatibleError(
+                "оценка в курсоре должна быть целым 1..5 либо None"
+            ) from None
+        return encode_cursor("reviews.get", self.user_id, self.value, scope=scope)
+
+    @classmethod
+    def from_token(cls, token: str) -> ReviewsCursor:
+        """Восстанавливает курсор, проверяя версию, семейство и операцию."""
+        owner, position, scope = decode_cursor(token, kind="reviews.get")
+        if scope is not None and scope not in {"1", "2", "3", "4", "5"}:
+            raise CursorIncompatibleError("неподдерживаемая оценка в курсоре отзывов")
+        return cls(owner, position, None if scope is None else int(scope))
+
+
+def normalize_review_rating(rating: int | None) -> str:
+    """Проверяет оценку до запроса и возвращает значение поля формы."""
+    if rating is None:
+        return ""
+    if type(rating) is not int or not 1 <= rating <= 5:
+        raise ValidationError("rating должен быть целым от 1 до 5 либо None")
+    return str(rating)
+
+
+@dataclass(frozen=True, slots=True)
 class ReviewsPage:
     """Результат чтения отзывов.
 
@@ -142,6 +181,7 @@ class ReviewsPage:
     rows_accepted: int
     rows_rejected: int
     defects: tuple[Defect, ...] = ()
+    next_cursor: ReviewsCursor | None = None
     _entries: tuple[Review, ...] = field(repr=False, default=())
 
     def rows(self, *, accept_incomplete: bool = False) -> tuple[Review, ...]:
@@ -333,36 +373,11 @@ def _parse_row(row: Node, index: int) -> tuple[Review, list[Defect]]:
 
 
 def _totality(tree: HTMLParser) -> tuple[Completeness, str]:
-    """Решает, все ли отзывы продавца прочитаны, а не только строки страницы.
+    """Определяет конец выборки по наблюдённой кнопке догрузки.
 
-    Решает КНОПКА ДОГРУЗКИ, а не отсутствие узлов.
-
-    Утром 24.08.2026 разбор объявлял полноту всегда, когда строки разобрались.
-    Основанием было утверждение, что управления постраничным выводом на странице
-    нет: перебор классов по образцу more|pagin|load|next|prev ничего не нашёл.
-
-    Узлы есть. Сразу за таблицей отзывов стоят форма dyn-table-form на
-    /users/reviews и кнопка dyn-table-continue - названы они не теми словами, и
-    образец их не поймал. Отсутствие было объявлено по неудаче поиска, - ровно
-    то, что правило проекта запрещает.
-
-    Что означает класс hidden у этой кнопки, полдня было неизвестно, и всякое
-    чтение объявлялось неполным. Ответ дала страница баланса, и дала сама:
-
-        отзывы, показаны все шесть          -> кнопка С классом hidden
-        операции, двадцать пять и есть ещё  -> кнопка БЕЗ класса hidden
-
-    Виджет один и тот же, класс один и тот же, и два случая разошлись ровно так,
-    как предсказывало объяснение «спрятана, когда догружать нечего».
-
-    Пара при этом снята с РАЗНЫХ страниц, и потому вывод остаётся выводом.
-    Профиль с сотнями отзывов подтвердил бы его прямо - пункт reviews_many.
-
-    Args:
-        tree (HTMLParser): Разобранная страница профиля.
-
-    Returns:
-        tuple[Completeness, str]: Полнота и машиночитаемая причина.
+    Видимая кнопка сопровождает страницы с продолжением; скрытая вместе с
+    пустой позицией - конечную страницу. Отсутствие кнопки не доказывает конец.
+    Форму, курсор и повреждения строк вызывающий проверяет отдельно.
     """
     button = tree.css_first(_CONTINUE)
     if button is None:
@@ -378,7 +393,59 @@ def _totality(tree: HTMLParser) -> tuple[Completeness, str]:
     return Completeness.COMPLETE, "all_rows_parsed"
 
 
-def parse_reviews_page(html: str, observed_at: datetime) -> ReviewsPage:
+def _next_cursor(
+    tree: HTMLParser, defects: list[Defect], user_id: str | None, rating: int | None
+) -> ReviewsCursor | None:
+    forms = tree.css(_PAGE_FORM)
+    buttons = tree.css(_CONTINUE)
+    if len(forms) > 1 or len(buttons) > 1:
+        defects.append(
+            Defect(Severity.PAGE, "pagination_controls_ambiguous", "несколько форм или кнопок")
+        )
+        return None
+    if not forms or not buttons:
+        return None  # Полнота отдельно учитывает отсутствие управляющих узлов.
+    visible = "hidden" not in (buttons[0].attributes.get("class") or "").split()
+    values = {}
+    for name, selector in (
+        ("user_id", SELECTORS["reviews.pagination.fields.user_id"]),
+        ("continue", SELECTORS["reviews.pagination.fields.continue"]),
+        ("filter", SELECTORS["reviews.pagination.fields.filter"]),
+    ):
+        nodes = tree.css(selector)
+        if len(nodes) > 1:
+            defects.append(Defect(Severity.PAGE, "pagination_fields_ambiguous", name))
+            return None
+        if nodes:
+            values[name] = nodes[0].attributes.get("value") or ""
+    owner = values.get("user_id")
+    if owner and user_id is not None and owner != user_id:
+        raise ProtocolChangedError("форма отзывов принадлежит другому продавцу")
+    if values.get("filter") and values["filter"] != normalize_review_rating(rating):
+        defects.append(
+            Defect(Severity.PAGE, "pagination_filter_mismatch", "форма содержит другую оценку")
+        )
+        return None
+    token = values.get("continue", "")
+    if not visible:
+        if token:
+            defects.append(
+                Defect(Severity.PAGE, "pagination_controls_conflict", "скрытая кнопка с курсором")
+            )
+        return None
+    if not owner or not token:
+        defects.append(
+            Defect(
+                Severity.PAGE, "pagination_cursor_missing", "форма не содержит пригодного курсора"
+            )
+        )
+        return None
+    return ReviewsCursor(owner, token, rating)
+
+
+def parse_reviews_page(
+    html: str, observed_at: datetime, *, user_id: str | None = None, rating: int | None = None
+) -> ReviewsPage:
     """Разбирает страницу профиля и собирает отзывы.
 
     Args:
@@ -394,8 +461,33 @@ def parse_reviews_page(html: str, observed_at: datetime) -> ReviewsPage:
         ProtocolChangedError: Если разметка изменилась настолько, что читать
             нечего: нет таблицы либо нет контейнера строк.
     """
+    normalize_review_rating(rating)
     tree = HTMLParser(html)
     defects: list[Defect] = []
+
+    empty = tree.css(SELECTORS["reviews.empty_filtered"])
+    if empty:
+        if (
+            rating is None
+            or len(empty) != 1
+            or not empty[0].text(strip=True)
+            or len(tree.css(SELECTORS["reviews.filter"])) != 1
+            or any(
+                tree.css_first(selector) is not None
+                for selector in (_TABLE, _ROWS_CONTAINER, _ROW, _WRAPPER, _PAGE_FORM, _CONTINUE)
+            )
+        ):
+            raise ProtocolChangedError("неоднозначный признак пустой выборки отзывов")
+        return ReviewsPage(
+            completeness=Completeness.COMPLETE,
+            reason="empty_filtered_list",
+            observed_at=observed_at,
+            rows_total=0,
+            rows_accepted=0,
+            rows_rejected=0,
+            defects=(),
+            _entries=(),
+        )
 
     if tree.css_first(_TABLE) is None:
         raise ProtocolChangedError(
@@ -447,6 +539,14 @@ def parse_reviews_page(html: str, observed_at: datetime) -> ReviewsPage:
         defects.extend(row_defects)
         entries.append(entry)
 
+    rating_mismatch = rating is not None and any(
+        entry.rating.is_observed and entry.rating.value != rating for entry in entries
+    )
+    if rating_mismatch:
+        defects.append(
+            Defect(Severity.PAGE, "review_filter_mismatch", "строки содержат другую оценку")
+        )
+
     rows_total = max(len(found.rows), found.children, len(tree.css(_ROW)))
     rows_accepted = len(entries)
     rows_rejected = len(found.rows) - rows_accepted
@@ -457,11 +557,11 @@ def parse_reviews_page(html: str, observed_at: datetime) -> ReviewsPage:
             "Это изменение разметки, а не пустой список"
         )
 
-    # Ноль отзывов даёт неизвестную полноту, а не пустой успех. У списка продаж
-    # такой снимок есть - страница без продаж снята контрольной парой, - и там
-    # пустота объявляется полным чтением по позитивному признаку. Здесь снимка
-    # нет, и признака нет: отличить продавца без отзывов от переименованного
-    # класса строки нечем.
+    # Без положительного признака пустой выборки ноль строк не доказывает
+    # пустоту: класс строки мог измениться, даже если таблица ещё узнаваема.
+    next_cursor = _next_cursor(tree, defects, user_id, rating)
+    if rating_mismatch:
+        next_cursor = None
     if not rows_total:
         completeness, reason = Completeness.UNKNOWN, "empty_list_not_observed"
     elif any(one.severity is Severity.PAGE for one in defects):
@@ -473,6 +573,7 @@ def parse_reviews_page(html: str, observed_at: datetime) -> ReviewsPage:
 
     return ReviewsPage(
         completeness=completeness,
+        next_cursor=next_cursor,
         reason=reason,
         observed_at=observed_at,
         rows_total=rows_total,

@@ -76,6 +76,12 @@ def _schema(name: str) -> dict[str, Any]:
     )
 
 
+def test_send_result_reasons_match_the_generated_pipeline() -> None:
+    from funora.send_outcome import SEND_REASONS
+
+    assert set(_schema("send-result")["properties"]["reason"]["enum"]) == set(SEND_REASONS)
+
+
 def _page(name: str) -> str:
     """Читает снимок страницы.
 
@@ -108,6 +114,10 @@ def _as_json(value: Any) -> Any:
             "reason": value.reason,
             "value": _as_json(value.or_none()),
         }
+    if isinstance(value, dict):
+        return {key: _as_json(item) for key, item in value.items()}
+    if isinstance(value, set | frozenset):
+        return [_as_json(item) for item in sorted(value)]
     if isinstance(value, tuple | list):
         return [_as_json(item) for item in value]
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
@@ -119,7 +129,7 @@ def _as_json(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.isoformat()
     if isinstance(value, bool | int | str) or value is None:
-        return str(value) if not isinstance(value, bool | int | str) else value
+        return value
     return str(value)
 
 
@@ -242,6 +252,29 @@ def test_observed_envelope_matches_its_schema() -> None:
         check(_as_json(sample), schema, where=f"наблюдение {sample.presence}")
 
 
+@pytest.mark.parametrize("raw", ["0", "27", None, "", "∞"])
+def test_showcase_stock_matches_the_returned_model_schema(raw) -> None:
+    from test_showcase_stock import WHEN, offer_at, parse_showcase, with_stock
+
+    document, index = with_stock(raw)
+    result = offer_at(parse_showcase(document, WHEN), index)
+    check(_as_json(result), _schema("showcase-offer"))
+
+
+@pytest.mark.parametrize("raw", ["0", "27", None, "∞"])
+@pytest.mark.parametrize("kind", ["list", "form"])
+def test_own_stock_matches_the_returned_model_schema(raw, kind) -> None:
+    from test_own_stock import WHEN, first_lot, form_page, own_page, parse_lot_form
+
+    if kind == "list":
+        result = first_lot(own_page(raw))
+        schema = "own-lot"
+    else:
+        result = parse_lot_form(form_page(raw), observed_at=WHEN)
+        schema = "lot-form"
+    check(_as_json(result), _schema(schema))
+
+
 def test_every_returned_field_is_described() -> None:
     """Проверяет, что схема описывает все поля записи, и наоборот.
 
@@ -264,6 +297,7 @@ def test_every_returned_field_is_described() -> None:
     from funora._refund import RefundResult
     from funora._review_write import ReviewResult
     from funora._runner import SendResult
+    from funora._showcase import ShowcaseOffer
     from funora._snapshot import SnapshotEntry
     from funora._thread import Message
     from funora._viewing import BuyerViewing
@@ -277,6 +311,7 @@ def test_every_returned_field_is_described() -> None:
         (LotForm, "lot-form"),
         (MarketOffer, "market-offer"),
         (SnapshotEntry, "market-snapshot-entry"),
+        (ShowcaseOffer, "showcase-offer"),
         (RaiseResult, "raise-result"),
         (ReviewResult, "review-result"),
         (PriceCalculation, "price-calculation"),
@@ -363,6 +398,7 @@ def test_unbuildable_models_say_so() -> None:
         # лежал в проекте. Обе модели собираются разбором целиком.
         "review",
         "reviews-page",
+        "reviews-cursor",
         # Страница одного заказа читается с 0.10.0. Order с неё по-прежнему
         # не собирается: сторон она не разделяет, кода валюты не даёт.
         "order-view",
@@ -376,11 +412,15 @@ def test_unbuildable_models_say_so() -> None:
         "showcase-section",
         # Каталог читается с 0.13.0: игры, их варианты и разделы каждого.
         "catalog-game",
+        "field-schema",
+        "field-definition",
+        "field-option",
         "catalog-page",
         "catalog-section",
         # Чтение аккаунта, проверка сессии и профиль возможностей - с 0.14.0.
         "session-health",
         "capability-profile",
+        "capability-evaluation",
         # Собственные лоты продавца - с 30.08.2026. Модель своя, а не Lot: та
         # требует is_active обязательным, а признака показа лота в выдаче на
         # странице нет ни одного.
@@ -404,3 +444,76 @@ def test_unbuildable_models_say_so() -> None:
         assert doc.get("x-funora-not-implemented") is True, (
             f"{name}: модель не собирается ни одной реализацией и об этом не предупреждает"
         )
+
+
+@pytest.mark.parametrize("rating", [None, 1, 2, 3, 4, 5])
+def test_reviews_continuation_matches_both_models(rating):
+    from test_reviews_pagination import page
+
+    from funora._reviews import parse_reviews_page
+
+    html = page("next")
+    if rating is not None:
+        # Пять наблюдённых оценок используют один класс разметки.
+        html = html.replace("rating5", f"rating{rating}")
+    result = parse_reviews_page(html, WHEN, user_id="123", rating=rating)
+    check(_as_json(result.next_cursor), _schema("reviews-cursor"))
+    check(
+        _page_as_json(result, "entries", result.rows(accept_incomplete=True)),
+        _schema("reviews-page"),
+    )
+
+
+def test_nullable_reference_rejects_wrong_types_and_unknown_keywords():
+    import pytest
+    from _schema_check import SchemaError, UnsupportedKeyword, _check_value
+
+    prop = _schema("reviews-page")["properties"]["next_cursor"]
+    _check_value(None, prop, "cursor")
+    with pytest.raises(SchemaError):
+        _check_value("wrong", prop, "cursor")
+    with pytest.raises(UnsupportedKeyword):
+        _check_value(
+            None,
+            {"anyOf": [{"type": "null", "x-funora-nullable": "not_applicable"}, {"unknown": 1}]},
+            "cursor",
+        )
+
+
+@pytest.mark.parametrize(
+    "query,html", [(None, "root.logged.ru"), ("game", "catalog-search.guest.ru")]
+)
+def test_catalog_page_and_search_share_the_schema(query, html):
+    from funora._catalog import parse_catalog, parse_catalog_search
+
+    page = (
+        parse_catalog(_page(html), WHEN)
+        if query is None
+        else parse_catalog_search(json.dumps({"html": _page(html)}), query, WHEN)
+    )
+    check(
+        _page_as_json(page, "games", page.games(accept_incomplete=True)),
+        _schema("catalog-page"),
+        where="каталог и поиск",
+    )
+
+
+@pytest.mark.parametrize("scale", [0, 2, 6])
+def test_money_matches_its_schema_at_supported_precisions(scale):
+    from funora import Money
+
+    check(_as_json(Money(2**63 - 1, "RUB", scale)), _schema("money"), where="точная сумма")
+
+
+def test_normalized_market_price_matches_both_models():
+    from test_market_money import html
+
+    from funora._market import parse_market
+    from funora._snapshot import snapshot_of
+
+    page = parse_market(html("0.000012", "€"), observed_at=WHEN)
+    offer = page.offers(accept_incomplete=True)[0]
+    entry = snapshot_of(page, node_id="922").offers["123"]
+    assert offer.price.value.amount_minor == 12
+    check(_as_json(offer), _schema("market-offer"), where="предложение с ценой")
+    check(_as_json(entry), _schema("market-snapshot-entry"), where="снимок с ценой")

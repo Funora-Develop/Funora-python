@@ -263,7 +263,7 @@ def _run(state: Path, market: _Marketplace) -> tuple[int, list[str]]:
         client.engine._state.outbound.note_incoming(
             NODE_ID, at_ms=int(datetime.now(UTC).timestamp() * 1000)
         )
-        bot.run(max_iterations=3)
+        bot.run(max_iterations=3, use_channel=False)
 
     return len(market.submitted), reasons
 
@@ -319,12 +319,14 @@ def test_a_restart_delivers_nothing_a_second_time(no_clock: list[float], tmp_pat
     first, _ = _run(state, _Marketplace())
     assert first == 1, "первый запуск не выдал"
 
-    # Второй «процесс»: тот же файл состояния, свежая площадка. Курсор нарочно
-    # сбрасывается - так выглядит перезапуск после неполного чтения, при
-    # котором заказ приходит новым во второй раз.
+    # Явно сбрасываем подтверждённую позицию наблюдения. Даже в этом случае
+    # реестр выдач обязан защитить повторно обнаруженный заказ.
     stored = StateFile(state).load()
-    stored.pop("cursor", None)
+    assert stored["watch_pending"] is None
+    stored["cursor"] = {"orders": None, "chats": None, "threads": {}, "pending_threads": []}
+    stored["watch_greeted"] = False
     stored.pop("dedup", None)
+    stored.pop("dedup_order", None)
     StateFile(state).save(stored)
 
     second_market = _Marketplace()

@@ -1,0 +1,26 @@
+{
+  "observed_at": "2026-09-09",
+  "evidence_kind": "dom",
+  "authentication": "logged",
+  "own_list": {
+    "rows": 20,
+    "with_amount": 20,
+    "amount_examples": [
+      "1"
+    ]
+  },
+  "form": {
+    "quantity_controls": 1,
+    "tag": "input",
+    "type": "text",
+    "name": "amount",
+    "disabled": false,
+    "value": "1"
+  },
+  "showcase_value_for_same_offer": "1",
+  "unquantified_form": {
+    "quantity_controls": 0,
+    "metadata_amount": 1
+  },
+  "note": "Сопоставлена одна сущность на витрине, в управлении и форме. Без идентификаторов и текста лотов. Ноль и другие значения в живом наблюдении не встречались."
+}

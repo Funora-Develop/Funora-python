@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from hashlib import sha256
@@ -30,6 +31,7 @@ from selectolax.parser import HTMLParser, Node
 
 from ._observed import Observed
 from ._result import Completeness, Defect, Severity
+from ._stock import parse_stock_text
 from .errors import ProtocolChangedError
 from .extraction import SELECTORS
 
@@ -51,6 +53,7 @@ _FORM: Final[str] = SELECTORS["lot-edit.form"]
 
 #: Знак валюты рядом с полем цены.
 _CURRENCY: Final[str] = SELECTORS["lot-edit.fields.currency_symbol"]
+_AMOUNT: Final[str] = SELECTORS["lot-edit.fields.amount"]
 
 #: Поля, которые в отпечаток НЕ входят.
 #:
@@ -70,8 +73,7 @@ class LotForm:
         price_text (str): Цена, как она стоит в поле.
         currency_symbol (Observed[str]): Знак валюты рядом с полем цены.
         is_active (bool): Показывается ли лот в выдаче. Читается НАЛИЧИЕМ
-            пометки checked у флажка active - единственного носителя этого
-            признака во всём проекте.
+            пометки checked у флажка active.
         revision (str): Отпечаток состояния лота. Наш собственный, а не
             площадкин: площадка версии не даёт вовсе.
         fields (dict[str, str]): Все поля формы, кроме флажков, как есть.
@@ -80,6 +82,8 @@ class LotForm:
         completeness (Completeness): Полнота чтения.
         reason (str): Почему полнота такая.
         defects (tuple[Defect, ...]): Что не собралось.
+        stock (Observed[int]): Наличие из единственного текстового поля amount.
+            Без поля, при disabled или неизвестном формате значение не выводится.
     """
 
     offer_id: str
@@ -94,6 +98,8 @@ class LotForm:
     completeness: Completeness
     reason: str
     defects: tuple[Defect, ...] = field(default_factory=tuple)
+    _checkbox_values: dict[str, str] = field(default_factory=dict, repr=False)
+    stock: Observed[int] = field(default_factory=lambda: Observed.missing("stock_not_normalized"))
 
     def to_request(self, *, price: str | None = None, active: bool | None = None) -> dict[str, str]:
         """Собирает поля запроса сохранения.
@@ -138,11 +144,13 @@ class LotForm:
             out[ACTIVE_FIELD] = ""
 
         for name in sorted(checked):
-            out[name] = "on"
+            out[name] = self._checkbox_values.get(name, "on")
         return out
 
 
-def _revision_of(fields: dict[str, str], checked: frozenset[str]) -> str:
+def _revision_of(
+    fields: dict[str, str], checked: frozenset[str], checkbox_values: dict[str, str]
+) -> str:
     """Считает отпечаток состояния лота.
 
     ОТПЕЧАТОК НАШ, а не площадкин, и это надо сказать вслух. Контракт требует
@@ -157,13 +165,22 @@ def _revision_of(fields: dict[str, str], checked: frozenset[str]) -> str:
     Аргументы:
         fields (dict[str, str]): Поля формы.
         checked (frozenset[str]): Отмеченные флажки.
+        checkbox_values (dict[str, str]): Значения флажков, включая снятые.
 
     Возвращает:
         str: Шестнадцать шестнадцатеричных знаков.
     """
-    parts = [f"{name}={value}" for name, value in sorted(fields.items()) if name not in _VOLATILE]
-    parts.extend(f"{name}:checked" for name in sorted(checked))
-    return sha256("\n".join(parts).encode("utf-8")).hexdigest()[:16]
+    # Границы значений нельзя обозначать переводом строки или '=': оба знака
+    # встречаются в полях. Скрытое значение и флажок одного имени раздельны:
+    # при снятом флажке в запрос уходит именно скрытое значение.
+    parts = [
+        "lot-form-v2",
+        [[name, value] for name, value in sorted(fields.items()) if name not in _VOLATILE],
+        [[name, value] for name, value in sorted(checkbox_values.items())],
+        sorted(checked),
+    ]
+    material = json.dumps(parts, ensure_ascii=True, separators=(",", ":"), allow_nan=False)
+    return sha256(material.encode("ascii")).hexdigest()[:16]
 
 
 def _text(node: Node | None) -> str:
@@ -176,6 +193,21 @@ def _text(node: Node | None) -> str:
         str: Текст без краевых пробелов.
     """
     return (node.text() or "").strip() if node is not None else ""
+
+
+def _stock(form: Node) -> Observed[int]:
+    controls = form.css(_AMOUNT)
+    if not controls:
+        return parse_stock_text(None)
+    if len(controls) != 1:
+        return Observed.missing("stock_ambiguous")
+    node = controls[0]
+    attributes = node.attributes
+    if "disabled" in attributes:
+        return Observed.missing("stock_disabled")
+    if node.tag != "input" or (attributes.get("type") or "text").lower() != "text":
+        return Observed.missing("stock_control_unknown")
+    return parse_stock_text(attributes.get("value") or "")
 
 
 def parse_lot_form(html: str, *, observed_at: datetime) -> LotForm:
@@ -201,6 +233,7 @@ def parse_lot_form(html: str, *, observed_at: datetime) -> LotForm:
 
     fields: dict[str, str] = {}
     checked: set[str] = set()
+    checkbox_values: dict[str, str] = {}
     defects: list[Defect] = []
 
     # Поля собираются ВСЕ ПОДРЯД. Перечень допустимых отстал бы от площадки
@@ -213,16 +246,48 @@ def parse_lot_form(html: str, *, observed_at: datetime) -> LotForm:
             # Кнопки имени не имеют и в запрос не уходят - так наблюдено.
             continue
 
-        if attributes.get("type") == "checkbox":
+        if "disabled" in attributes:
+            continue
+        kind = (attributes.get("type") or "text").lower()
+        if kind in {"submit", "button", "reset", "file"}:
+            continue
+        if kind == "checkbox":
+            if name in checkbox_values:
+                raise ProtocolChangedError(
+                    f"несколько флажков {name!r} требуют нескольких значений"
+                )
+            checkbox_values[name] = (
+                (attributes.get("value") or "") if "value" in attributes else "on"
+            )
             if "checked" in attributes:
                 checked.add(name)
             continue
-
-        if node.tag == "textarea":
-            fields[name] = node.text() or ""
-            continue
-
-        fields[name] = attributes.get("value") or ""
+        if kind == "radio":
+            if "checked" not in attributes:
+                continue
+            value = attributes.get("value") if "value" in attributes else "on"
+        elif node.tag == "textarea":
+            value = node.text() or ""
+        elif node.tag == "select":
+            options = node.css("option")
+            selected = [one for one in options if "selected" in one.attributes]
+            if "multiple" in attributes or len(selected) > 1:
+                raise ProtocolChangedError(
+                    f"поле {name!r} требует нескольких значений: плоская форма их потеряет"
+                )
+            option = selected[0] if selected else (options[0] if options else None)
+            if option is None:
+                raise ProtocolChangedError(f"у поля {name!r} нет вариантов")
+            value = (
+                option.attributes.get("value") if "value" in option.attributes else option.text()
+            )
+        else:
+            value = attributes.get("value") or ""
+        if name in fields:
+            raise ProtocolChangedError(
+                f"повтор поля {name!r}: сохранение потеряет одно из значений"
+            )
+        fields[name] = value or ""
 
     for required in ("csrf_token", "offer_id", "node_id", "price", "form_created_at"):
         if required not in fields:
@@ -254,11 +319,13 @@ def parse_lot_form(html: str, *, observed_at: datetime) -> LotForm:
         # Единственный носитель признака во всём проекте, и читается он
         # НАЛИЧИЕМ пометки, а не значением.
         is_active=ACTIVE_FIELD in checked,
-        revision=_revision_of(fields, frozenset(checked)),
+        revision=_revision_of(fields, frozenset(checked), checkbox_values),
         fields=fields,
         checked=frozenset(checked),
         observed_at=observed_at,
         completeness=Completeness.COMPLETE,
         reason="all_fields_parsed",
         defects=(),
+        _checkbox_values=checkbox_values,
+        stock=_stock(form),
     )

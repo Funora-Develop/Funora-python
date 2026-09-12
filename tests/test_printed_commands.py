@@ -22,6 +22,7 @@ import os
 import re
 import subprocess
 import sys
+import sysconfig
 from pathlib import Path
 from typing import Final
 
@@ -208,9 +209,10 @@ def test_the_entry_point_the_plan_advises_really_exists() -> None:
     Возвращает:
         None
     """
-    exe = ROOT / ".venv" / "Scripts" / "funora-observe.exe"
-    if not exe.is_file():
-        pytest.skip("окружение собрано иначе - проверять форму нечем")
+    exe = Path(sysconfig.get_path("scripts")) / (
+        "funora-observe.exe" if os.name == "nt" else "funora-observe"
+    )
+    assert exe.is_file(), f"пакет должен быть установлен в текущем окружении: {exe}"
 
     run = subprocess.run(  # noqa: S603
         [str(exe), "--help"],

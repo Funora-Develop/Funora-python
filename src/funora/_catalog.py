@@ -28,6 +28,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -35,9 +36,11 @@ from typing import Final
 
 from selectolax.parser import HTMLParser, Node
 
+from ._extract import attribute as _attribute
+from ._extract import text as _text
 from ._observed import Observed
 from ._result import Completeness, Defect, Severity
-from .errors import IncompleteResultError, ProtocolChangedError
+from .errors import IncompleteResultError, ProtocolChangedError, ValidationError
 from .extraction import SELECTORS
 
 __all__ = ["CatalogGame", "CatalogPage", "CatalogSection", "parse_catalog"]
@@ -127,6 +130,7 @@ class CatalogPage:
         sections_total (int): Сколько разделов собрано, штук.
         letter_groups (int): Сколько буквенных групп на странице, штук.
         defects (tuple[Defect, ...]): Замеченные повреждения.
+        query (str | None): Нормализованный запрос поиска; None у полного каталога.
     """
 
     completeness: Completeness
@@ -138,6 +142,7 @@ class CatalogPage:
     letter_groups: int
     defects: tuple[Defect, ...] = ()
     _games: tuple[CatalogGame, ...] = field(repr=False, default=())
+    query: str | None = None
 
     def games(self, *, accept_incomplete: bool = False) -> tuple[CatalogGame, ...]:
         """Возвращает игры каталога вместе с их вариантами.
@@ -161,42 +166,6 @@ class CatalogPage:
                 "Передайте accept_incomplete=True, если готовы работать с неполными данными"
             )
         return self._games
-
-
-def _text(node: Node | None, name: str) -> Observed[str]:
-    """Извлекает текст узла как наблюдение.
-
-    Args:
-        node (Node | None): Узел либо None.
-        name (str): Имя поля для причины отсутствия.
-
-    Returns:
-        Observed[str]: Наблюдение.
-    """
-    if node is None:
-        return Observed.missing(f"selector_no_match:{name}")
-    value = " ".join((node.text() or "").split())
-    return Observed.present(value) if value else Observed.empty("")
-
-
-def _attribute(node: Node | None, name: str, field_name: str) -> Observed[str]:
-    """Читает атрибут, различая три исхода.
-
-    Args:
-        node (Node | None): Узел либо None.
-        name (str): Имя атрибута.
-        field_name (str): Имя поля для причины отсутствия.
-
-    Returns:
-        Observed[str]: Наблюдение.
-    """
-    if node is None:
-        return Observed.missing(f"selector_no_match:{field_name}")
-    attributes = node.attributes or {}
-    if name not in attributes:
-        return Observed.missing(f"attribute_absent:{field_name}")
-    value = (attributes.get(name) or "").strip()
-    return Observed.present(value) if value else Observed.empty("")
 
 
 def _section(link: Node, index: int, game_href: str | None) -> CatalogSection:
@@ -252,11 +221,12 @@ def _card(card: Node) -> tuple[list[CatalogGame], list[Defect]]:
         tuple[list[CatalogGame], list[Defect]]: Варианты и повреждения.
     """
     titles = card.css(_TITLE_IN_CARD)
-    lists_by_id: dict[str, Node] = {}
+    lists_by_id: dict[str, Node | None] = {}
     for node in card.css(_LIST_IN_CARD):
         key = ((node.attributes or {}).get("data-id") or "").strip()
         if key:
-            lists_by_id[key] = node
+            # Два списка с одним ключом не дают выбрать правильный по порядку.
+            lists_by_id[key] = None if key in lists_by_id else node
 
     games: list[CatalogGame] = []
     defects: list[Defect] = []
@@ -300,6 +270,109 @@ def _card(card: Node) -> tuple[list[CatalogGame], list[Defect]]:
         )
 
     return games, defects
+
+
+def normalize_catalog_query(query: str) -> str:
+    """Проверяет запрос до сети; предел 200 знаков принадлежит SDK."""
+    if not isinstance(query, str):
+        raise ValidationError("query должен быть строкой")
+    if any(ord(char) < 32 or 127 <= ord(char) <= 159 for char in query):
+        raise ValidationError("query не должен содержать управляющие символы")
+    try:
+        query.encode("utf-8")
+    except UnicodeEncodeError:
+        raise ValidationError("query должен содержать корректный Unicode") from None
+    query = query.strip().lower()
+    if not 1 <= len(query) <= 200:
+        raise ValidationError("query должен содержать от 1 до 200 знаков после нормализации")
+    return query
+
+
+def _unique_fields(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("повтор поля JSON")
+        result[key] = value
+    return result
+
+
+def parse_catalog_search(body: str, query: str, observed_at: datetime) -> CatalogPage:
+    """Читает наблюдённый JSON поиска, сохраняя серверные совпадения и варианты."""
+    query = normalize_catalog_query(query)
+    try:
+        payload = json.loads(body, object_pairs_hook=_unique_fields)
+    except (ValueError, RecursionError):
+        raise ProtocolChangedError("ответ поиска каталога не является JSON") from None
+    if not isinstance(payload, dict) or set(payload) != {"html"}:
+        raise ProtocolChangedError("ответ поиска каталога должен содержать только html")
+    html = payload["html"]
+    if not isinstance(html, str):
+        raise ProtocolChangedError("html поиска каталога должен быть строкой")
+    if html == "":
+        return CatalogPage(
+            Completeness.COMPLETE, "search_no_matches", observed_at, 0, 0, 0, 0, query=query
+        )
+    try:
+        tree = HTMLParser(html.encode("utf-8"))
+    except UnicodeError:
+        raise ProtocolChangedError("html поиска содержит некорректный Unicode") from None
+    groups = tree.css(SELECTORS["catalog.search.response"])
+    if not groups:
+        raise ProtocolChangedError("в ответе поиска нет групп каталога")
+    games: list[CatalogGame] = []
+    defects: list[Defect] = []
+    seen: set[str] = set()
+    cards_total = 0
+    for group in groups:
+        cards = group.css(_CARD_IN_LIST)
+        if not cards:
+            raise ProtocolChangedError("в группе поиска нет карточек игр")
+        cards_total += len(cards)
+        for card in cards:
+            found, card_defects = _card(card)
+            defects.extend(card_defects)
+            damaged = not found
+            for game in found:
+                key = game.game_id.or_none()
+                damaged |= not key or key in seen
+                if key:
+                    seen.add(key)
+                damaged |= not game.title_text.is_observed or not game.href.is_observed
+                damaged |= not game.sections
+                damaged |= any(
+                    not all(
+                        value.is_observed
+                        for value in (
+                            section.href,
+                            section.kind,
+                            section.section_id,
+                            section.title_text,
+                        )
+                    )
+                    for section in game.sections
+                )
+            if damaged:
+                defects.append(
+                    Defect(
+                        Severity.ROW,
+                        "search_card_damaged",
+                        "карточка поиска неполна или повторяет идентификатор игры",
+                    )
+                )
+            games.extend(found)
+    return CatalogPage(
+        completeness=Completeness.PARTIAL if defects else Completeness.UNKNOWN,
+        reason="search_row_defects" if defects else "search_total_unobserved",
+        observed_at=observed_at,
+        cards_total=cards_total,
+        games_total=len(games),
+        sections_total=sum(len(game.sections) for game in games),
+        letter_groups=len(tree.css(SELECTORS["catalog.search.letter_groups"])),
+        defects=tuple(defects),
+        _games=tuple(games),
+        query=query,
+    )
 
 
 def parse_catalog(html: str, observed_at: datetime) -> CatalogPage:

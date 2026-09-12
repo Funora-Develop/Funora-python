@@ -14,10 +14,12 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from contextlib import nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 from .._client import Client
+from .._fileio import file_lock
 from .._poll import Schedule
 from .._watch import Router
 from ..errors import (
@@ -44,6 +46,13 @@ _log = logging.getLogger("funora.bot")
 #: чтения переписки с паузами 1, 3 и 8 секунд. Три задания подряд в худшем
 #: случае растягивают паузу на минуту, и всё это время наблюдение стоит.
 MAX_SENDS_PER_IDLE: Final[int] = 3
+
+#: Приставка ключа идемпотентности, которой автовыдача помечает свои задания.
+#:
+#: Единственный носитель связи между заданием в очереди и заказом: очередь про
+#: заказы не знает и знать не должна, а реестру выдач нужно узнать, чем кончилась
+#: отправка. Ключ чужого задания этой приставки не несёт и пропускается.
+_DELIVERY_KEY_PREFIX: Final[str] = "delivery:"
 
 
 class Bot:
@@ -174,7 +183,8 @@ class Bot:
         account_id: str = "self",
         max_iterations: int | None = None,
         schedule: Schedule | None = None,
-        state_path: Path | None = None,
+        state_path: str | Path | None = None,
+        use_channel: bool = True,
         max_threads_per_step: int = 5,
         on_handler_error: Callable[[HandlerError], None] | None = None,
     ) -> None:
@@ -186,7 +196,10 @@ class Bot:
             account_id (str): Идентификатор аккаунта для отпечатков событий.
             max_iterations (int | None): Сколько шагов сделать.
             schedule (Schedule | None): Расписание опроса.
-            state_path (Path | None): Файл состояния.
+            state_path (str | Path | None): Файл состояния.
+            use_channel (bool): Слушать ли канал обновлений площадки. По
+                умолчанию да: покупатель получает ответ за секунды, а не за
+                десятки секунд. Выключение возвращает прежний опрос страниц.
             max_threads_per_step (int): Сколько переписок дочитывать за шаг.
             on_handler_error (Callable[[HandlerError], None] | None): Что делать
                 с отказом обработчика.
@@ -197,27 +210,66 @@ class Bot:
         Raises:
             FunoraError: Любая ошибка чтения, которую не удалось повторить.
         """
-        self._outbox.claim()
-
-        # Застрявшее разбирается ОДИН РАЗ, на старте, и до первого опроса.
-        # Задание, взятое умершим процессом, могло уйти на площадку и могло не
-        # уйти; повторять его нельзя, и молчать о нём нельзя тоже.
-        if self._spool is not None:
-            self._spool.recover()
-
-        self._client.run(
-            self._client.engine.watch(
-                self._router,
-                account_id=account_id,
-                max_iterations=max_iterations,
-                schedule=schedule,
-                state_path=state_path,
-                max_threads_per_step=max_threads_per_step,
-            ),
-            router=self._router,
-            on_handler_error=on_handler_error,
-            on_idle=self._drain,
+        worker = (
+            file_lock(self._spool.root / ".worker.lock", blocking=False)
+            if self._spool is not None
+            else nullcontext()
         )
+        with worker:
+            self._outbox.claim()
+            try:
+                # Застрявшее разбирается ОДИН РАЗ, на старте, и до первого опроса.
+                # Задание, взятое умершим процессом, могло уйти на площадку и могло не
+                # уйти; повторять его нельзя, и молчать о нём нельзя тоже.
+                if self._spool is not None:
+                    self._spool.recover()
+
+                self._client.run(
+                    self._client.engine.watch(
+                        self._router,
+                        account_id=account_id,
+                        max_iterations=max_iterations,
+                        schedule=schedule,
+                        state_path=state_path,
+                        max_threads_per_step=max_threads_per_step,
+                        use_channel=use_channel,
+                    ),
+                    router=self._router,
+                    on_handler_error=on_handler_error,
+                    on_idle=self._drain,
+                )
+            finally:
+                self._outbox.release()
+
+    def _note_delivery(self, idempotency_key: str, outcome: str) -> None:
+        """Проставляет реестру выдач настоящий исход отправки.
+
+        ЗАЧЕМ ЭТО ЗДЕСЬ. Автовыдача заводит запись исходом ``queued`` и уходит:
+        отправка случится позже и в другом месте. Прежде исход так и оставался
+        ``queued`` навсегда, и успешная выдача была неотличима от потерянной -
+        а найти потерянные не было способа вовсе.
+
+        Заказ узнаётся по ключу идемпотентности: автовыдача составляет его как
+        ``delivery:<заказ>``, и другого носителя связи между заданием и заказом
+        нет. Ключ чужого задания сюда просто не подходит и молча пропускается.
+
+        Запись не заводится, если её нет: см. DeliveryLedger.settle.
+
+        Args:
+            idempotency_key (str): Ключ задания.
+            outcome (str): Исход отправки либо имя отказа.
+
+        Returns:
+            None
+        """
+        if not idempotency_key.startswith(_DELIVERY_KEY_PREFIX):
+            return
+        order_id = idempotency_key[len(_DELIVERY_KEY_PREFIX) :]
+        engine = self._client.engine
+        engine.delivered.settle(order_id, outcome)
+        # Сохранение сразу: исход, оставшийся только в памяти, теряется тем же
+        # перезапуском, ради которого реестр и заведён долговечным.
+        engine.save_delivery()
 
     def _drain(self, pause_ms: int) -> None:
         """Разбирает очередь исходящих.
@@ -240,7 +292,11 @@ class Bot:
             None
         """
         left = self._limit
-        for ticket in self._outbox.take(left):
+        for _ in range(left):
+            batch = self._outbox.take(1)
+            if not batch:
+                break
+            ticket = batch[0]
             left -= 1
             command = ticket.command
             try:
@@ -257,17 +313,32 @@ class Bot:
                     type(exc).__name__,
                 )
                 ticket.settle(error=exc)
+                self._note_delivery(command.idempotency_key, type(exc).__name__)
                 continue
+            except Exception as exc:
+                ticket.settle(error=exc)
+                self._note_delivery(command.idempotency_key, "unexpected_error")
+                raise
             self._sent += 1
             ticket.settle(result=result)
+            self._note_delivery(command.idempotency_key, result.outcome.value)
 
         # Каталог разбирается ПОСЛЕ памяти и в остаток того же предела. Предел
         # общий нарочно: он бережёт не очередь, а паузу между опросами, и две
         # очереди с собственными пределами вдвое удлинили бы её.
+        #
+        # Реестр выдач при этом уже поправлен: исход проставляется сразу за
+        # квитанцией, а не в конце разбора. Разбор может оборваться на середине,
+        # и заданиям, которые успели уйти, незачем оставаться неразобранными
+        # из-за тех, которые не успели.
         if self._spool is None:
             return
 
-        for entry in self._spool.take(left):
+        for _ in range(left):
+            entries = self._spool.take(1)
+            if not entries:
+                break
+            entry = entries[0]
             command = entry.command
             try:
                 result = self._client.chats.send_text(
@@ -329,7 +400,9 @@ class Bot:
         return AutoDelivery(
             plan,
             engine.delivered,
-            lambda chat, text, key: self.send(chat, text, idempotency_key=key),
+            lambda chat, text, key, cold: self.send(
+                chat, text, idempotency_key=key, declared_cold=cold
+            ),
             on_hold=on_hold,
             persist=engine.save_delivery,
         )

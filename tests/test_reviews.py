@@ -160,7 +160,9 @@ def test_a_visible_continue_button_means_there_is_certainly_more() -> None:
 
     page = parse_reviews_page(shown, WHEN)
     assert page.completeness is Completeness.PARTIAL
-    assert page.reason == "more_rows_available", page.reason
+    assert page.reason == "page_defects", page.reason
+    assert "pagination_cursor_missing" in {d.code for d in page.defects}
+    # Старая фикстура маскирует имена полей: видимой кнопки без курсора недостаточно.
 
 
 def test_a_missing_pagination_form_is_a_page_defect() -> None:

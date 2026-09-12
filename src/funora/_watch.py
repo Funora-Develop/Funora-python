@@ -90,8 +90,8 @@ _PART_SEP: Final[str] = REVISION_SEPARATOR
 
 #: Виды событий, которые эта реализация вправду порождает.
 #:
-#: Перечисление объявляет шестнадцать видов, реализация порождает пять. Прочие
-#: одиннадцать - не задел на будущее, а ловушка: обработчик на них принимался
+#: Первоначально из шестнадцати видов порождались пять. Прочие
+#: одиннадцать оказались ловушкой: обработчик на них принимался
 #: без возражений и не срабатывал ни разу, а молчание неотличимо от «ничего не
 #: произошло».
 #:
@@ -109,9 +109,13 @@ PRODUCIBLE: Final[frozenset[EventType]] = frozenset(
         EventType.ORDER_CREATED,
         EventType.ORDER_STATUS_CHANGED,
         EventType.WATCH_PRIMED,
+        EventType.WATCH_DEGRADED,
         EventType.SNAPSHOT_INCOMPLETE,
         EventType.EVENT_LOSS,
         EventType.PROTOCOL_HEALTH_CHANGED,
+        EventType.MARKET_OFFER_APPEARED,
+        EventType.MARKET_OFFER_DISAPPEARED,
+        EventType.MARKET_PRICE_CHANGED,
     }
 )
 
@@ -200,7 +204,8 @@ class StepResult:
 
     Attributes:
         delivered (tuple[Event, ...]): События, дошедшие до обработчиков.
-        failed (tuple[Event, ...]): События, на которых обработчик упал. Курсор
+        failed (tuple[Event, ...]): Непринятые события, включая следующие за
+            отказом того же ключа, ещё не переданные обработчикам. Курсор
             не сдвигается, пока список непуст: иначе они исчезнут навсегда.
         advance (bool): Можно ли сдвигать курсор.
         errors (tuple[HandlerError, ...]): Отказы обработчиков.
@@ -232,8 +237,8 @@ def dispatch_core(
     ключами независимы, и здесь они всё равно идут последовательно: правило про
     порядок этим не нарушается.
 
-    Отказ одного обработчика не отменяет остальные события. Он отменяет только
-    сдвиг базы, и следующий шаг принесёт непринятое снова.
+    Отказ блокирует следующие события своего ключа и сдвиг базы.
+    Независимые ключи обрабатываются, непринятое сохраняется для повтора.
 
     Args:
         router (Router): Реестр обработчиков.
@@ -250,7 +255,11 @@ def dispatch_core(
     errors: list[HandlerError] = []
     fatal: FunoraError | None = None
 
+    blocked: set[str] = set()
     for event in events:
+        if event.ordering_key in blocked:
+            failed.append(event)
+            continue
         handlers = router.handlers_for(event)
         if not handlers:
             # Событие без обработчика не считается непринятым: подписка на всё
@@ -321,6 +330,8 @@ def dispatch_core(
             )
             break
 
+        if broke:
+            blocked.add(event.ordering_key)
         (failed if broke else delivered).append(event)
 
     return StepResult(
@@ -599,7 +610,13 @@ async def adispatch(
     return _merge(events, tuple(results))
 
 
-def primed(account_id: str, observed_at: datetime, entities: tuple[str, ...]) -> Event:
+def primed(
+    account_id: str,
+    observed_at: datetime,
+    entities: tuple[str, ...],
+    *,
+    watch_id: str | None = None,
+) -> Event:
     """Собирает событие о сохранении первого снимка.
 
     Холодный старт молчит намеренно: события на каждую существующую сущность
@@ -624,14 +641,14 @@ def primed(account_id: str, observed_at: datetime, entities: tuple[str, ...]) ->
     return make_event(
         account_id=account_id,
         event_type=_PRIMED,
-        entity_id=account_id,
+        entity_id=account_id if watch_id is None else watch_id,
         # Версия - причина. Приветствие приходит один раз за срок гашения, и
         # второе приветствие того же наблюдения было бы повтором.
         revision=_COLD_START,
         observed_at=observed_at,
         key_field="watch_id",
         payload={
-            "watch_id": account_id,
+            "watch_id": account_id if watch_id is None else watch_id,
             # Перечень, а не число. Прежняя редакция схемы объявляла здесь
             # количество - оно отвечает на «сколько», тогда как получателю нужен
             # ответ на «за чем».
@@ -696,6 +713,7 @@ def incomplete(
     rows_total: int,
     rows_accepted: int,
     entity_ref: str | None = None,
+    watch_id: str | None = None,
 ) -> Event:
     """Собирает событие о неполно собранном снимке.
 
@@ -732,7 +750,7 @@ def incomplete(
     return make_event(
         account_id=account_id,
         event_type=_INCOMPLETE,
-        entity_id=account_id,
+        entity_id=account_id if watch_id is None else watch_id,
         revision=_PART_SEP.join(
             (entity, entity_ref or "", reason, f"{rows_accepted}/{rows_total}")
         ),
@@ -743,7 +761,7 @@ def incomplete(
             # события, и это не дубль конверта без причины. Нагрузку принято
             # передавать дальше отдельно от конверта - в очередь, в журнал, - и
             # там она обязана оставаться самодостаточной.
-            "watch_id": account_id,
+            "watch_id": account_id if watch_id is None else watch_id,
             "entity": entity,
             # Ключ на месте всегда, а None означает «неполон список целиком»:
             # у списка нет отдельной сущности, к которой неполноту можно

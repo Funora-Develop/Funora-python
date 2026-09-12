@@ -355,8 +355,8 @@ class Fetcher:
     """Выполняет одиночные запросы к площадке.
 
     Args:
-        secret (Secret): Сессионный секрет. Разворачивается только в момент
-            сборки запроса.
+        secret (Secret | None): Сессионный секрет. Разворачивается только
+            при сборке запроса. None создаёт анонимный транспорт.
         cookie_name (str): Имя cookie, в которой передаётся секрет.
         settings (TransportSettings): Настройки транспорта.
     """
@@ -365,7 +365,7 @@ class Fetcher:
 
     def __init__(
         self,
-        secret: Secret,
+        secret: Secret | None,
         cookie_name: str = "golden_key",
         settings: TransportSettings | None = None,
     ) -> None:
@@ -654,8 +654,10 @@ class Fetcher:
         """Собирает заголовок с сессионным секретом.
 
         Returns:
-            dict[str, str]: Заголовок Cookie с единственным значением.
+            dict[str, str]: Заголовок с секретом либо пустой набор для гостя.
         """
+        if self._secret is None:
+            return {}
         return {"Cookie": f"{self._cookie_name}={self._secret.reveal()}"}
 
 
@@ -669,8 +671,8 @@ class AsyncFetcher:
     доступ к аккаунту.
 
     Args:
-        secret (Secret): Сессионный секрет. Разворачивается только в момент
-            сборки запроса.
+        secret (Secret | None): Сессионный секрет. Разворачивается только
+            при сборке запроса. None создаёт анонимный транспорт.
         cookie_name (str): Имя cookie, в которой передаётся секрет.
         settings (TransportSettings): Настройки транспорта.
     """
@@ -679,7 +681,7 @@ class AsyncFetcher:
 
     def __init__(
         self,
-        secret: Secret,
+        secret: Secret | None,
         cookie_name: str = "golden_key",
         settings: TransportSettings | None = None,
     ) -> None:
@@ -962,8 +964,10 @@ class AsyncFetcher:
         """Собирает заголовок с сессионным секретом.
 
         Returns:
-            dict[str, str]: Заголовок Cookie с единственным значением.
+            dict[str, str]: Заголовок с секретом либо пустой набор для гостя.
         """
+        if self._secret is None:
+            return {}
         return {"Cookie": f"{self._cookie_name}={self._secret.reveal()}"}
 
 

@@ -149,6 +149,8 @@ class Capability(StrEnum):
     ACCOUNT_BALANCE = "account.balance"
     #: Чтение дерева разделов каталога.
     CATALOG_CATEGORIES = "catalog.categories"
+    #: Поиск игр и их разделов по названию.
+    CATALOG_SEARCH = "catalog.search"
     #: Чтение схемы полей конкретной подкатегории.
     CATALOG_FIELD_SCHEMA = "catalog.field_schema"
     #: Чтение публичных предложений по подкатегории.
@@ -220,6 +222,7 @@ CAPABILITY_SOURCE: Final[dict[Capability, str]] = {
     Capability.ACCOUNT_SWITCH_CURRENCY: "probe",
     Capability.ACCOUNT_BALANCE: "probe",
     Capability.CATALOG_CATEGORIES: "static",
+    Capability.CATALOG_SEARCH: "static",
     Capability.CATALOG_FIELD_SCHEMA: "probe",
     Capability.MARKET_OFFERS: "static",
     Capability.MARKET_SNAPSHOT: "derived",
@@ -261,6 +264,7 @@ CAPABILITY_INITIAL: Final[dict[Capability, CapabilityState]] = {
     Capability.ACCOUNT_SWITCH_CURRENCY: CapabilityState.UNKNOWN,
     Capability.ACCOUNT_BALANCE: CapabilityState.UNKNOWN,
     Capability.CATALOG_CATEGORIES: CapabilityState.SUPPORTED,
+    Capability.CATALOG_SEARCH: CapabilityState.SUPPORTED,
     Capability.CATALOG_FIELD_SCHEMA: CapabilityState.UNKNOWN,
     Capability.MARKET_OFFERS: CapabilityState.SUPPORTED,
     Capability.MARKET_SNAPSHOT: CapabilityState.SUPPORTED,

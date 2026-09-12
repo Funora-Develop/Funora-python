@@ -1,0 +1,14 @@
+{
+  "captured_at": "2026-09-08T22:10:12+00:00",
+  "captured_by": "anonymous SDK Fetcher.submit; funora._skeleton.skeletonize",
+  "captured_format": "structural-skeleton-v9",
+  "format": "structural-skeleton-v9",
+  "converted": false,
+  "http_status": 200,
+  "locale": "ru",
+  "path": "/users/reviews",
+  "authentication": "guest",
+  "request_filter": 5,
+  "request_continue": false,
+  "note": "Последовательные ответы одного публичного продавца с оценкой 5. Курсор продолжения взят из первого ответа; различие позиций проверено в памяти. Тексты и значения обезличены; HTML и идентификаторы не сохранялись."
+}

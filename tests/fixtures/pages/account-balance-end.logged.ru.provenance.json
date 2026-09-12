@@ -1,0 +1,14 @@
+{
+  "captured_at": "2026-09-09",
+  "captured_by": "Codex browser DOM; funora._skeleton.skeletonize",
+  "evidence_kind": "dom",
+  "format": "structural-skeleton-v9",
+  "captured_format": "structural-skeleton-v9",
+  "converted": false,
+  "authentication": "logged",
+  "locale": "ru",
+  "path": "/account/balance",
+  "rows_observed": 56,
+  "note": "DOM после нажатия «Показать больше операций»: всего 56 строк, кнопка dyn-table-continue hidden. Это накопленная таблица, не отдельный HTTP-ответ продолжения. Курсор и границы ответов по этому снимку не восстанавливаются. Полный DOM считан частями с проверкой длины и завершающего тега. Сырой HTML не сохранялся.",
+  "http_status": null
+}

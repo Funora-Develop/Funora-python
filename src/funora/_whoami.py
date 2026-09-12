@@ -26,8 +26,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Final
+from datetime import UTC, datetime
+from threading import RLock
+from typing import Final, Literal
 
 from selectolax.parser import HTMLParser, Node
 
@@ -35,7 +36,7 @@ from ._classify import ResponseClass, Verdict
 from ._observed import Observed
 from ._result import Defect, Severity
 from ._secret import Secret
-from .capabilities import Capability, CapabilityState
+from .capabilities import CAPABILITY_INITIAL, Capability, CapabilityState
 from .errors import ProtocolChangedError
 from .extraction import SELECTORS
 
@@ -43,6 +44,7 @@ __all__ = [
     "Account",
     "AppData",
     "CapabilityProfile",
+    "CapabilityEvaluation",
     "SessionHealth",
     "parse_account",
     "parse_app_data",
@@ -146,42 +148,92 @@ class SessionHealth:
 
 
 @dataclass(frozen=True, slots=True)
-class CapabilityProfile:
-    """Состояние каждой возможности адаптера и аккаунта.
+class CapabilityEvaluation:
+    """Основание состояния одной возможности.
 
-    Attributes:
-        observed_at (datetime): Момент сборки профиля.
+    evaluated_at - время оценки, которое чтение профиля не обновляет.
+    source описывает свидетельство: таблица адаптера, результат операции или
+    сброс после отказа. Это не source из реестра способов определения функций.
+    """
+
+    state: CapabilityState
+    evaluated_at: datetime
+    source: Literal["static", "probe", "observed_failure"]
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilityProfile:
+    """Снимок возможностей без сети.
+
+    observed_at - время сборки снимка. Время и основание каждой оценки
+    доступны отдельно через evaluation_of; получение снимка их не освежает.
     """
 
     observed_at: datetime
-    _states: dict[Capability, CapabilityState] = field(repr=False, default_factory=dict)
+    _evaluations: dict[Capability, CapabilityEvaluation] = field(repr=False, default_factory=dict)
 
     def states(self) -> dict[Capability, CapabilityState]:
-        """Возвращает состояние каждой возможности.
-
-        Ключ объявлен ровно для КАЖДОЙ возможности контракта: профиль,
-        умалчивающий о возможности, читался бы как «её нет», а это другой ответ.
-
-        Returns:
-            dict[Capability, CapabilityState]: Состояния по возможностям.
-        """
-        return dict(self._states)
+        """Возвращает независимую копию состояний всех возможностей."""
+        return {key: value.state for key, value in self._evaluations.items()}
 
     def state_of(self, capability: Capability) -> CapabilityState:
-        """Возвращает состояние одной возможности.
+        """Возвращает состояние; отсутствующий ключ означает дефект профиля."""
+        return self._evaluations[capability].state
 
-        Args:
-            capability (Capability): Возможность.
+    def evaluations(self) -> dict[Capability, CapabilityEvaluation]:
+        """Возвращает копию оценок с их основаниями и временем."""
+        return dict(self._evaluations)
 
-        Returns:
-            CapabilityState: Её состояние.
+    def evaluation_of(self, capability: Capability) -> CapabilityEvaluation:
+        """Возвращает неизменяемую оценку одной возможности."""
+        return self._evaluations[capability]
 
-        Raises:
-            KeyError: Если возможности нет в профиле. Такого быть не должно:
-                профиль обязан называть каждую, и пробел здесь - дефект сборки,
-                а не отсутствие возможности.
-        """
-        return self._states[capability]
+
+class _CapabilityStates:
+    """Хранит состояние и его основание одной неделимой записью.
+
+    Обновление из существующих операций остаётся индексным присваиванием.
+    Снимок и сброс защищены той же блокировкой, чтобы параллельное чтение
+    профиля не соединяло состояние до сброса с его новым основанием.
+    """
+
+    def __init__(self) -> None:
+        self._lock = RLock()
+        self._evaluations: dict[Capability, CapabilityEvaluation] = {}
+        self.reset()
+
+    def __getitem__(self, capability: Capability) -> CapabilityState:
+        with self._lock:
+            return self._evaluations[capability].state
+
+    def __setitem__(self, capability: Capability, state: CapabilityState) -> None:
+        with self._lock:
+            self._evaluations[capability] = CapabilityEvaluation(state, datetime.now(UTC), "probe")
+
+    def snapshot(self) -> CapabilityProfile:
+        with self._lock:
+            return CapabilityProfile(datetime.now(UTC), dict(self._evaluations))
+
+    def reset(self) -> None:
+        with self._lock:
+            now = datetime.now(UTC)
+            self._evaluations = {
+                cap: CapabilityEvaluation(state, now, "static")
+                for cap, state in CAPABILITY_INITIAL.items()
+            }
+
+    def invalidate(self) -> None:
+        with self._lock:
+            now = datetime.now(UTC)
+            self._evaluations = {
+                cap: CapabilityEvaluation(
+                    # Отказ не снимает запрет или требование согласия из контракта.
+                    initial if not initial.usable else CapabilityState.UNKNOWN,
+                    now,
+                    "observed_failure",
+                )
+                for cap, initial in CAPABILITY_INITIAL.items()
+            }
 
 
 def _text(node: Node | None, name: str) -> Observed[str]:

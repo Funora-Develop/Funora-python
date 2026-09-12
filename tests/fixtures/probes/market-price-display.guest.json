@@ -1,0 +1,99 @@
+{
+  "captured_at": "2026-09-08",
+  "authentication": "guest",
+  "method": "GET",
+  "note": "Только агрегированные счётчики и числовые фрагменты публичных цен. Продавцы, предложения, описания и cookie не сохраняются.",
+  "pages": [
+    {
+      "path": "/lots/922/",
+      "locale": "ru",
+      "status": 200,
+      "price_count": 1810,
+      "fraction_digits": {
+        "2": 1680,
+        "0": 124,
+        "5": 2,
+        "4": 3,
+        "3": 1
+      },
+      "examples": [
+        {
+          "text": "1.16",
+          "symbol": "₽",
+          "sort_value": "1.160896"
+        },
+        {
+          "text": "1161",
+          "symbol": "₽",
+          "sort_value": "1160.89613"
+        },
+        {
+          "text": "99 999",
+          "symbol": "₽",
+          "sort_value": "99999.000611"
+        },
+        {
+          "text": "0.00116",
+          "symbol": "₽",
+          "sort_value": "0.001161"
+        },
+        {
+          "text": "0.0116",
+          "symbol": "₽",
+          "sort_value": "0.011609"
+        },
+        {
+          "text": "0.035",
+          "symbol": "₽",
+          "sort_value": "0.034827"
+        }
+      ]
+    },
+    {
+      "path": "/en/lots/922/",
+      "locale": "en",
+      "status": 200,
+      "price_count": 1810,
+      "fraction_digits": {
+        "4": 743,
+        "2": 646,
+        "3": 410,
+        "0": 5,
+        "6": 5,
+        "5": 1
+      },
+      "examples": [
+        {
+          "text": "0.0118",
+          "symbol": "€",
+          "sort_value": "0.011788"
+        },
+        {
+          "text": "1.02",
+          "symbol": "€",
+          "sort_value": "1.015401"
+        },
+        {
+          "text": "0.059",
+          "symbol": "€",
+          "sort_value": "0.058939"
+        },
+        {
+          "text": "1015",
+          "symbol": "€",
+          "sort_value": "1015.39449"
+        },
+        {
+          "text": "0.000012",
+          "symbol": "€",
+          "sort_value": "1.2E-5"
+        },
+        {
+          "text": "0.00035",
+          "symbol": "€",
+          "sort_value": "0.000354"
+        }
+      ]
+    }
+  ]
+}

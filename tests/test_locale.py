@@ -77,7 +77,8 @@ def test_a_masked_locale_is_not_passed_off_as_a_locale() -> None:
         assert not observed.is_observed, (
             f"{name}: подпись {declared!r} выдана за локаль {observed.or_none()!r}"
         )
-        assert observed.reason == "locale_not_a_language_tag", (
+        expected_reason = "locale_not_a_language_tag" if declared else "selector_no_match:locale"
+        assert observed.reason == expected_reason, (
             f"{name}: причина названа как {observed.reason!r}, а подпись - не метка"
         )
 

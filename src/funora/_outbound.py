@@ -38,6 +38,7 @@ from .budget import (
     OUTBOUND_WARMING_EVENTS,
     OUTBOUND_WINDOW_MS,
 )
+from .errors import StateSchemaIncompatibleError
 
 #: Отметка о снятой защите: отправка разрешена без долговечного реестра.
 #:
@@ -403,7 +404,7 @@ class OutboundGovernor:
             "incoming": dict(self._incoming),
         }
 
-    def restore(self, payload: dict[str, Any]) -> None:
+    def restore(self, payload: dict[str, Any], *, merge: bool = False) -> None:
         """Восстанавливает состояние из файла.
 
         У восстановленных записей монотонной метки НЕТ - и не подставляется:
@@ -412,19 +413,41 @@ class OutboundGovernor:
 
         Args:
             payload (dict[str, Any]): Прочитанное из файла состояния.
+            merge (bool): Добавить прочитанное к работающему ограничителю,
+                сохранив его монотонные метки и наиболее свежие входящие.
+
+        Raises:
+            StateSchemaIncompatibleError: Повреждённый журнал. Прежнее
+                состояние сохраняется целиком: пропуск записи сбросил бы квоту.
         """
-        self._sent = [
-            Sending(
-                chat_id=str(one["chat_id"]),
-                wall_ms=int(one["at_ms"]),
-                monotonic_s=None,
-                cold=bool(one.get("cold", True)),
-            )
-            for one in payload.get("sent", [])
-            if isinstance(one, dict) and "chat_id" in one and "at_ms" in one
+        if not isinstance(payload, dict):
+            raise StateSchemaIncompatibleError("журнал исходящих должен быть объектом")
+        sent = payload.get("sent", [])
+        incoming = payload.get("incoming", {})
+        if not isinstance(sent, list) or any(
+            not isinstance(one, dict)
+            or not isinstance(one.get("chat_id"), str)
+            or not one["chat_id"]
+            or type(one.get("at_ms")) is not int
+            or type(one.get("cold", True)) is not bool
+            for one in sent
+        ):
+            raise StateSchemaIncompatibleError("непригодные записи отправок в журнале исходящих")
+        if not isinstance(incoming, dict) or any(
+            not isinstance(chat, str) or not chat or type(at) is not int
+            for chat, at in incoming.items()
+        ):
+            raise StateSchemaIncompatibleError("непригодные входящие в журнале исходящих")
+
+        restored_sent = [
+            Sending(one["chat_id"], one["at_ms"], None, one.get("cold", True)) for one in sent
         ]
-        self._incoming = {
-            str(chat): int(at)
-            for chat, at in (payload.get("incoming") or {}).items()
-            if isinstance(at, int)
-        }
+        restored_incoming = dict(incoming)
+        if merge:
+            # Записи текущего процесса сохраняют монотонные часы. Прогон через
+            # snapshot превратил бы подключение файла в перезапуск ограничителя.
+            restored_sent = [*self._sent, *restored_sent]
+            for chat, at in self._incoming.items():
+                restored_incoming[chat] = max(at, restored_incoming.get(chat, at))
+        self._sent = restored_sent
+        self._incoming = restored_incoming

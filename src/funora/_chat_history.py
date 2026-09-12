@@ -32,6 +32,7 @@ from typing import Final
 
 from selectolax.parser import HTMLParser
 
+from ._cursor import encode_cursor
 from ._observed import Observed
 from ._result import Completeness, Defect, Severity
 from ._thread import Message, _parse_message
@@ -85,6 +86,19 @@ class ChatHistory:
     rows_rejected: int
     defects: tuple[Defect, ...]
     _messages: tuple[Message, ...] = field(repr=False, default=())
+
+    @property
+    def next_cursor(self) -> str | None:
+        """Позиция следующей страницы; повреждённая страница не даёт её пропустить.
+
+        None означает подтверждённый конец. Неполное чтение вызывает
+        IncompleteResultError: продолжение от части строк потеряло бы остальные.
+        """
+        messages = self.messages()
+        if self.exhausted:
+            return None
+        oldest = min(int(message.message_id.value) for message in messages)
+        return encode_cursor("chats.history_before", self.chat_id, str(oldest))
 
     def messages(self, *, accept_incomplete: bool = False) -> tuple[Message, ...]:
         """Возвращает догруженные сообщения.
@@ -159,6 +173,11 @@ def _entries(payload: object) -> list[object]:
     return entries
 
 
+def valid_message_position(value: str) -> bool:
+    """Проверяет позицию до int(): isdigit допускает непреобразуемые символы."""
+    return len(value) <= 128 and value.isascii() and value.isdecimal()
+
+
 def _identifier(entry: object, index: int) -> tuple[str, Defect | None]:
     """Читает идентификатор записи.
 
@@ -172,8 +191,11 @@ def _identifier(entry: object, index: int) -> tuple[str, Defect | None]:
     raw = entry.get("id") if isinstance(entry, dict) else None
     # Признак строгий: у идентификатора сообщения только цифры. Строка «12a»
     # сравнивается с курсором как угодно, и сверка направления на ней молчит.
-    text = str(raw) if isinstance(raw, int | str) else ""
-    if not text.isdigit():
+    if isinstance(raw, int):
+        text = str(raw) if 0 <= raw < 10**128 else ""
+    else:
+        text = raw if isinstance(raw, str) else ""
+    if not valid_message_position(text):
         return "", Defect(
             severity=Severity.ROW,
             code="identifier_unreadable",
